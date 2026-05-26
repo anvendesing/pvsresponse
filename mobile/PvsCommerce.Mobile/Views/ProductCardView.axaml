@@ -1,0 +1,78 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:PvsCommerce.Mobile.ViewModels"
+             xmlns:loader="clr-namespace:AsyncImageLoader;assembly=AsyncImageLoader.Avalonia"
+             x:Class="PvsCommerce.Mobile.Views.ProductCardView"
+             x:DataType="vm:ProductCardViewModel">
+
+  <Border Classes="card" Padding="0">
+    <StackPanel Spacing="0">
+      <!-- Artwork frame: cream background, optional remote image, fallback to packaging hint label -->
+      <Border Background="{StaticResource BrandGoldCream}"
+              CornerRadius="16,16,0,0"
+              Padding="0"
+              Height="140">
+        <Grid>
+          <Image Stretch="Uniform"
+                 loader:ImageLoader.Source="{Binding ImageUrl}"
+                 IsVisible="{Binding ImageUrl, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+          <!-- Vector-art fallback (Phase A): a simple iconographic placeholder
+               keyed off PackagingHint. Real art replaces this in phase 2. -->
+          <Border IsVisible="{Binding ImageUrl, Converter={x:Static StringConverters.IsNullOrEmpty}}"
+                  HorizontalAlignment="Center" VerticalAlignment="Center"
+                  Background="{StaticResource BrandForestSoft}"
+                  CornerRadius="9999"
+                  Width="80" Height="80">
+            <TextBlock Text="🌿"
+                       FontSize="40"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center" />
+          </Border>
+
+          <!-- Stock badge. Three visual states by visibility-stacking; later
+               we will replace with a dedicated converter for cleanliness. -->
+          <Border Classes="stockBadge"
+                  IsVisible="{Binding !IsLowStock}"
+                  HorizontalAlignment="Left" VerticalAlignment="Top"
+                  Margin="8,8,0,0">
+            <TextBlock Text="{Binding StockLabel}" FontSize="11" FontWeight="SemiBold" />
+          </Border>
+          <Border Classes="stockBadge low"
+                  IsVisible="{Binding IsLowStock}"
+                  HorizontalAlignment="Left" VerticalAlignment="Top"
+                  Margin="8,8,0,0">
+            <TextBlock Text="{Binding StockLabel}" FontSize="11" FontWeight="SemiBold" />
+          </Border>
+        </Grid>
+      </Border>
+
+      <!-- Content -->
+      <StackPanel Spacing="6" Margin="12,12,12,12">
+        <TextBlock Text="{Binding Name}"
+                   Classes="h3"
+                   TextTrimming="CharacterEllipsis"
+                   MaxLines="2" />
+
+        <TextBlock Text="{Binding Badge}"
+                   Foreground="{StaticResource BrandForest}"
+                   FontWeight="SemiBold"
+                   FontSize="12"
+                   IsVisible="{Binding Badge, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+
+        <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
+          <TextBlock Text="{Binding PriceFormatted}" Classes="price" />
+          <TextBlock Grid.Column="1"
+                     Text="{Binding Uom}"
+                     Classes="muted"
+                     VerticalAlignment="Bottom"
+                     Margin="6,0,0,2" />
+        </Grid>
+
+        <Button Classes="gold"
+                HorizontalAlignment="Stretch"
+                IsEnabled="{Binding !IsOutOfStock}"
+                Content="Add to Cart" />
+      </StackPanel>
+    </StackPanel>
+  </Border>
+</UserControl>

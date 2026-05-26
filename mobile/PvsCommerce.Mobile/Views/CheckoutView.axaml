@@ -1,0 +1,111 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:PvsCommerce.Mobile.ViewModels"
+             xmlns:conv="using:PvsCommerce.Mobile.Converters"
+             x:Class="PvsCommerce.Mobile.Views.CheckoutView"
+             x:DataType="vm:CheckoutViewModel">
+
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+    <StackPanel Margin="16" Spacing="16">
+
+      <!-- Success screen -->
+      <StackPanel Spacing="16" HorizontalAlignment="Center" Margin="0,40,0,0"
+                  IsVisible="{Binding Success}">
+        <TextBlock Text="🎉" FontSize="72" HorizontalAlignment="Center" />
+        <TextBlock Text="Order placed!" Classes="h1" HorizontalAlignment="Center" />
+        <TextBlock Text="{Binding OrderNo}" Classes="muted" HorizontalAlignment="Center" />
+        <TextBlock Text="We'll prepare your order right away. Check your account for status updates."
+                   Classes="body" HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap"
+                   MaxWidth="300" />
+        <Button Classes="primary" HorizontalAlignment="Center"
+                Content="Continue Shopping"
+                Command="{Binding ContinueShoppingCommand}" />
+      </StackPanel>
+
+      <!-- Checkout form -->
+      <StackPanel Spacing="16" IsVisible="{Binding !Success}">
+        <TextBlock Text="Checkout" Classes="h2" />
+        <TextBlock Text="Review &amp; confirm your order" Classes="muted" />
+
+        <!-- Form fields -->
+        <StackPanel Spacing="4">
+          <TextBlock Text="Full Name *" FontWeight="SemiBold" FontSize="13" />
+          <TextBox Text="{Binding Name}" Watermark="Your name"
+                   Background="{StaticResource NeutralWhite}"
+                   CornerRadius="{StaticResource RadiusSm}"
+                   Padding="12,10" />
+        </StackPanel>
+
+        <StackPanel Spacing="4">
+          <TextBlock Text="Email *" FontWeight="SemiBold" FontSize="13" />
+          <TextBox Text="{Binding Email}" Watermark="your@email.com"
+                   Background="{StaticResource NeutralWhite}"
+                   CornerRadius="{StaticResource RadiusSm}"
+                   Padding="12,10" />
+        </StackPanel>
+
+        <StackPanel Spacing="4">
+          <TextBlock Text="Phone *" FontWeight="SemiBold" FontSize="13" />
+          <TextBox Text="{Binding Phone}" Watermark="+91 98765 43210"
+                   Background="{StaticResource NeutralWhite}"
+                   CornerRadius="{StaticResource RadiusSm}"
+                   Padding="12,10" />
+        </StackPanel>
+
+        <StackPanel Spacing="4">
+          <TextBlock Text="City" FontWeight="SemiBold" FontSize="13" />
+          <TextBox Text="{Binding City}" Watermark="Optional"
+                   Background="{StaticResource NeutralWhite}"
+                   CornerRadius="{StaticResource RadiusSm}"
+                   Padding="12,10" />
+        </StackPanel>
+
+        <StackPanel Spacing="4">
+          <TextBlock Text="Order Notes" FontWeight="SemiBold" FontSize="13" />
+          <TextBox Text="{Binding Notes}" Watermark="Special instructions…"
+                   Background="{StaticResource NeutralWhite}"
+                   CornerRadius="{StaticResource RadiusSm}"
+                   AcceptsReturn="True" Height="80"
+                   Padding="12,10" />
+        </StackPanel>
+
+        <!-- Order summary -->
+        <Border Classes="card" Background="{StaticResource BrandForestSoft}">
+          <StackPanel Spacing="6">
+            <TextBlock Text="Order summary" FontWeight="Bold" FontSize="14" />
+            <ItemsControl ItemsSource="{Binding Cart.Lines}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <Grid ColumnDefinitions="*,Auto" Margin="0,2">
+                    <TextBlock Text="{Binding ProductName}" Classes="body" Grid.Column="0" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Text="{Binding Qty}" Classes="muted" Grid.Column="1" Margin="8,0,0,0" />
+                  </Grid>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </StackPanel>
+        </Border>
+
+        <!-- Error -->
+        <TextBlock Text="{Binding ErrorMessage}"
+                   Foreground="{StaticResource StatusError}"
+                   IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                   TextWrapping="Wrap" />
+
+        <!-- CTA -->
+        <Button Classes="gold" HorizontalAlignment="Stretch"
+                HorizontalContentAlignment="Center"
+                Command="{Binding PlaceOrderCommand}"
+                IsEnabled="{Binding !IsPlacing}">
+          <TextBlock Text="{Binding IsPlacing, Converter={x:Static conv:PlacingLabelConverter.Instance}}"
+                     FontWeight="Bold" FontSize="16" />
+        </Button>
+
+        <Button Background="Transparent" HorizontalAlignment="Center"
+                Foreground="{StaticResource NeutralGray}"
+                Command="{Binding GoBackCommand}">Edit Cart</Button>
+      </StackPanel>
+
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

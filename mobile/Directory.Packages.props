@@ -1,0 +1,36 @@
+<Project>
+    <PropertyGroup>
+        <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    </PropertyGroup>
+    <ItemGroup>
+        <!-- Avalonia LTS series 11.x targets net8.0 but runs on net9.0,
+             which is what the local Android workload (35.0.78) supports.
+             Avalonia 12 ships net10.0+android36 only; we'll move to it
+             once the .NET 10 SDK & Android 36 workload land in the
+             dev/CI image.
+             SkiaSharp 3 is *not* enabled by default on 11.x - that's a
+             phase-5 (ship to Play Store) concern handled via package
+             overrides documented in PLAN.md. -->
+        <PackageVersion Include="Avalonia" Version="11.3.16" />
+        <PackageVersion Include="Avalonia.Themes.Fluent" Version="11.3.16" />
+        <PackageVersion Include="Avalonia.Fonts.Inter" Version="11.3.16" />
+        <PackageVersion Include="Avalonia.Desktop" Version="11.3.16" />
+        <PackageVersion Include="Avalonia.Android" Version="11.3.16" />
+        <PackageVersion Include="Avalonia.Diagnostics" Version="11.3.16" />
+
+        <!-- MVVM -->
+        <PackageVersion Include="CommunityToolkit.Mvvm" Version="8.4.0" />
+
+        <!-- HTTP image cache. 3.7.0 is the last version that supports Avalonia 11;
+             3.8.0+ requires Avalonia 12. -->
+        <PackageVersion Include="AsyncImageLoader.Avalonia" Version="3.7.0" />
+
+        <!-- DI / Hosting -->
+        <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="9.0.0" />
+        <PackageVersion Include="Microsoft.Extensions.Http" Version="9.0.0" />
+        <PackageVersion Include="Microsoft.Extensions.Logging" Version="9.0.0" />
+
+        <!-- Android -->
+        <PackageVersion Include="Xamarin.AndroidX.Core.SplashScreen" Version="1.0.1.15" />
+    </ItemGroup>
+</Project>

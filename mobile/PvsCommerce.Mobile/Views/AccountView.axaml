@@ -1,0 +1,91 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:PvsCommerce.Mobile.ViewModels"
+             x:Class="PvsCommerce.Mobile.Views.AccountView"
+             x:DataType="vm:AccountViewModel">
+
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+    <StackPanel Margin="16" Spacing="16">
+
+      <!-- Not logged in -->
+      <StackPanel Spacing="16" HorizontalAlignment="Center" Margin="0,32,0,0"
+                  IsVisible="{Binding !Auth.IsAuthed}">
+        <TextBlock Text="👤" FontSize="64" HorizontalAlignment="Center" />
+        <TextBlock Text="Your Account" Classes="h2" HorizontalAlignment="Center" />
+        <TextBlock Text="Sign in to see your orders and saved details."
+                   Classes="muted" TextAlignment="Center" TextWrapping="Wrap" />
+        <Button Classes="primary" HorizontalAlignment="Center"
+                Content="Sign In"
+                Command="{Binding GoToLoginCommand}" />
+      </StackPanel>
+
+      <!-- API Settings (always visible so users can fix connectivity even pre-login) -->
+      <Border Classes="card">
+        <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
+          <StackPanel Grid.Column="0" Spacing="2">
+            <TextBlock Text="API Settings" FontWeight="SemiBold" FontSize="14" />
+            <TextBlock Text="Change the backend URL (e.g. for a real phone)"
+                       Classes="muted" />
+          </StackPanel>
+          <Button Grid.Column="1" Classes="outline" Content="Configure"
+                  Command="{Binding GoToSettingsCommand}" />
+        </Grid>
+      </Border>
+
+      <!-- Logged in -->
+      <StackPanel Spacing="20" IsVisible="{Binding Auth.IsAuthed}">
+        <!-- Profile card -->
+        <Border Classes="card" Background="{StaticResource BrandForestSoft}">
+          <StackPanel Spacing="6">
+            <TextBlock Text="{Binding Auth.User.Name}" Classes="h2" />
+            <TextBlock Text="{Binding Auth.User.Email}" Classes="muted" />
+            <TextBlock Text="{Binding Auth.User.Phone}" Classes="muted" />
+          </StackPanel>
+        </Border>
+
+        <!-- Orders section -->
+        <TextBlock Text="Past Orders" Classes="h3" />
+
+        <TextBlock Text="Loading orders…" Classes="muted"
+                   IsVisible="{Binding IsLoadingOrders}"
+                   HorizontalAlignment="Center" />
+
+        <TextBlock Text="{Binding OrdersError}"
+                   Foreground="{StaticResource StatusError}"
+                   IsVisible="{Binding OrdersError, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                   TextWrapping="Wrap" />
+
+        <ItemsControl ItemsSource="{Binding Orders}"
+                      IsVisible="{Binding !IsLoadingOrders}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate DataType="vm:PastOrderVm">
+              <Border Classes="card" Margin="0,0,0,8">
+                <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto">
+                  <TextBlock Grid.Row="0" Grid.Column="0"
+                             Text="{Binding StatusEmoji}"
+                             FontSize="24" VerticalAlignment="Center"
+                             Margin="0,0,12,0" />
+                  <StackPanel Grid.Row="0" Grid.Column="1" Spacing="2">
+                    <TextBlock Text="{Binding SoNo}" FontWeight="Bold" FontSize="14" />
+                    <TextBlock Text="{Binding Date}" Classes="muted" />
+                  </StackPanel>
+                  <StackPanel Grid.Row="0" Grid.Column="2" Spacing="2" HorizontalAlignment="Right">
+                    <TextBlock Text="{Binding Total}" FontWeight="Bold"
+                               Foreground="{StaticResource BrandForestDark}" />
+                    <TextBlock Text="{Binding ItemSummary}" Classes="muted" />
+                  </StackPanel>
+                </Grid>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+
+        <!-- Sign out -->
+        <Button Classes="outline" HorizontalAlignment="Center"
+                Content="Sign Out"
+                Command="{Binding SignOutCommand}" />
+      </StackPanel>
+
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

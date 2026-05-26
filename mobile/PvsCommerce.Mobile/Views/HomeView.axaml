@@ -1,0 +1,99 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:PvsCommerce.Mobile.ViewModels"
+             xmlns:views="using:PvsCommerce.Mobile.Views"
+             x:Class="PvsCommerce.Mobile.Views.HomeView"
+             x:DataType="vm:HomeViewModel">
+
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+    <StackPanel Spacing="0">
+
+      <!-- HERO -->
+      <Border Margin="16,16,16,0" Padding="20"
+              Background="{StaticResource BrandForestSoft}"
+              CornerRadius="{StaticResource RadiusLg}"
+              BoxShadow="{StaticResource ShadowSm}">
+        <StackPanel Spacing="10">
+          <Border Classes="chip" HorizontalAlignment="Left">
+            <TextBlock Text="100% Chemical-free · Farm-direct"
+                       FontSize="11" FontWeight="SemiBold"
+                       Foreground="{StaticResource BrandForest}" />
+          </Border>
+          <TextBlock Text="Healthy Millets,&#x0a;traditional taste." Classes="h1" TextWrapping="Wrap" />
+          <TextBlock Text="Hand-picked, sun-dried, stone-ground — delivered to your door."
+                     Classes="body" Foreground="{StaticResource NeutralGray}" TextWrapping="Wrap" />
+          <Button Classes="primary" HorizontalAlignment="Left" Content="Shop Now" />
+        </StackPanel>
+      </Border>
+
+      <!-- BEST SELLERS -->
+      <StackPanel Margin="16,28,16,0" Spacing="12">
+        <StackPanel Spacing="2">
+          <TextBlock Text="SHOP BEST" Classes="eyebrow" />
+          <TextBlock Text="Best Selling Products" Classes="h2" />
+        </StackPanel>
+
+        <TextBlock Text="Loading farm-fresh goods…" Classes="muted"
+                   IsVisible="{Binding IsLoading}"
+                   HorizontalAlignment="Center" Margin="0,12" />
+
+        <ItemsControl ItemsSource="{Binding BestSellers}"
+                      IsVisible="{Binding !IsLoading}">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate>
+              <UniformGrid Columns="2" />
+            </ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate>
+            <DataTemplate DataType="vm:ProductCardViewModel">
+              <Border Margin="6">
+                <views:ProductCardView />
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+
+      </StackPanel>
+
+      <!-- DIAGNOSTICS / API URL -->
+      <Border Margin="16,16,16,0" Padding="12"
+              Background="#F8F4E8"
+              CornerRadius="{StaticResource RadiusSm}"
+              IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+        <StackPanel Spacing="8">
+          <TextBlock Text="Backend not reachable" FontWeight="Bold"
+                     Foreground="{StaticResource StatusError}" />
+          <TextBlock Text="{Binding ErrorMessage}" Classes="muted" TextWrapping="Wrap" />
+          <TextBlock Text="On a real phone, set this to your dev machine's LAN IP via Account → API Settings (e.g. http://192.168.1.10:4000/v1)."
+                     Classes="muted" TextWrapping="Wrap" />
+          <Button Classes="outline" Content="Retry" HorizontalAlignment="Left"
+                  Command="{Binding LoadCommand}" />
+        </StackPanel>
+      </Border>
+
+      <!-- COMBOS -->
+      <StackPanel Margin="16,28,16,32" Spacing="12">
+        <StackPanel Spacing="2">
+          <TextBlock Text="VALUE PACKS" Classes="eyebrow" />
+          <TextBlock Text="Combos" Classes="h2" />
+        </StackPanel>
+        <ItemsControl ItemsSource="{Binding Combos}"
+                      IsVisible="{Binding !IsLoading}">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate>
+              <UniformGrid Columns="2" />
+            </ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate>
+            <DataTemplate DataType="vm:ProductCardViewModel">
+              <Border Margin="6">
+                <views:ProductCardView />
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </StackPanel>
+
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

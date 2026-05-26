@@ -1,0 +1,84 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    font-family: "Inter", system-ui, sans-serif;
+    background: #f5f7fa;
+    color: #1a1a2e;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+  ::selection {
+    background: #003087;
+    color: #ffffff;
+  }
+  :focus-visible {
+    outline: 2px solid #009cde;
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+  /* Compact, industrial scrollbar */
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: #cbd2d6;
+    border-radius: 9999px;
+    border: 2px solid #f5f7fa;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: #687173;
+  }
+}
+
+@layer components {
+  .tnum {
+    font-feature-settings: "tnum";
+    font-variant-numeric: tabular-nums;
+  }
+  .kbd {
+    @apply inline-flex items-center justify-center rounded border border-border bg-canvas px-1.5 py-0.5 text-[11px] font-mono font-medium text-ink-muted shadow-[inset_0_-1px_0_#CBD2D6];
+    min-width: 20px;
+  }
+  .skeleton {
+    background: linear-gradient(
+      90deg,
+      rgba(203, 210, 214, 0.25) 0%,
+      rgba(203, 210, 214, 0.6) 50%,
+      rgba(203, 210, 214, 0.25) 100%
+    );
+    background-size: 200% 100%;
+    @apply animate-shimmer rounded;
+  }
+  .grid-cell {
+    @apply px-3 py-2 text-body-sm text-ink border-b border-border/60;
+  }
+  .grid-header-cell {
+    @apply px-3 py-2 text-caption uppercase tracking-wide text-ink-muted bg-canvas border-b border-border;
+  }
+}
+
+@layer utilities {
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+}

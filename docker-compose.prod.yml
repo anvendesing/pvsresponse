@@ -1,0 +1,44 @@
+# =====================================================================
+# NovaERP - production overlay for prebuilt images.
+# =====================================================================
+# Use this together with docker-compose.yml when deploying to the VPS
+# from CI-built images on GHCR. The base file declares each service
+# with both `build:` (for `up --build` on dev machines) and `image:`
+# (the local tag); this overlay simply pins each `image:` to the
+# registry-qualified version and the deploy command opts out of
+# building locally with --no-build.
+#
+# Quick reference:
+#
+#   # one-time on the VPS
+#   echo $GITHUB_PAT | docker login ghcr.io -u <github-user> --password-stdin
+#
+#   # deploy / refresh
+#   export REGISTRY_OWNER=<lowercase github user or org>
+#   export IMAGE_TAG=latest        # or sha-1a2b3c4 / v1.2.3
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml pull
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --no-build
+#
+#   # rollback to a previous tag
+#   IMAGE_TAG=sha-9f8e7d6 \
+#     docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --no-build
+#
+# Tag conventions populated by .github/workflows/build-images.yml:
+#   * latest          - tip of main
+#   * main-<sha>      - same as latest, but immutable per-commit
+#   * sha-<short>     - immutable per-commit
+#   * v1.2.3 / 1.2 / 1- semver, only published when you push a v* tag
+# =====================================================================
+
+services:
+  backend:
+    # Override the locally-built `image:` from the base file with the
+    # registry-qualified one. `--no-build` on the docker compose
+    # command line keeps it from re-running the (still-defined)
+    # build: stanza in the base file.
+    image: ghcr.io/${REGISTRY_OWNER:?REGISTRY_OWNER required (your GitHub user/org, lowercase)}/novaerp-backend:${IMAGE_TAG:-latest}
+    pull_policy: always
+
+  web:
+    image: ghcr.io/${REGISTRY_OWNER:?REGISTRY_OWNER required (your GitHub user/org, lowercase)}/novaerp-web:${IMAGE_TAG:-latest}
+    pull_policy: always

@@ -1,0 +1,11 @@
+﻿<Solution>
+  <Project Path="PvsCommerce.Mobile.Android/PvsCommerce.Mobile.Android.csproj">
+    <Deploy />
+  </Project>
+  <Project Path="PvsCommerce.Mobile.Browser/PvsCommerce.Mobile.Browser.csproj" />
+  <Project Path="PvsCommerce.Mobile.Desktop/PvsCommerce.Mobile.Desktop.csproj" />
+  <Project Path="PvsCommerce.Mobile.iOS/PvsCommerce.Mobile.iOS.csproj">
+    <Deploy />
+  </Project>
+  <Project Path="PvsCommerce.Mobile/PvsCommerce.Mobile.csproj" />
+</Solution>

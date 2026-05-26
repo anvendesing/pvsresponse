@@ -1,0 +1,149 @@
+# =====================================================================
+# Build & push NovaERP container images to GitHub Container Registry.
+# =====================================================================
+# Runs on:
+#   - push to main          -> tags: latest, sha-<short>, main-<short>
+#   - push of a v* tag      -> tags: <semver>, latest
+#   - manual (workflow_dispatch)
+#   - pull_request          -> builds only (no push) so PRs are
+#                              type-checked through the same path the
+#                              VPS will execute.
+#
+# Output images:
+#   ghcr.io/<owner>/novaerp-backend
+#   ghcr.io/<owner>/novaerp-web
+#
+# The VPS pulls them with `docker compose -f docker-compose.prod.yml
+# pull && up -d`. No build tools required on the VPS.
+#
+# Auth uses the auto-issued GITHUB_TOKEN with `packages: write`. No
+# extra secrets to configure - just enable "Inherit from repo" on
+# package permissions if your default org policy is restrictive.
+#
+# Multi-arch: this workflow builds amd64 by default. Uncomment the
+# arm64 platform if your VPS is a Raspberry Pi or an ARM cloud
+# instance (Ampere on Oracle Cloud / AWS Graviton). Build time roughly
+# doubles when both platforms are enabled.
+# =====================================================================
+
+name: build-images
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*.*.*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Cancel in-progress runs for the same ref so a rapid sequence of
+# pushes to main doesn't queue duplicate publishes.
+concurrency:
+  group: build-images-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build:
+    name: build-${{ matrix.image.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      # Don't cancel the other image if one fails - we still want a
+      # green log for the half that built.
+      fail-fast: false
+      matrix:
+        image:
+          - name: backend
+            context: ./backend
+            dockerfile: ./backend/Dockerfile
+          - name: web
+            context: ./erp-portal
+            dockerfile: ./erp-portal/Dockerfile
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Authenticate against GHCR. On pull_request runs from forks the
+      # GITHUB_TOKEN has read-only scope, so we conditionally skip the
+      # login + push steps below.
+      - name: Login to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Compute a friendly set of tags. docker/metadata-action knows
+      # how to map ref types -> docker tags so we don't reinvent the
+      # rules:
+      #   * branch push (main)  -> latest, main-<sha>
+      #   * tag v1.2.3          -> 1.2.3, 1.2, 1, latest
+      #   * pull_request        -> pr-<num>
+      # All gated on the matrix image name so backend / web don't
+      # share a tag namespace.
+      - name: Compute tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          # Image name is lowercased here because GHCR rejects mixed
+          # case repo paths (org/Org/Repo would 400).
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/novaerp-${{ matrix.image.name }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha,format=short
+            type=raw,value=latest,enable=${{ github.ref == format('refs/heads/{0}', 'main') }}
+          labels: |
+            org.opencontainers.image.title=novaerp-${{ matrix.image.name }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.licenses=Proprietary
+
+      # Buildx layer cache backed by GitHub Actions cache. Cuts cold
+      # rebuilds from ~3 min to ~40 s once the cache is warm.
+      - name: Build & push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.image.context }}
+          file: ${{ matrix.image.dockerfile }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Single platform by default for build speed. To target
+          # ARM VPS / SBCs, change to: linux/amd64,linux/arm64
+          platforms: linux/amd64
+          cache-from: type=gha,scope=novaerp-${{ matrix.image.name }}
+          cache-to: type=gha,mode=max,scope=novaerp-${{ matrix.image.name }}
+          # Pass build args explicitly so the SPA build remembers it
+          # is configured for same-origin (no VITE_API_URL bake-in).
+          build-args: |
+            VITE_API_URL=
+
+      # Surface the resolved image refs in the summary so operators
+      # can copy-paste from the run page when bumping the prod stack.
+      - name: Summary
+        if: github.event_name != 'pull_request'
+        run: |
+          echo "## Pushed ${matrix_name} image" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Tags:" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "${TAGS}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+        env:
+          matrix_name: ${{ matrix.image.name }}
+          TAGS: ${{ steps.meta.outputs.tags }}

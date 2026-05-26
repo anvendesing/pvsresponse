@@ -1,0 +1,59 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:PvsCommerce.Mobile.ViewModels"
+             x:Class="PvsCommerce.Mobile.Views.LoginView"
+             x:DataType="vm:LoginViewModel">
+
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+    <StackPanel Margin="24" Spacing="20">
+      <!-- Branding -->
+      <Border HorizontalAlignment="Center" Width="72" Height="72"
+              Background="{StaticResource BrandForest}"
+              CornerRadius="9999">
+        <TextBlock Text="🌿" FontSize="40" HorizontalAlignment="Center" VerticalAlignment="Center" />
+      </Border>
+      <TextBlock Text="Welcome back" Classes="h1" HorizontalAlignment="Center" />
+      <TextBlock Text="Sign in to view your orders, wishlist, and saved details."
+                 Classes="muted" TextAlignment="Center" TextWrapping="Wrap" />
+
+      <!-- Form -->
+      <StackPanel Spacing="4">
+        <TextBlock Text="Full Name *" FontWeight="SemiBold" FontSize="13" />
+        <TextBox Text="{Binding Name}" Watermark="Your name"
+                 Background="{StaticResource NeutralWhite}"
+                 CornerRadius="{StaticResource RadiusSm}"
+                 Padding="12,10" />
+      </StackPanel>
+
+      <StackPanel Spacing="4">
+        <TextBlock Text="Email *" FontWeight="SemiBold" FontSize="13" />
+        <TextBox Text="{Binding Email}" Watermark="your@email.com"
+                 Background="{StaticResource NeutralWhite}"
+                 CornerRadius="{StaticResource RadiusSm}"
+                 Padding="12,10" />
+      </StackPanel>
+
+      <StackPanel Spacing="4">
+        <TextBlock Text="Phone *" FontWeight="SemiBold" FontSize="13" />
+        <TextBox Text="{Binding Phone}" Watermark="+91 98765 43210"
+                 Background="{StaticResource NeutralWhite}"
+                 CornerRadius="{StaticResource RadiusSm}"
+                 Padding="12,10" />
+      </StackPanel>
+
+      <TextBlock Text="{Binding ErrorMessage}"
+                 Foreground="{StaticResource StatusError}"
+                 IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                 TextWrapping="Wrap" />
+
+      <Button Classes="primary" HorizontalAlignment="Stretch"
+              HorizontalContentAlignment="Center"
+              Content="Sign In"
+              Command="{Binding SignInCommand}" />
+
+      <Button Background="Transparent" HorizontalAlignment="Center"
+              Foreground="{StaticResource NeutralGray}"
+              Command="{Binding GoBackCommand}">Cancel</Button>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

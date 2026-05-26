@@ -1,0 +1,39 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:PvsCommerce.Mobile.ViewModels"
+             xmlns:views="using:PvsCommerce.Mobile.Views"
+             x:Class="PvsCommerce.Mobile.Views.CategoryView"
+             x:DataType="vm:CategoryViewModel">
+
+  <Grid RowDefinitions="Auto,*">
+    <!-- Category header -->
+    <Border Grid.Row="0" Padding="16,14" Background="{StaticResource NeutralWhite}"
+            BorderBrush="#1422251F" BorderThickness="0,0,0,1">
+      <TextBlock Text="{Binding CategoryName}" Classes="h2" />
+    </Border>
+
+    <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Disabled">
+      <StackPanel Margin="10,10,10,20">
+        <TextBlock Text="Loading…" Classes="muted" IsVisible="{Binding IsLoading}"
+                   HorizontalAlignment="Center" Margin="0,24" />
+        <TextBlock Text="{Binding ErrorMessage}" Foreground="{StaticResource StatusError}"
+                   IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                   TextWrapping="Wrap" Margin="8" />
+        <ItemsControl ItemsSource="{Binding Products}" IsVisible="{Binding !IsLoading}">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate>
+              <UniformGrid Columns="2" />
+            </ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate>
+            <DataTemplate DataType="vm:ProductCardViewModel">
+              <Border Margin="6">
+                <views:ProductCardView />
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </StackPanel>
+    </ScrollViewer>
+  </Grid>
+</UserControl>

@@ -1,0 +1,267 @@
+import { useCallback, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
+import { api, ApiError } from "../../lib/api";
+
+// =====================================================================
+// /m/tasks
+// =====================================================================
+// Two segmented sections (Pick and Pack), each with two sub-buckets:
+//   - Mine     : tasks assigned to the logged-in user
+//   - Available: tasks waiting in the queue. Tap "Claim" to take one.
+
+interface TaskRow {
+  id: string;
+  pickListNo?: string;
+  packingSlipNo?: string;
+  status: string;
+  assignedToId?: string | null;
+  claimedAt?: string | null;
+  salesOrder?: {
+    soNo: string;
+    customer?: { name?: string; code?: string; city?: string | null };
+  };
+  _count?: { items: number };
+}
+
+interface TasksResponse {
+  pickClaimed: TaskRow[];
+  pickAvailable: TaskRow[];
+  packClaimed: TaskRow[];
+  packAvailable: TaskRow[];
+  counts: {
+    pickClaimed: number;
+    pickAvailable: number;
+    packClaimed: number;
+    packAvailable: number;
+  };
+}
+
+export const MobileTasks = () => {
+  const [tab, setTab] = useState<"pick" | "pack">("pick");
+  const [data, setData] = useState<TasksResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [claiming, setClaiming] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const tasks = (await api.myTasks()) as unknown as TasksResponse;
+      setData(tasks);
+    } catch (err) {
+      setError((err as Error).message ?? "Could not load tasks.");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+    const t = setInterval(() => void refresh(), 30_000);
+    return () => clearInterval(t);
+  }, [refresh]);
+
+  const claim = async (id: string, kind: "pick" | "pack") => {
+    setClaiming(id);
+    try {
+      if (kind === "pick") await api.claimPickList(id);
+      else await api.claimPackingSlip(id);
+      await refresh();
+    } catch (err) {
+      const message =
+        err instanceof ApiError && err.status === 409
+          ? "Someone else just claimed this. Refreshing the list."
+          : (err as Error).message;
+      setError(message);
+      await refresh();
+    } finally {
+      setClaiming(null);
+    }
+  };
+
+  const mine = tab === "pick" ? data?.pickClaimed ?? [] : data?.packClaimed ?? [];
+  const available =
+    tab === "pick" ? data?.pickAvailable ?? [] : data?.packAvailable ?? [];
+
+  return (
+    <div className="px-4 pt-4">
+      <div className="mb-3 flex rounded-2xl bg-slate-200 p-1">
+        <SegmentBtn
+          active={tab === "pick"}
+          onClick={() => setTab("pick")}
+          label={`Pick (${(data?.counts.pickClaimed ?? 0) + (data?.counts.pickAvailable ?? 0)})`}
+        />
+        <SegmentBtn
+          active={tab === "pack"}
+          onClick={() => setTab("pack")}
+          label={`Pack (${(data?.counts.packClaimed ?? 0) + (data?.counts.packAvailable ?? 0)})`}
+        />
+      </div>
+
+      {error && (
+        <div className="mb-3 rounded-xl bg-red-50 px-4 py-2 text-sm text-red-700 ring-1 ring-red-200">
+          {error}
+        </div>
+      )}
+
+      <Section title="My tasks" empty="Nothing claimed - grab one below.">
+        {mine.map((t) => (
+          <TaskCard key={t.id} task={t} kind={tab} mine />
+        ))}
+      </Section>
+
+      <Section
+        title="Available queue"
+        empty="The queue is clear. Nice work."
+      >
+        {available.map((t) => (
+          <TaskCard
+            key={t.id}
+            task={t}
+            kind={tab}
+            mine={false}
+            claiming={claiming === t.id}
+            onClaim={() => claim(t.id, tab)}
+          />
+        ))}
+      </Section>
+
+      <button
+        type="button"
+        onClick={() => void refresh()}
+        className="my-4 w-full rounded-xl border border-slate-300 bg-white py-2 text-sm font-medium text-slate-600"
+      >
+        {loading ? "Refreshing…" : "Refresh"}
+      </button>
+    </div>
+  );
+};
+
+const SegmentBtn = ({
+  active,
+  onClick,
+  label,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+}) => (
+  <button
+    type="button"
+    onClick={onClick}
+    className={[
+      "flex-1 rounded-xl py-2 text-sm font-semibold transition",
+      active
+        ? "bg-white text-[#003087] shadow-sm"
+        : "text-slate-600",
+    ].join(" ")}
+  >
+    {label}
+  </button>
+);
+
+const Section = ({
+  title,
+  empty,
+  children,
+}: {
+  title: string;
+  empty: string;
+  children: React.ReactNode;
+}) => {
+  const arr = Array.isArray(children) ? children : [children];
+  const filtered = arr.filter(Boolean);
+  return (
+    <div className="mb-5">
+      <h2 className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
+        {title}
+      </h2>
+      {filtered.length === 0 ? (
+        <div className="rounded-xl bg-white px-4 py-6 text-center text-sm text-slate-500 ring-1 ring-slate-200">
+          {empty}
+        </div>
+      ) : (
+        <div className="space-y-2">{filtered}</div>
+      )}
+    </div>
+  );
+};
+
+const TaskCard = ({
+  task,
+  kind,
+  mine,
+  claiming,
+  onClaim,
+}: {
+  task: TaskRow;
+  kind: "pick" | "pack";
+  mine: boolean;
+  claiming?: boolean;
+  onClaim?: () => void;
+}) => {
+  const docNo = kind === "pick" ? task.pickListNo : task.packingSlipNo;
+  const detailHref = kind === "pick" ? `/m/picks/${task.id}` : `/m/packs/${task.id}`;
+  const customer = task.salesOrder?.customer?.name ?? "—";
+  const so = task.salesOrder?.soNo ?? "";
+  const items = task._count?.items ?? 0;
+  return (
+    <div className="rounded-xl bg-white px-4 py-3 ring-1 ring-slate-200 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-sm font-semibold text-[#003087]">
+              {docNo}
+            </span>
+            <StatusPill status={task.status} />
+          </div>
+          <div className="mt-1 truncate text-sm font-medium text-slate-900">
+            {customer}
+          </div>
+          <div className="mt-0.5 truncate text-xs text-slate-500">
+            SO {so} · {items} line{items === 1 ? "" : "s"}
+          </div>
+        </div>
+        {mine ? (
+          <Link
+            to={detailHref}
+            className="flex-shrink-0 rounded-xl bg-[#003087] px-4 py-2 text-sm font-semibold text-white"
+          >
+            Open
+          </Link>
+        ) : (
+          <button
+            type="button"
+            disabled={claiming}
+            onClick={onClaim}
+            className="flex-shrink-0 rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+          >
+            {claiming ? "…" : "Claim"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const StatusPill = ({ status }: { status: string }) => {
+  const map: Record<string, string> = {
+    draft: "bg-slate-100 text-slate-700",
+    picking: "bg-amber-100 text-amber-800",
+    picked: "bg-emerald-100 text-emerald-800",
+    open: "bg-amber-100 text-amber-800",
+    packed: "bg-emerald-100 text-emerald-800",
+    cancelled: "bg-red-100 text-red-700",
+  };
+  return (
+    <span
+      className={[
+        "rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+        map[status] ?? "bg-slate-100 text-slate-700",
+      ].join(" ")}
+    >
+      {status}
+    </span>
+  );
+};

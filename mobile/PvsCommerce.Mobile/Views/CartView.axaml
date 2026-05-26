@@ -1,0 +1,86 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:PvsCommerce.Mobile.ViewModels"
+             xmlns:conv="using:PvsCommerce.Mobile.Converters"
+             xmlns:models="using:PvsCommerce.Mobile.Models"
+             x:Class="PvsCommerce.Mobile.Views.CartView"
+             x:DataType="vm:CartViewModel">
+
+  <Grid RowDefinitions="*,Auto">
+
+    <ScrollViewer Grid.Row="0" HorizontalScrollBarVisibility="Disabled">
+      <StackPanel Margin="16,16,16,0" Spacing="12">
+        <TextBlock Text="Your Cart" Classes="h2" />
+
+        <!-- Cart lines -->
+        <ItemsControl ItemsSource="{Binding Cart.Lines}">
+          <ItemsControl.ItemTemplate>
+            <DataTemplate DataType="models:CartLine">
+              <Border Classes="card" Margin="0,0,0,8">
+                <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto">
+                  <TextBlock Grid.Row="0" Grid.Column="0"
+                             Text="{Binding ProductName}"
+                             Classes="h3" TextWrapping="Wrap" />
+                  <TextBlock Grid.Row="1" Grid.Column="0"
+                             Text="{Binding VariantSize}"
+                             Classes="muted"
+                             IsVisible="{Binding VariantSize, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+
+                  <!-- Qty stepper -->
+                  <Border Grid.Row="2" Grid.Column="0"
+                          Background="{StaticResource NeutralLight}"
+                          CornerRadius="{StaticResource RadiusFull}"
+                          BorderBrush="{StaticResource BrandForest}"
+                          BorderThickness="1"
+                          HorizontalAlignment="Left"
+                          Margin="0,8,0,0">
+                    <StackPanel Orientation="Horizontal">
+                      <Button Background="Transparent"
+                              Command="{Binding $parent[UserControl].((vm:CartViewModel)DataContext).DecCommand}"
+                              CommandParameter="{Binding LineKey}"
+                              Padding="12,6" FontSize="16">-</Button>
+                      <TextBlock Text="{Binding Qty}" FontSize="15" FontWeight="Bold"
+                                 VerticalAlignment="Center" Margin="4,0" />
+                      <Button Background="Transparent"
+                              Command="{Binding $parent[UserControl].((vm:CartViewModel)DataContext).IncCommand}"
+                              CommandParameter="{Binding LineKey}"
+                              Padding="12,6" FontSize="16">+</Button>
+                    </StackPanel>
+                  </Border>
+
+                  <!-- Price + Remove -->
+                  <StackPanel Grid.Row="0" Grid.Column="1" Grid.RowSpan="3"
+                              VerticalAlignment="Center" HorizontalAlignment="Right" Spacing="8">
+                    <TextBlock Text="{Binding LineTotal, Converter={x:Static conv:InrConverter.Instance}}"
+                               Classes="price" HorizontalAlignment="Right" />
+                    <Button Background="Transparent"
+                            Command="{Binding $parent[UserControl].((vm:CartViewModel)DataContext).RemoveCommand}"
+                            CommandParameter="{Binding LineKey}"
+                            Foreground="{StaticResource StatusError}"
+                            Padding="4" FontSize="12">Remove</Button>
+                  </StackPanel>
+                </Grid>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </StackPanel>
+    </ScrollViewer>
+
+    <!-- Sticky footer -->
+    <Border Grid.Row="1" Padding="16,12" Background="{StaticResource NeutralWhite}"
+            BorderBrush="#1422251F" BorderThickness="0,1,0,0"
+            IsVisible="{Binding Cart.Count, Converter={x:Static conv:GreaterThanZeroConverter.Instance}}">
+      <Grid ColumnDefinitions="*,Auto">
+        <StackPanel Grid.Column="0" Spacing="2">
+          <TextBlock Text="Subtotal" Classes="muted" />
+          <TextBlock Text="{Binding SubTotalFormatted}" Classes="price" />
+        </StackPanel>
+        <Button Grid.Column="1" Classes="primary"
+                Content="Checkout →"
+                Command="{Binding CheckoutCommand}" />
+      </Grid>
+    </Border>
+
+  </Grid>
+</UserControl>

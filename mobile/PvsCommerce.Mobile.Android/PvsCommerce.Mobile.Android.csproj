@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0-android</TargetFramework>
+    <SupportedOSPlatformVersion>23</SupportedOSPlatformVersion>
+    <Nullable>enable</Nullable>
+    <!-- Package ID must be all-lowercase for Android to accept the APK -->
+    <ApplicationId>com.prakruthivanam.shop</ApplicationId>
+    <ApplicationVersion>2</ApplicationVersion>
+    <ApplicationDisplayVersion>1.0.2</ApplicationDisplayVersion>
+    <AndroidPackageFormat>apk</AndroidPackageFormat>
+    <AndroidEnableProfiledAot>false</AndroidEnableProfiledAot>
+    <!-- Include arm64-v8a (modern phones), armeabi-v7a (older phones), x86_64 (emulators) -->
+    <RuntimeIdentifiers>android-arm64;android-arm;android-x64</RuntimeIdentifiers>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <AndroidResource Include="Icon.png">
+      <Link>Resources\drawable\Icon.png</Link>
+    </AndroidResource>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia.Android" />
+    <PackageReference Include="Xamarin.AndroidX.Core.SplashScreen" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\PvsCommerce.Mobile\PvsCommerce.Mobile.csproj" />
+  </ItemGroup>
+</Project>

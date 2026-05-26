@@ -1,0 +1,121 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+  <!-- Section eyebrow caption used on hero / section headers.
+       Authors should write the text already upper-cased; AXAML has no
+       TextTransform property so we mimic CSS uppercase via convention. -->
+  <Style Selector="TextBlock.eyebrow">
+    <Setter Property="FontSize" Value="12" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="LetterSpacing" Value="2" />
+    <Setter Property="Foreground" Value="{StaticResource BrandForest}" />
+  </Style>
+
+  <Style Selector="TextBlock.h1">
+    <Setter Property="FontFamily" Value="{StaticResource DisplayFont}" />
+    <Setter Property="FontSize" Value="34" />
+    <Setter Property="FontWeight" Value="Bold" />
+    <Setter Property="LineHeight" Value="40" />
+    <Setter Property="Foreground" Value="{StaticResource NeutralDark}" />
+  </Style>
+
+  <Style Selector="TextBlock.h2">
+    <Setter Property="FontFamily" Value="{StaticResource DisplayFont}" />
+    <Setter Property="FontSize" Value="24" />
+    <Setter Property="FontWeight" Value="Bold" />
+    <Setter Property="Foreground" Value="{StaticResource NeutralDark}" />
+  </Style>
+
+  <Style Selector="TextBlock.h3">
+    <Setter Property="FontSize" Value="18" />
+    <Setter Property="FontWeight" Value="Bold" />
+    <Setter Property="Foreground" Value="{StaticResource NeutralDark}" />
+  </Style>
+
+  <Style Selector="TextBlock.body">
+    <Setter Property="FontSize" Value="14" />
+    <Setter Property="Foreground" Value="{StaticResource NeutralDark}" />
+    <Setter Property="LineHeight" Value="22" />
+  </Style>
+
+  <Style Selector="TextBlock.muted">
+    <Setter Property="FontSize" Value="13" />
+    <Setter Property="Foreground" Value="{StaticResource NeutralGray}" />
+  </Style>
+
+  <Style Selector="TextBlock.price">
+    <Setter Property="FontFamily" Value="{StaticResource DisplayFont}" />
+    <Setter Property="FontSize" Value="20" />
+    <Setter Property="FontWeight" Value="Bold" />
+    <Setter Property="Foreground" Value="{StaticResource BrandForestDark}" />
+  </Style>
+
+  <!-- Primary (forest) button -->
+  <Style Selector="Button.primary">
+    <Setter Property="Background" Value="{StaticResource BrandForest}" />
+    <Setter Property="Foreground" Value="{StaticResource NeutralWhite}" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="CornerRadius" Value="{StaticResource RadiusFull}" />
+    <Setter Property="Padding" Value="20,10" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="HorizontalContentAlignment" Value="Center" />
+    <Setter Property="VerticalContentAlignment" Value="Center" />
+  </Style>
+  <Style Selector="Button.primary:pointerover /template/ ContentPresenter">
+    <Setter Property="Background" Value="{StaticResource BrandForestLight}" />
+  </Style>
+
+  <!-- Gold accent button -->
+  <Style Selector="Button.gold">
+    <Setter Property="Background" Value="{StaticResource BrandGold}" />
+    <Setter Property="Foreground" Value="{StaticResource NeutralDark}" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="CornerRadius" Value="{StaticResource RadiusFull}" />
+    <Setter Property="Padding" Value="20,10" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+  </Style>
+  <Style Selector="Button.gold:pointerover /template/ ContentPresenter">
+    <Setter Property="Background" Value="{StaticResource BrandGoldDark}" />
+  </Style>
+
+  <!-- Outline button -->
+  <Style Selector="Button.outline">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="Foreground" Value="{StaticResource BrandForest}" />
+    <Setter Property="BorderBrush" Value="{StaticResource BrandForest}" />
+    <Setter Property="BorderThickness" Value="1.5" />
+    <Setter Property="CornerRadius" Value="{StaticResource RadiusFull}" />
+    <Setter Property="Padding" Value="18,8" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+  </Style>
+
+  <!-- Card -->
+  <Style Selector="Border.card">
+    <Setter Property="Background" Value="{StaticResource NeutralWhite}" />
+    <Setter Property="CornerRadius" Value="{StaticResource RadiusMd}" />
+    <Setter Property="BorderBrush" Value="#0F22251F" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="BoxShadow" Value="{StaticResource ShadowSm}" />
+    <Setter Property="Padding" Value="12" />
+  </Style>
+
+  <!-- Chip -->
+  <Style Selector="Border.chip">
+    <Setter Property="Background" Value="{StaticResource BrandForestSoft}" />
+    <Setter Property="CornerRadius" Value="{StaticResource RadiusFull}" />
+    <Setter Property="Padding" Value="10,4" />
+  </Style>
+
+  <!-- Stock badge -->
+  <Style Selector="Border.stockBadge">
+    <Setter Property="Background" Value="{StaticResource BrandForestSoft}" />
+    <Setter Property="CornerRadius" Value="{StaticResource RadiusFull}" />
+    <Setter Property="Padding" Value="8,3" />
+  </Style>
+  <Style Selector="Border.stockBadge.low">
+    <Setter Property="Background" Value="#FEF9C3" />
+  </Style>
+  <Style Selector="Border.stockBadge.out">
+    <Setter Property="Background" Value="#FEE2E2" />
+  </Style>
+</Styles>

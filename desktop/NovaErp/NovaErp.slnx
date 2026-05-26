@@ -1,0 +1,11 @@
+﻿<Solution>
+  <Project Path="NovaErp.Android/NovaErp.Android.csproj">
+    <Deploy />
+  </Project>
+  <Project Path="NovaErp.Browser/NovaErp.Browser.csproj" />
+  <Project Path="NovaErp.Desktop/NovaErp.Desktop.csproj" />
+  <Project Path="NovaErp.iOS/NovaErp.iOS.csproj">
+    <Deploy />
+  </Project>
+  <Project Path="NovaErp/NovaErp.csproj" />
+</Solution>

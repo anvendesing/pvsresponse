@@ -1,0 +1,73 @@
+# ── Node ─────────────────────────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# ── Build outputs ─────────────────────────────────────────────────────────────
+dist/
+build/
+.next/
+out/
+
+# ── Environment / secrets ─────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+# Keep example files (no real secrets) so new team members can copy them
+!.env.example
+!.env.*.example
+!.env.deploy.example
+
+# ── Database ──────────────────────────────────────────────────────────────────
+*.db
+*.db-shm
+*.db-wal
+# SQLite WAL files are transient; the named Docker volume holds the real data
+prisma/dev.db
+prisma/test.db
+
+# ── OS / Editor ───────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/settings.json
+.idea/
+*.suo
+*.user
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+logs/
+*.log
+
+# ── Test & coverage ───────────────────────────────────────────────────────────
+coverage/
+.nyc_output/
+
+# ── Prisma generated (regenerated at `prisma generate`) ──────────────────────
+node_modules/.prisma/
+
+# ── Mobile / Avalonia ─────────────────────────────────────────────────────────
+mobile/**/bin/
+mobile/**/obj/
+mobile/**/*.user
+mobile/**/*.suo
+*.apk
+*.aab
+
+# ── Cursor IDE local state (not project config) ──────────────────────────────
+.cursor/
+
+# ── Playwright MCP local cache ────────────────────────────────────────────────
+.playwright-mcp/
+
+# ── Codegraph index (local only) ──────────────────────────────────────────────
+.codegraph/
+
+# ── Misc ──────────────────────────────────────────────────────────────────────
+*.tmp
+*.bak
+uploads/
+public/images/products/

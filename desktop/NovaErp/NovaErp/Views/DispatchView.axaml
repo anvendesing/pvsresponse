@@ -1,0 +1,68 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:vm="using:NovaErp.ViewModels"
+             mc:Ignorable="d" d:DesignWidth="1080" d:DesignHeight="700"
+             x:Class="NovaErp.Views.DispatchView"
+             x:DataType="vm:DispatchViewModel">
+  <Grid Margin="20" RowDefinitions="Auto,*">
+    <StackPanel Spacing="6">
+      <TextBlock Classes="caption" Text="DISPATCH &amp; DELIVERY" />
+      <TextBlock Classes="h1" Text="Dispatch confirmation" />
+      <TextBlock Classes="muted" Text="{Binding StatusMessage}" />
+    </StackPanel>
+
+    <Grid Grid.Row="1" Margin="0 24 0 0" ColumnDefinitions="2*,*">
+      <Border Classes="card" Padding="0">
+        <DockPanel>
+          <Border DockPanel.Dock="Top" Background="{DynamicResource CanvasBrush}" Padding="14 10"
+                  BorderBrush="{DynamicResource BorderBrush}" BorderThickness="0 0 0 1">
+            <TextBlock Text="Today's dispatches" FontWeight="SemiBold" />
+          </Border>
+          <ListBox ItemsSource="{Binding Dispatches}" SelectedItem="{Binding Selected, Mode=TwoWay}"
+                   BorderThickness="0" Background="Transparent">
+            <ListBox.ItemTemplate>
+              <DataTemplate>
+                <Grid Margin="6" ColumnDefinitions="*,Auto">
+                  <StackPanel>
+                    <TextBlock Text="{Binding DispatchNo}" FontFamily="Consolas" FontSize="11"
+                               FontWeight="Bold" Foreground="{DynamicResource PrimaryBrush}" />
+                    <TextBlock Text="{Binding Destination}" FontWeight="SemiBold" FontSize="13" />
+                    <TextBlock Classes="caption">
+                      <Run Text="{Binding Vehicle}" /> · <Run Text="{Binding Driver}" />
+                    </TextBlock>
+                  </StackPanel>
+                  <StackPanel Grid.Column="1" Spacing="2" HorizontalAlignment="Right" VerticalAlignment="Center">
+                    <Border Classes="chip">
+                      <TextBlock Text="{Binding Status}" FontSize="11" FontWeight="SemiBold" />
+                    </Border>
+                    <TextBlock Text="{Binding EtaHours, StringFormat='ETA {0}h'}" Classes="caption" />
+                  </StackPanel>
+                </Grid>
+              </DataTemplate>
+            </ListBox.ItemTemplate>
+          </ListBox>
+        </DockPanel>
+      </Border>
+
+      <StackPanel Grid.Column="1" Margin="16 0 0 0" Spacing="14">
+        <Border Classes="card" Padding="20" IsVisible="{Binding Selected, Converter={x:Static ObjectConverters.IsNotNull}}">
+          <StackPanel Spacing="12">
+            <TextBlock Classes="caption" Text="{Binding Selected.DispatchNo}" />
+            <TextBlock Classes="h2" Text="{Binding Selected.Destination}" />
+
+            <StackPanel Spacing="6">
+              <TextBlock Text="OTP from receiver" Classes="caption" />
+              <TextBox Classes="input" Text="{Binding Otp}" FontFamily="Consolas"
+                       Watermark="0000" />
+            </StackPanel>
+            <Button Classes="gold" Content="Confirm Delivery · F8"
+                    Command="{Binding ConfirmDeliveryCommand}" HotKey="F8" />
+            <TextBlock Classes="caption" Text="Photo proof + signature captured automatically by mobile." />
+          </StackPanel>
+        </Border>
+      </StackPanel>
+    </Grid>
+  </Grid>
+</UserControl>

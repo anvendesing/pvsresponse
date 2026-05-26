@@ -1,0 +1,99 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:PvsCommerce.Mobile.ViewModels"
+             xmlns:conv="using:PvsCommerce.Mobile.Converters"
+             x:Class="PvsCommerce.Mobile.Views.MainView"
+             x:DataType="vm:MainViewModel"
+             Background="{StaticResource NeutralCream}">
+
+  <Grid RowDefinitions="Auto,*,Auto">
+
+    <!-- ── Header ─────────────────────────────────────────────────────────── -->
+    <Border Grid.Row="0"
+            Background="{StaticResource NeutralWhite}"
+            BorderBrush="#1422251F"
+            BorderThickness="0,0,0,1"
+            Padding="16,12">
+      <Grid ColumnDefinitions="Auto,*,Auto">
+        <StackPanel Grid.Column="0" Orientation="Horizontal" Spacing="10" VerticalAlignment="Center">
+          <Border Background="{StaticResource BrandForest}"
+                  CornerRadius="9999" Width="36" Height="36">
+            <TextBlock Text="🌿" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="18" />
+          </Border>
+          <StackPanel Spacing="-2">
+            <TextBlock Text="Prakruthivanam" FontWeight="Bold" FontSize="16"
+                       Foreground="{StaticResource BrandForestDark}" />
+            <TextBlock Text="Farm-direct organic" FontSize="11" Foreground="{StaticResource NeutralGray}" />
+          </StackPanel>
+        </StackPanel>
+
+        <!-- Back button — visible when navigation stack is non-empty -->
+        <Button Grid.Column="1"
+                Content="← Back"
+                IsVisible="{Binding Navigation.CanGoBack}"
+                Command="{Binding GoBackCommand}"
+                Background="Transparent"
+                Foreground="{StaticResource BrandForest}"
+                FontWeight="SemiBold"
+                HorizontalAlignment="Left"
+                Margin="12,0,0,0" />
+
+        <!-- Cart badge -->
+        <Button Grid.Column="2"
+                Command="{Binding GoCartCommand}"
+                Background="{StaticResource BrandGold}"
+                CornerRadius="9999"
+                Width="42" Height="42"
+                Padding="0">
+          <StackPanel Spacing="0" HorizontalAlignment="Center">
+            <TextBlock Text="🛒" FontSize="16" HorizontalAlignment="Center" />
+            <TextBlock Text="{Binding Cart.Count}"
+                       FontSize="10" FontWeight="Bold"
+                       HorizontalAlignment="Center"
+                       Foreground="{StaticResource BrandForestDark}"
+                       IsVisible="{Binding Cart.Count, Converter={x:Static conv:GreaterThanZeroConverter.Instance}}" />
+          </StackPanel>
+        </Button>
+      </Grid>
+    </Border>
+
+    <!-- ── Page area: ContentControl driven by NavigationService ─────────── -->
+    <ContentControl Grid.Row="1"
+                    Content="{Binding Navigation.CurrentPage}"
+                    HorizontalContentAlignment="Stretch"
+                    VerticalContentAlignment="Stretch" />
+
+    <!-- ── Bottom nav ─────────────────────────────────────────────────────── -->
+    <Border Grid.Row="2"
+            Background="{StaticResource NeutralWhite}"
+            BorderBrush="#1422251F"
+            BorderThickness="0,1,0,0"
+            Padding="0,8">
+      <Grid ColumnDefinitions="*,*,*">
+        <Button Grid.Column="0" Command="{Binding GoHomeCommand}"
+                Background="Transparent" HorizontalAlignment="Stretch" Padding="0">
+          <StackPanel HorizontalAlignment="Center" Spacing="2">
+            <TextBlock Text="🏠" FontSize="20" HorizontalAlignment="Center" />
+            <TextBlock Text="Home" FontSize="11" Foreground="{StaticResource BrandForest}"
+                       FontWeight="SemiBold" HorizontalAlignment="Center" />
+          </StackPanel>
+        </Button>
+        <Button Grid.Column="1" Command="{Binding GoCartCommand}"
+                Background="Transparent" HorizontalAlignment="Stretch" Padding="0">
+          <StackPanel HorizontalAlignment="Center" Spacing="2">
+            <TextBlock Text="🛒" FontSize="20" HorizontalAlignment="Center" />
+            <TextBlock Text="Cart" FontSize="11" Foreground="{StaticResource NeutralGray}" HorizontalAlignment="Center" />
+          </StackPanel>
+        </Button>
+        <Button Grid.Column="2" Command="{Binding GoAccountCommand}"
+                Background="Transparent" HorizontalAlignment="Stretch" Padding="0">
+          <StackPanel HorizontalAlignment="Center" Spacing="2">
+            <TextBlock Text="👤" FontSize="20" HorizontalAlignment="Center" />
+            <TextBlock Text="Account" FontSize="11" Foreground="{StaticResource NeutralGray}" HorizontalAlignment="Center" />
+          </StackPanel>
+        </Button>
+      </Grid>
+    </Border>
+
+  </Grid>
+</UserControl>

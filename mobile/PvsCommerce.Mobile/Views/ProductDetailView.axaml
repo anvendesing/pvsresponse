@@ -1,0 +1,207 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:PvsCommerce.Mobile.ViewModels"
+             xmlns:views="using:PvsCommerce.Mobile.Views"
+             xmlns:conv="using:PvsCommerce.Mobile.Converters"
+             xmlns:loader="clr-namespace:AsyncImageLoader;assembly=AsyncImageLoader.Avalonia"
+             x:Class="PvsCommerce.Mobile.Views.ProductDetailView"
+             x:DataType="vm:ProductDetailViewModel">
+
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+    <StackPanel Spacing="0">
+
+      <!-- Loading -->
+      <Border Padding="32" IsVisible="{Binding IsLoading}">
+        <TextBlock Text="Loading product…" Classes="muted" HorizontalAlignment="Center" />
+      </Border>
+
+      <!-- Error -->
+      <Border Padding="32" IsVisible="{Binding HasError}">
+        <StackPanel Spacing="12" HorizontalAlignment="Center">
+          <TextBlock Text="Product not found." Classes="h3" HorizontalAlignment="Center" />
+          <Button Classes="outline" Content="Go Back" Command="{Binding GoBackCommand}" />
+        </StackPanel>
+      </Border>
+
+      <!-- Content -->
+      <StackPanel IsVisible="{Binding !IsLoading}" Spacing="0">
+
+        <!-- Breadcrumb -->
+        <TextBlock Margin="16,16,16,0" FontSize="12" Foreground="{StaticResource NeutralGray}">
+          <Run Text="Home" />
+          <Run Text=" › " />
+          <Run Text="{Binding CategoryName}" />
+          <Run Text=" › " />
+          <Run Text="{Binding ProductName}" />
+        </TextBlock>
+
+        <!-- Artwork -->
+        <Border Margin="16,12,16,0" Height="220" CornerRadius="{StaticResource RadiusLg}"
+                Background="{StaticResource BrandGoldCream}">
+          <Grid>
+            <Image loader:ImageLoader.Source="{Binding ImageUrl}" Stretch="Uniform"
+                   IsVisible="{Binding ImageUrl, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+            <Border IsVisible="{Binding ImageUrl, Converter={x:Static StringConverters.IsNullOrEmpty}}"
+                    HorizontalAlignment="Center" VerticalAlignment="Center"
+                    Background="{StaticResource BrandForestSoft}"
+                    CornerRadius="9999" Width="100" Height="100">
+              <TextBlock Text="🌿" FontSize="56" HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Border>
+          </Grid>
+        </Border>
+
+        <!-- Info -->
+        <StackPanel Margin="16,16,16,0" Spacing="8">
+          <TextBlock Text="{Binding Category}" Classes="muted" />
+          <TextBlock Text="{Binding ProductName}" Classes="h1" TextWrapping="Wrap" />
+
+          <!-- Price -->
+          <Grid ColumnDefinitions="Auto,Auto,*">
+            <TextBlock Text="{Binding PriceFormatted}" Classes="price" />
+            <TextBlock Grid.Column="1" Text="{Binding Uom}" Classes="muted"
+                       VerticalAlignment="Bottom" Margin="6,0,0,2" />
+            <!-- Wishlist toggle -->
+            <Button Grid.Column="2" HorizontalAlignment="Right"
+                    Command="{Binding ToggleWishlistCommand}"
+                    Background="Transparent" FontSize="22">
+              <TextBlock Text="{Binding IsWished, Converter={x:Static conv:WishlistEmojiConverter.Instance}}" />
+            </Button>
+          </Grid>
+
+          <!-- Stock badge -->
+          <Border Classes="stockBadge" HorizontalAlignment="Left">
+            <TextBlock Text="{Binding StockLabel}" FontSize="12" FontWeight="SemiBold" />
+          </Border>
+
+          <!-- Variant chips -->
+          <ItemsControl ItemsSource="{Binding VariantChips}"
+                        IsVisible="{Binding VariantChips.Count, Converter={x:Static conv:GreaterThanZeroConverter.Instance}}">
+            <ItemsControl.ItemsPanel>
+              <ItemsPanelTemplate>
+                <WrapPanel Orientation="Horizontal" />
+              </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+              <DataTemplate DataType="vm:VariantChipVm">
+                <Button Margin="4,2"
+                        Command="{Binding $parent[UserControl].((vm:ProductDetailViewModel)DataContext).SelectVariantCommand}"
+                        CommandParameter="{Binding}"
+                        Background="{Binding IsSelected, Converter={x:Static conv:SelectedChipBgConverter.Instance}}"
+                        Foreground="{Binding IsSelected, Converter={x:Static conv:SelectedChipFgConverter.Instance}}"
+                        BorderBrush="{StaticResource BrandForest}"
+                        BorderThickness="1.5"
+                        CornerRadius="{StaticResource RadiusFull}"
+                        Padding="12,5"
+                        IsEnabled="{Binding IsInStock}">
+                  <TextBlock Text="{Binding Label}" FontSize="13" FontWeight="SemiBold" />
+                </Button>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+
+          <!-- Qty + Add to cart -->
+          <Grid ColumnDefinitions="Auto,*" Margin="0,8,0,0">
+            <Border Grid.Column="0"
+                    Background="{StaticResource NeutralLight}"
+                    CornerRadius="{StaticResource RadiusFull}"
+                    BorderBrush="{StaticResource BrandForest}"
+                    BorderThickness="1">
+              <StackPanel Orientation="Horizontal" Spacing="0">
+                <Button Background="Transparent" Command="{Binding DecQtyCommand}"
+                        Padding="14,8" FontSize="18">-</Button>
+                <TextBlock Text="{Binding Qty}" FontSize="16" FontWeight="Bold"
+                           VerticalAlignment="Center" Margin="4,0" />
+                <Button Background="Transparent" Command="{Binding IncQtyCommand}"
+                        Padding="14,8" FontSize="18">+</Button>
+              </StackPanel>
+            </Border>
+            <Button Grid.Column="1" Classes="gold" Margin="10,0,0,0"
+                    HorizontalAlignment="Stretch"
+                    HorizontalContentAlignment="Center"
+                    Command="{Binding AddToCartCommand}"
+                    IsEnabled="{Binding IsInStock}"
+                    Content="Add to Cart" />
+          </Grid>
+
+          <!-- Info pills -->
+          <WrapPanel Margin="0,6,0,0">
+            <Border Classes="chip" Margin="0,4,8,4">
+              <TextBlock Text="🌿 100% Natural" FontSize="12" />
+            </Border>
+            <Border Classes="chip" Margin="0,4,8,4">
+              <TextBlock Text="✓ Farm-direct" FontSize="12" />
+            </Border>
+            <Border Classes="chip" Margin="0,4,8,4">
+              <TextBlock Text="⚡ Express Delivery" FontSize="12" />
+            </Border>
+          </WrapPanel>
+        </StackPanel>
+
+        <!-- Tabs -->
+        <StackPanel Margin="16,20,16,0" Spacing="0">
+          <!-- Tab buttons -->
+          <Grid ColumnDefinitions="*,*,*">
+            <Button Grid.Column="0" Background="Transparent"
+                    BorderBrush="{StaticResource BrandForest}"
+                    BorderThickness="{Binding ActiveTab, Converter={x:Static conv:TabBorderConverter.Instance}, ConverterParameter=description}"
+                    Command="{Binding SetTabCommand}" CommandParameter="description"
+                    Padding="0,10" HorizontalContentAlignment="Center" HorizontalAlignment="Stretch">
+              <TextBlock Text="Description" FontWeight="SemiBold" FontSize="13" />
+            </Button>
+            <Button Grid.Column="1" Background="Transparent"
+                    BorderBrush="{StaticResource BrandForest}"
+                    BorderThickness="{Binding ActiveTab, Converter={x:Static conv:TabBorderConverter.Instance}, ConverterParameter=ingredients}"
+                    Command="{Binding SetTabCommand}" CommandParameter="ingredients"
+                    Padding="0,10" HorizontalContentAlignment="Center" HorizontalAlignment="Stretch">
+              <TextBlock Text="Ingredients" FontWeight="SemiBold" FontSize="13" />
+            </Button>
+            <Button Grid.Column="2" Background="Transparent"
+                    BorderBrush="{StaticResource BrandForest}"
+                    BorderThickness="{Binding ActiveTab, Converter={x:Static conv:TabBorderConverter.Instance}, ConverterParameter=how-to-use}"
+                    Command="{Binding SetTabCommand}" CommandParameter="how-to-use"
+                    Padding="0,10" HorizontalContentAlignment="Center" HorizontalAlignment="Stretch">
+              <TextBlock Text="How to Use" FontWeight="SemiBold" FontSize="13" />
+            </Button>
+          </Grid>
+
+          <!-- Tab panel -->
+          <Border Padding="4,12">
+            <StackPanel>
+              <TextBlock IsVisible="{Binding ActiveTab, Converter={x:Static conv:TabVisibleConverter.Instance}, ConverterParameter=description}"
+                         Text="{Binding Description}" Classes="body" TextWrapping="Wrap" />
+              <TextBlock IsVisible="{Binding ActiveTab, Converter={x:Static conv:TabVisibleConverter.Instance}, ConverterParameter=ingredients}"
+                         Text="{Binding Ingredients}" Classes="body" TextWrapping="Wrap" />
+              <StackPanel IsVisible="{Binding ActiveTab, Converter={x:Static conv:TabVisibleConverter.Instance}, ConverterParameter=how-to-use}"
+                          Spacing="8">
+                <TextBlock Text="Store in a cool, dry place away from direct sunlight." Classes="body" TextWrapping="Wrap" />
+                <TextBlock Text="Use as directed — incorporate into your daily cooking or wellness routine." Classes="body" TextWrapping="Wrap" />
+                <TextBlock Text="Best consumed within 6 months of opening. Refrigerate after opening if required." Classes="body" TextWrapping="Wrap" />
+              </StackPanel>
+            </StackPanel>
+          </Border>
+        </StackPanel>
+
+        <!-- Related products -->
+        <StackPanel Margin="16,20,16,32" Spacing="12"
+                    IsVisible="{Binding Related.Count, Converter={x:Static conv:GreaterThanZeroConverter.Instance}}">
+          <TextBlock Text="You may also like" Classes="h2" />
+          <ItemsControl ItemsSource="{Binding Related}">
+            <ItemsControl.ItemsPanel>
+              <ItemsPanelTemplate>
+                <UniformGrid Columns="2" />
+              </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+              <DataTemplate DataType="vm:ProductCardViewModel">
+                <Border Margin="6">
+                  <views:ProductCardView />
+                </Border>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </StackPanel>
+
+      </StackPanel>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>
