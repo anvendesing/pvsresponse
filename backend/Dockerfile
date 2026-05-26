@@ -35,7 +35,7 @@ FROM node:${NODE_VERSION} AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 # OpenSSL 3 is required by Prisma's query engine on alpine.
-RUN apk add --no-cache openssl tini
+RUN apk add --no-cache openssl tini su-exec wget
 # Copy only what runtime needs.
 COPY package.json package-lock.json* ./
 COPY --from=deps /app/node_modules ./node_modules
@@ -45,20 +45,19 @@ COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
 # Drop dev deps to slim the image (re-install with --omit=dev). This
 # keeps prisma cli + tsx out of the runtime image. The 5-10s
 # extra reinstall here is dwarfed by the 80%+ image size win.
-RUN npm prune --omit=dev
+RUN npm prune --omit=dev \
+ && npm install prisma@^5.22.0 --omit=dev --no-save
 
 # SQLite database lives in /data so a docker volume can persist it.
 # We also keep the legacy /app/prisma/dev.db location working: the
 # container's entrypoint symlinks it at boot if DATABASE_URL points
 # at the volume.
 RUN mkdir -p /data && chown -R node:node /data /app
-USER node
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
+USER root
 
 EXPOSE 4000
 # Tini reaps zombies and forwards SIGTERM correctly so docker stop is
 # graceful (Fastify handles SIGTERM out of the box).
-ENTRYPOINT ["/sbin/tini", "--"]
-# `prisma migrate deploy` is idempotent and only applies pending
-# migrations; safe to run on every container start. Then start the
-# compiled server.
-CMD ["sh", "-c", "npx prisma migrate deploy && node dist/index.js"]
+ENTRYPOINT ["/sbin/tini", "--", "/docker-entrypoint.sh"]

@@ -5,17 +5,18 @@ This guide covers deploying NovaERP to a fresh VPS that is reachable
 no application changes are required — only DNS and (optionally) TLS
 in front of the existing nginx.
 
-The reference deployment uses **Docker Compose** with two containers:
+The reference deployment uses **Docker Compose** with three containers:
 
 | Service   | What it is                                  | Port (host) | Port (internal) |
 | --------- | ------------------------------------------- | ----------- | --------------- |
-| `web`     | nginx serving the SPA + reverse-proxying API | `80` (configurable via `WEB_PORT`) | `80` |
+| `web`     | nginx serving the ERP SPA + reverse-proxying API | `80` (`WEB_PORT`) | `80` |
+| `shop`    | nginx serving the Prakruthivanam storefront + API proxy | `8080` (`SHOP_PORT`) | `80` |
 | `backend` | Fastify API + Prisma + SQLite (default)     | _not exposed_ | `4000` |
 
-The browser only ever sees one origin (`http://VPS_IP/`). nginx in
-the `web` container routes `/v1/*` and `/health` to the backend over
-the docker-internal network, so you never need to open the API port
-on the firewall and there is no CORS preflight in the happy path.
+Each frontend only ever sees one origin (`http://VPS_IP/` for ERP,
+`http://VPS_IP:8080/` for the shop). nginx in each container routes
+`/v1/*` and `/health` to the backend over the docker-internal network,
+so you never need to open the API port on the firewall.
 
 ---
 
@@ -45,9 +46,10 @@ in `docker compose logs backend`.
    Linode, AWS Lightsail). **2 vCPU + 2 GB RAM + 20 GB disk** is
    plenty for the first 50 concurrent users.
 2. SSH in as root or a sudo user.
-3. Open inbound firewall for **TCP 22** (SSH) and **TCP 80** (web).
-   Nothing else needs to be public.
-   - On `ufw`: `sudo ufw allow 22 && sudo ufw allow 80 && sudo ufw enable`
+3. Open inbound firewall for **TCP 22** (SSH), **TCP 80** (ERP), and
+   **TCP 8080** (Prakruthivanam shop, or whatever you set as
+   `SHOP_PORT`). Nothing else needs to be public.
+   - On `ufw`: `sudo ufw allow 22 && sudo ufw allow 80 && sudo ufw allow 8080 && sudo ufw enable`
    - On the cloud provider's panel: same idea.
 
 ## 2. Install Docker
@@ -86,6 +88,7 @@ The only knobs you typically touch:
 | --- | --- | --- |
 | `JWT_SECRET` | _(must set)_ | Always. Long random string. |
 | `WEB_PORT` | `80` | If port 80 is already taken on the host. |
+| `SHOP_PORT` | `8080` | Host port for the Prakruthivanam ecommerce storefront. |
 | `DATABASE_URL` | `file:/data/dev.db` (SQLite on the docker volume) | When you upgrade to Postgres (see §8). |
 | `CORS_ORIGIN` | `*` | When you have a known list of API consumers and want to lock down. |
 | `VITE_API_URL` | _(empty)_ | Only when the SPA must talk to a backend on a different origin. Leave blank for IP-only. |
@@ -103,6 +106,7 @@ Watch the logs while it boots:
 ```bash
 docker compose logs -f backend
 docker compose logs -f web
+docker compose logs -f shop
 ```
 
 You're up when you see `NovaERP API ready · http://localhost:4000/v1`
@@ -117,7 +121,8 @@ curl -s http://localhost/v1/public/company
 
 # From your laptop:
 curl -s http://<VPS_IP>/health
-# Then open http://<VPS_IP>/ in a browser.
+curl -s http://<VPS_IP>:8080/health
+# Then open http://<VPS_IP>/ (ERP) and http://<VPS_IP>:8080/ (shop).
 ```
 
 The chrome shows your brand (default `NovaERP`). Sign in with one of
@@ -136,6 +141,7 @@ docker compose logs -f
 # Restart only one service
 docker compose restart backend
 docker compose restart web
+docker compose restart shop
 
 # Stop everything (keeps the DB volume)
 docker compose down
@@ -275,8 +281,8 @@ sudo nginx -t && sudo systemctl reload nginx
 ## 11. CI-built images (recommended once you have a GitHub repo)
 
 Building on the VPS works but is slow. The included GitHub Actions
-workflow at `.github/workflows/build-images.yml` builds both images
-(`novaerp-backend` and `novaerp-web`) on every push to `main`,
+workflow at `.github/workflows/build-images.yml` builds all three images
+(`novaerp-backend`, `novaerp-web`, and `novaerp-shop`) on every push to `main`,
 publishes them to **GitHub Container Registry** (ghcr.io), and tags
 them with `latest`, `sha-<short>`, and any pushed `v*` semver tag.
 
@@ -324,8 +330,8 @@ IMAGE_TAG=sha-9f8e7d6 \
   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --no-build
 ```
 
-Find the SHA in the `Pushed backend image` / `Pushed web image`
-section of the Actions run that you want to roll back to.
+Find the SHA in the `Pushed backend image` / `Pushed web image` /
+`Pushed shop image` section of the Actions run that you want to roll back to.
 
 ### Pinning to a release
 
@@ -352,15 +358,18 @@ are enabled.
 
 | Path | Purpose |
 | --- | --- |
-| `docker-compose.yml` | Top-level orchestration. Services: `web`, `backend`, named volume `novaerp_db`. |
+| `docker-compose.yml` | Top-level orchestration. Services: `web`, `shop`, `backend`, named volume `novaerp_db`. |
 | `docker-compose.prod.yml` | Overlay that swaps `image:` to GHCR-qualified refs. Used with the base file via `-f` flags. |
-| `.env.deploy.example` | Copy to `.env`. Holds `JWT_SECRET`, `WEB_PORT`, `DATABASE_URL`, `CORS_ORIGIN`, `VITE_API_URL`. |
+| `.env.deploy.example` | Copy to `.env`. Holds `JWT_SECRET`, `WEB_PORT`, `SHOP_PORT`, `DATABASE_URL`, `CORS_ORIGIN`, `VITE_API_URL`. |
 | `backend/Dockerfile` | Multi-stage Node 22 build. Runs `prisma migrate deploy` on every container start. |
 | `backend/.dockerignore` | Keeps node_modules / dev DB out of the build context. |
 | `erp-portal/Dockerfile` | Multi-stage: Vite build → nginx static serve. |
 | `erp-portal/nginx.conf` | Site config: SPA fallback to `index.html`, reverse proxy `/v1` and `/health` to `backend:4000`. |
 | `erp-portal/.dockerignore` | Same idea for the frontend build context. |
-| `.github/workflows/build-images.yml` | CI: matrix build of backend + web → push to ghcr.io with `latest`, `sha-<short>`, semver tags. |
+| `pvsecommerce/Dockerfile` | Multi-stage: Prakruthivanam Vite build → nginx static serve. |
+| `pvsecommerce/nginx.conf` | Same proxy pattern as ERP; serves the shop on `$SHOP_PORT`. |
+| `pvsecommerce/.dockerignore` | Shop build context exclusions. |
+| `.github/workflows/build-images.yml` | CI: matrix build of backend + web + shop → push to ghcr.io with `latest`, `sha-<short>`, semver tags. |
 
 ## 13. Troubleshooting
 

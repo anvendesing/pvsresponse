@@ -1,15 +1,11 @@
 # =====================================================================
 # NovaERP - production docker-compose
 # =====================================================================
-# This file orchestrates the two services for an IP-only VPS deploy:
+# This file orchestrates the services for an IP-only VPS deploy:
 #
-#   nginx (web)    : public, listens on $WEB_PORT (default 80). Serves
-#                    the React SPA and reverse-proxies /v1/* and
-#                    /health to the backend.
-#   backend (api)  : internal-only. Listens on 4000 inside the docker
-#                    network; the SPA reaches it through the nginx
-#                    container, so we don't need to publish 4000 to
-#                    the host or open a firewall hole for it.
+#   nginx (web)    : ERP admin portal on $WEB_PORT (default 80).
+#   nginx (shop)   : Prakruthivanam storefront on $SHOP_PORT (default 8080).
+#   backend (api)  : internal-only on :4000; both frontends proxy /v1/*.
 #
 # Persistent state:
 #   - SQLite DB stored in the named volume `novaerp_db` mounted at
@@ -59,7 +55,7 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - "wget -q -O - http://localhost:4000/health || exit 1"
+        - "node -e \"fetch('http://127.0.0.1:4000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""
       interval: 30s
       timeout: 5s
       retries: 5
@@ -81,6 +77,29 @@ services:
     ports:
       # Expose port 80 (or whatever WEB_PORT is set to) on the host.
       - "${WEB_PORT:-80}:80"
+    networks:
+      - novaerp
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/health"]
+      interval: 30s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  shop:
+    build:
+      context: ./pvsecommerce
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-}
+        VITE_MOCK_STOREFRONT_TOKEN: ${VITE_MOCK_STOREFRONT_TOKEN:-}
+    image: novaerp-shop:latest
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${SHOP_PORT:-8080}:80"
     networks:
       - novaerp
     healthcheck:

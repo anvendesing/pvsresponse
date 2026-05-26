@@ -1,20 +1,17 @@
 /**
  * Import catalog master data exported by export-catalog.ts.
- * Replaces products, price lists, bins, and stock on the target server.
  *
- * Usage (VPS):
- *   docker compose exec backend sh -c "npx tsx scripts/import-catalog.ts /tmp/catalog-export.json --full"
+ * VPS (compiled — included in Docker image after build):
+ *   docker cp catalog-export.json pvsresponse-backend-1:/tmp/catalog-export.json
+ *   docker compose exec backend node dist/scripts/import-catalog.js /tmp/catalog-export.json --full
  *
  * Local:
- *   cd backend && npx tsx scripts/import-catalog.ts data/catalog-export.json --full
- *
- * --full  also clears orders/invoices/quotes that reference products (recommended
- *         when migrating a fresh VPS demo DB to your real catalog).
+ *   npm run build && npm run db:import-catalog -- data/catalog-export.json --full
  */
 import { readFileSync } from "fs";
 import { resolve } from "path";
 import { PrismaClient } from "@prisma/client";
-import { binCodeFromRow } from "../src/lib/codes.js";
+import { binCodeFromRow } from "../lib/codes.js";
 
 const db = new PrismaClient();
 
@@ -103,27 +100,30 @@ const fileArg = process.argv.find((a) => !a.startsWith("-") && a.endsWith(".json
 const full = process.argv.includes("--full");
 
 if (!fileArg) {
-  console.error("Usage: npx tsx scripts/import-catalog.ts <catalog-export.json> [--full]");
+  console.error("Usage: node dist/scripts/import-catalog.js <catalog-export.json> [--full]");
   process.exit(1);
 }
 
 async function wipeCatalog(fullWipe: boolean) {
   console.log(fullWipe ? "Wiping catalog + transactional product links…" : "Wiping catalog…");
 
+  // FK-safe order: children before parents. DispatchOrder, payments, and
+  // returns all reference Invoice — clear those before deleting invoices.
   await db.creditNoteItem.deleteMany();
   await db.creditNote.deleteMany();
   await db.customerReturnItem.deleteMany();
   await db.customerReturn.deleteMany();
-  await db.packingSlipItem.deleteMany();
-  await db.packingSlip.deleteMany();
-  await db.pickListItem.deleteMany();
-  await db.pickList.deleteMany();
 
   if (fullWipe) {
+    await db.dispatchOrder.deleteMany();
     await db.customerPaymentAllocation.deleteMany();
     await db.customerPayment.deleteMany();
     await db.invoiceItem.deleteMany();
     await db.invoice.deleteMany();
+    await db.packingSlipItem.deleteMany();
+    await db.packingSlip.deleteMany();
+    await db.pickListItem.deleteMany();
+    await db.pickList.deleteMany();
     await db.salesOrderItem.deleteMany();
     await db.salesOrder.deleteMany();
     await db.quoteRevision.deleteMany();
@@ -133,9 +133,17 @@ async function wipeCatalog(fullWipe: boolean) {
     await db.purchaseOrderItem.deleteMany();
     await db.purchaseOrder.deleteMany();
     await db.approval.deleteMany();
-    await db.dispatchOrder.deleteMany();
+    await db.trip.deleteMany();
+  } else {
+    await db.packingSlipItem.deleteMany();
+    await db.packingSlip.deleteMany();
+    await db.pickListItem.deleteMany();
+    await db.pickList.deleteMany();
   }
 
+  // Manufacturing orders reference BOMs — must go before bom/bomItem deletes.
+  await db.workOrder.deleteMany();
+  await db.productionOrder.deleteMany();
   await db.bomItem.deleteMany();
   await db.bom.deleteMany();
   await db.priceListItem.deleteMany();
@@ -148,7 +156,7 @@ async function wipeCatalog(fullWipe: boolean) {
 }
 
 async function main() {
-  const path = resolve(fileArg);
+  const path = resolve(fileArg!);
   const raw = readFileSync(path, "utf8");
   const data = JSON.parse(raw) as ExportFile;
 
@@ -320,7 +328,6 @@ async function main() {
   console.log(`✓ ${ledgerCreated} stock ledger rows`);
 
   console.log("\nDone. Catalog imported.");
-  console.log("Users / customers / vendors were kept (unless --full cleared orders/invoices).");
 }
 
 main()

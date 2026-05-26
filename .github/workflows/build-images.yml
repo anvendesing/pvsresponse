@@ -12,6 +12,7 @@
 # Output images:
 #   ghcr.io/<owner>/novaerp-backend
 #   ghcr.io/<owner>/novaerp-web
+#   ghcr.io/<owner>/novaerp-shop
 #
 # The VPS pulls them with `docker compose -f docker-compose.prod.yml
 # pull && up -d`. No build tools required on the VPS.
@@ -65,6 +66,9 @@ jobs:
           - name: web
             context: ./erp-portal
             dockerfile: ./erp-portal/Dockerfile
+          - name: shop
+            context: ./pvsecommerce
+            dockerfile: ./pvsecommerce/Dockerfile
 
     steps:
       - name: Checkout
@@ -132,6 +136,7 @@ jobs:
           # is configured for same-origin (no VITE_API_URL bake-in).
           build-args: |
             VITE_API_URL=
+            VITE_MOCK_STOREFRONT_TOKEN=
 
       # Surface the resolved image refs in the summary so operators
       # can copy-paste from the run page when bumping the prod stack.

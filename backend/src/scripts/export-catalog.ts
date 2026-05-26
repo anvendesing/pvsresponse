@@ -4,8 +4,8 @@
  *
  * Usage (local machine):
  *   cd backend
- *   npx tsx scripts/export-catalog.ts
- *   npx tsx scripts/export-catalog.ts --out data/my-export.json
+ *   npm run db:export-catalog
+ *   npm run db:export-catalog -- --out=data/my-export.json
  */
 import { writeFileSync, mkdirSync } from "fs";
 import { dirname, resolve } from "path";

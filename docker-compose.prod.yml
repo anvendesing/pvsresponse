@@ -42,3 +42,7 @@ services:
   web:
     image: ghcr.io/${REGISTRY_OWNER:?REGISTRY_OWNER required (your GitHub user/org, lowercase)}/novaerp-web:${IMAGE_TAG:-latest}
     pull_policy: always
+
+  shop:
+    image: ghcr.io/${REGISTRY_OWNER:?REGISTRY_OWNER required (your GitHub user/org, lowercase)}/novaerp-shop:${IMAGE_TAG:-latest}
+    pull_policy: always
