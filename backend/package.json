@@ -12,6 +12,8 @@
     "prisma:reset": "prisma migrate reset --force",
     "studio": "prisma studio",
     "db:seed": "tsx prisma/seed.ts",
+    "db:export-catalog": "tsx scripts/export-catalog.ts",
+    "db:import-catalog": "tsx scripts/import-catalog.ts",
     "db:wipe": "tsx prisma/wipe.ts",
     "db:import-pricelists": "tsx scripts/import-pricelists.ts",
     "db:randomize-stock": "tsx scripts/randomize-stock.ts",
