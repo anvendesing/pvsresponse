@@ -7,25 +7,32 @@ namespace PvsCommerce.Mobile.Services;
 
 // Per-platform configuration with runtime override.
 //
-// Defaults assume a Debug session against a backend started on the developer
-// machine. On a real phone the user must override ApiBaseUrl with the host's
-// LAN IP (e.g. http://192.168.1.10:4000/v1). The override is persisted as
-// {LocalAppData}/PvsCommerce/api.json so it survives app restarts and can be
-// edited from the in-app Settings screen.
+// Android default: production VPS so the APK works out of the box.
+//   nginx on the VPS proxies /v1/* to the backend, so the phone never
+//   needs to reach port 4000 directly — just http://217.216.78.119/v1.
+//
+// Desktop default: localhost for the developer inner loop.
+//
+// The override persists in {LocalAppData}/PvsCommerce/api.json so users
+// can switch between VPS and a local backend from the in-app Settings screen.
 public sealed class AppConfig
 {
     private const string FileName = "api.json";
 
+    // Production VPS — works from any network (home, mobile data, etc.)
+    public const string ProductionUrl = "http://217.216.78.119/v1";
+    public const string ProductionOrigin = "http://217.216.78.119";
+
     public string ApiBaseUrl { get; private set; } =
 #if ANDROID
-        "http://10.0.2.2:4000/v1";
+        ProductionUrl;
 #else
         "http://localhost:4000/v1";
 #endif
 
     public string ImageOrigin { get; private set; } =
 #if ANDROID
-        "http://10.0.2.2:4000";
+        ProductionOrigin;
 #else
         "http://localhost:4000";
 #endif

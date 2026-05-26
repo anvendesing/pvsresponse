@@ -67,4 +67,9 @@ public partial class SettingsViewModel : ViewModelBase
         ApiBaseUrl = "http://localhost:4000/v1";
 #endif
     }
+
+    // Production VPS (nginx proxies /v1 to backend). Works from any network.
+    [RelayCommand]
+    private void UseProductionServer()
+        => ApiBaseUrl = AppConfig.ProductionUrl;
 }

@@ -7,8 +7,11 @@
 
   <Application.Resources>
     <ResourceDictionary>
-      <FontFamily x:Key="BodyFont">avares://Avalonia.Fonts.Inter/Assets/Fonts/Inter#Inter</FontFamily>
-      <FontFamily x:Key="DisplayFont">avares://Avalonia.Fonts.Inter/Assets/Fonts/Inter#Inter</FontFamily>
+      <!-- Registered by .WithInterFont() in each platform entry point.
+           Use the logical family name — not avares://…#Inter — so Bold/SemiBold
+           weights resolve correctly (avares URIs caused a layout crash → blank UI). -->
+      <FontFamily x:Key="BodyFont">Inter</FontFamily>
+      <FontFamily x:Key="DisplayFont">Inter</FontFamily>
 
       <ResourceDictionary.MergedDictionaries>
         <ResourceInclude Source="avares://PvsCommerce.Mobile/Styles/Tokens.axaml" />

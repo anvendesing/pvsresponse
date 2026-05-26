@@ -10,13 +10,13 @@
       <StackPanel Spacing="4">
         <TextBlock Text="API Settings" Classes="h2" />
         <TextBlock Classes="muted" TextWrapping="Wrap"
-                   Text="Point the app at your backend. Use http://10.0.2.2:4000/v1 for the Android emulator, or your dev machine's LAN IP (e.g. http://192.168.1.10:4000/v1) when running on a real phone." />
+                   Text="Point the app at your backend. Production VPS: http://217.216.78.119/v1. Emulator: http://10.0.2.2:4000/v1. Real phone on LAN: http://192.168.x.x:4000/v1." />
       </StackPanel>
 
       <StackPanel Spacing="6">
         <TextBlock Text="API base URL" FontWeight="SemiBold" />
         <TextBox Text="{Binding ApiBaseUrl, Mode=TwoWay}"
-                 Watermark="http://192.168.1.10:4000/v1"
+                 Watermark="http://217.216.78.119/v1"
                  FontSize="14" />
       </StackPanel>
 
@@ -29,6 +29,8 @@
         <Button Classes="primary" Content="Save &amp; Test"
                 Command="{Binding SaveCommand}"
                 IsEnabled="{Binding !IsBusy}" />
+        <Button Classes="outline" Content="Use production VPS"
+                Command="{Binding UseProductionServerCommand}" />
         <Button Classes="outline" Content="Reset to default"
                 Command="{Binding ResetToDefaultCommand}" />
       </StackPanel>
@@ -39,15 +41,15 @@
       </Border>
 
       <StackPanel Spacing="6">
-        <TextBlock Text="Setup checklist" FontWeight="SemiBold" />
+        <TextBlock Text="Quick setup" FontWeight="SemiBold" />
         <TextBlock Classes="muted" TextWrapping="Wrap"
-                   Text="1. Start the backend and bind it to 0.0.0.0:4000 (not just localhost) so other devices on your network can reach it." />
+                   Text="Production VPS (recommended): tap 'Use production VPS' above — works from any network, no extra setup needed." />
         <TextBlock Classes="muted" TextWrapping="Wrap"
-                   Text="2. Find your dev machine's LAN IP: run 'ipconfig' on Windows and look for IPv4 Address (typically 192.168.x.x)." />
+                   Text="Local dev (LAN): backend must bind to 0.0.0.0:4000. Find your PC's LAN IP via 'ipconfig' (e.g. 192.168.x.x). Phone and PC must share the same Wi-Fi." />
         <TextBlock Classes="muted" TextWrapping="Wrap"
-                   Text="3. Phone and PC must be on the same Wi-Fi network." />
+                   Text="Android emulator: use http://10.0.2.2:4000/v1 (emulator's special address for the host machine)." />
         <TextBlock Classes="muted" TextWrapping="Wrap"
-                   Text="4. The app already allows cleartext (http://) traffic, so no TLS setup is required." />
+                   Text="Cleartext (http://) traffic is already enabled, so no TLS setup is needed." />
       </StackPanel>
 
     </StackPanel>
