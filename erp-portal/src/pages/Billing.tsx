@@ -429,6 +429,7 @@ export const Billing = () => {
             message:
               e.message ??
               "This Sales Order already has a pre-generated invoice. Open the Invoices tab to settle it.",
+            oversells: [],
           });
           if (linkId) {
             navigate(`/billing?tab=invoices&focus=${linkId}`);

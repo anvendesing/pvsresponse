@@ -815,14 +815,17 @@ export const QuoteEditor = ({
                       </div>
                       <div className="col-span-2 flex items-center justify-center gap-1">
                         {atp ? (
-                          <Chip
-                            size="sm"
-                            tone={atpTone(atp.atp, l.qty)}
+                          <span
                             title={`Available to Promise: ${atp.atp} ${l.uom}\n\nOn hand:           ${atp.onHand}\n− Reserved on SOs: ${atp.reservedForSO}\n+ Open POs:        ${atp.openProcurement}\n+ Open production: ${atp.openProduction}\n──────────────────────\nATP:               ${atp.atp}\n\n${atp.atp >= l.qty ? "OK to promise this quantity." : `Short by ${l.qty - atp.atp} ${l.uom}.`}`}
-                            className="cursor-help"
+                            className="cursor-help inline-flex"
                           >
-                            ATP {atp.atp}
-                          </Chip>
+                            <Chip
+                              size="sm"
+                              tone={atpTone(atp.atp, l.qty)}
+                            >
+                              ATP {atp.atp}
+                            </Chip>
+                          </span>
                         ) : (
                           <span className="text-caption text-ink-muted">…</span>
                         )}

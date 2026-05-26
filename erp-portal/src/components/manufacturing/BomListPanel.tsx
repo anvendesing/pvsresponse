@@ -113,6 +113,7 @@ export const BomListPanel = ({
     // Group by product.
     const groups = new Map<string, Bom[]>();
     for (const b of visible) {
+      if (!b.productId) continue;
       const list = groups.get(b.productId) ?? [];
       list.push(b);
       groups.set(b.productId, list);

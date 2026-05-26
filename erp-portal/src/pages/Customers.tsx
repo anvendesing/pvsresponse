@@ -736,7 +736,7 @@ const CustomerStatementPanel = ({
             <div className="p-6 text-body-sm text-ink-muted">Loading statement…</div>
           )}
           {stmtApi.error && (
-            <div className="p-6 text-body-sm text-error">{stmtApi.error}</div>
+            <div className="p-6 text-body-sm text-error">{stmtApi.error.message}</div>
           )}
           {stmt && stmt.entries.length === 0 && (
             <div className="p-6 text-body-sm text-ink-muted">No transactions yet.</div>

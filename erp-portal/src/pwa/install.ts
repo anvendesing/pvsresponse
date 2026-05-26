@@ -53,7 +53,9 @@ export const isInstallReady = () => deferredPrompt !== null;
 export const onInstallReadyChange = (cb: (ready: boolean) => void) => {
   listeners.add(cb);
   cb(isInstallReady());
-  return () => listeners.delete(cb);
+  return () => {
+    listeners.delete(cb);
+  };
 };
 
 export const installApp = async (): Promise<"accepted" | "dismissed" | "unavailable"> => {

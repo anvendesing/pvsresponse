@@ -34,7 +34,9 @@ interface PackingSlip {
   items: PackItem[];
 }
 
-const REASON_LABELS: Record<string, string> = {
+type PackReason = "ok" | "short_pack" | "damage" | "substitute" | "other";
+
+const REASON_LABELS: Record<PackReason, string> = {
   ok: "All good",
   short_pack: "Short pack (less than picked)",
   damage: "Damaged - removed from pack",
@@ -51,7 +53,7 @@ export const MobilePack = () => {
   const [scanFor, setScanFor] = useState<string | null>(null);
   // Per-line transient state (qty + product code + reason).
   const [draft, setDraft] = useState<
-    Record<string, { qty: number; productCode: string; reason: keyof typeof REASON_LABELS; remarks: string }>
+    Record<string, { qty: number; productCode: string; reason: PackReason; remarks: string }>
   >({});
   // One clientOpId per line, regenerated only on full success so a
   // network retry replays the same call.
@@ -66,7 +68,7 @@ export const MobilePack = () => {
       ).then((r) => r.json());
       setPs(result);
       // Initialise drafts.
-      const init: Record<string, { qty: number; productCode: string; reason: keyof typeof REASON_LABELS; remarks: string }> = {};
+      const init: Record<string, { qty: number; productCode: string; reason: PackReason; remarks: string }> = {};
       for (const it of result.items) {
         init[it.id] = {
           qty: it.qtyPacked > 0 ? it.qtyPacked : it.qtyPicked,
@@ -304,7 +306,7 @@ export const MobilePack = () => {
                         ...p,
                         [it.id]: {
                           ...p[it.id],
-                          reason: e.target.value as keyof typeof REASON_LABELS,
+                          reason: e.target.value as PackReason,
                         },
                       }))
                     }

@@ -7,7 +7,8 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowRight, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Chip } from "@/components/common/Chip";
-import { api, type Product, type QuoteRevisionRow } from "@/lib/api";
+import { api, type QuoteRevisionRow } from "@/lib/api";
+import type { Product } from "@/data/types";
 import { dt, inr } from "@/lib/format";
 import { cn } from "@/lib/cn";
 

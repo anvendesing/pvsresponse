@@ -164,7 +164,7 @@ export const WarehouseAudit = () => {
               </span>
             </div>
 
-            <Card padded>
+            <Card>
               <div className="overflow-x-auto">
                 <table className="min-w-full text-body-sm">
                   <thead>
@@ -255,7 +255,7 @@ export const WarehouseAudit = () => {
               "mismatch" or "not_found" to spot misprinted labels or worn
               tags.
             </div>
-            <Card padded>
+            <Card>
               <div className="overflow-x-auto">
                 <table className="min-w-full text-body-sm">
                   <thead>

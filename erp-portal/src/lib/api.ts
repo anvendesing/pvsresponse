@@ -670,6 +670,7 @@ export interface QuoteItemRow {
   variant?: {
     id: string;
     sku: string;
+    uom?: string;
     size?: string | null;
     color?: string | null;
     grade?: string | null;

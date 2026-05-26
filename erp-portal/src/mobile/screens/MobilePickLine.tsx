@@ -35,7 +35,16 @@ interface PickList {
   packingSlip?: { id: string; packingSlipNo: string; status: string } | null;
 }
 
-const REASON_LABELS: Record<string, string> = {
+type PickReason =
+  | "ok"
+  | "short_pick"
+  | "wrong_bin"
+  | "damage"
+  | "not_found"
+  | "substitute"
+  | "other";
+
+const REASON_LABELS: Record<PickReason, string> = {
   ok: "All good",
   short_pick: "Short pick (less than expected)",
   wrong_bin: "Stock found in a different bin",
@@ -53,7 +62,7 @@ export const MobilePickLine = () => {
   const [binCode, setBinCode] = useState("");
   const [productCode, setProductCode] = useState("");
   const [qty, setQty] = useState<number>(0);
-  const [reason, setReason] = useState<keyof typeof REASON_LABELS>("ok");
+  const [reason, setReason] = useState<PickReason>("ok");
   const [remarks, setRemarks] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -288,7 +297,7 @@ export const MobilePickLine = () => {
             </div>
             <select
               value={reason}
-              onChange={(e) => setReason(e.target.value as keyof typeof REASON_LABELS)}
+              onChange={(e) => setReason(e.target.value as PickReason)}
               className="w-full rounded-xl border border-amber-300 bg-white px-3 py-2 text-sm"
             >
               {Object.entries(REASON_LABELS).map(([k, v]) => (
