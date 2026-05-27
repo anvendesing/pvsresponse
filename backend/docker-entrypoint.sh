@@ -29,4 +29,4 @@ if [ -d "$SEED_DIR" ]; then
   fi
 fi
 
-exec su-exec node sh -c "npx prisma migrate deploy && node dist/index.js"
+exec su-exec node sh -c "npx prisma migrate deploy && node dist/scripts/seed-image-urls.js && node dist/index.js"
