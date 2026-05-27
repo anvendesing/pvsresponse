@@ -35,7 +35,7 @@ FROM node:${NODE_VERSION} AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 # OpenSSL 3 is required by Prisma's query engine on alpine.
-RUN apk add --no-cache openssl tini su-exec wget
+RUN apk add --no-cache openssl tini su-exec wget sqlite
 # Copy only what runtime needs.
 COPY package.json package-lock.json* ./
 COPY --from=deps /app/node_modules ./node_modules

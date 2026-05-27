@@ -44,17 +44,9 @@ else
 fi
 
 echo ""
-echo "=== Step 5: Apply SQL imageUrl patch directly to DB ==="
-SQL_FILE="$REPO_DIR/scripts/patch_image_urls.sql"
-if [ -f "$SQL_FILE" ]; then
-    # Find the SQLite DB path from DATABASE_URL env, default to /data/dev.db
-    DB_PATH=$(docker exec "$CONTAINER" sh -c 'echo ${DATABASE_URL:-file:/data/dev.db}' | sed 's/file://')
-    echo "Patching database at $DB_PATH inside $CONTAINER ..."
-    docker cp "$SQL_FILE" "$CONTAINER:/tmp/patch_image_urls.sql"
-    docker exec "$CONTAINER" sh -c "sqlite3 $DB_PATH < /tmp/patch_image_urls.sql && echo 'SQL patch applied'"
-else
-    echo "WARN: $SQL_FILE not found — skipping SQL patch"
-fi
+echo "=== Step 5: Apply imageUrl patch via Node/Prisma (no sqlite3 needed) ==="
+# Use the seed script already compiled into dist/ — idempotent, safe to re-run
+docker exec "$CONTAINER" node dist/scripts/seed-image-urls.js
 
 echo ""
 echo "=== Verification ==="
@@ -62,8 +54,11 @@ echo -n "Images in container: "
 docker exec "$CONTAINER" sh -c "ls /app/uploads/products/*.jpg 2>/dev/null | wc -l"
 
 echo -n "Products with imageUrl in DB: "
-DB_PATH=$(docker exec "$CONTAINER" sh -c 'echo ${DATABASE_URL:-file:/data/dev.db}' | sed 's/file://')
-docker exec "$CONTAINER" sh -c "sqlite3 $DB_PATH \"SELECT COUNT(*) FROM Product WHERE imageUrl IS NOT NULL\""
+docker exec "$CONTAINER" node -e "
+const {PrismaClient}=require('@prisma/client');
+const db=new PrismaClient();
+db.product.count({where:{imageUrl:{not:null}}})
+  .then(n=>{console.log(n);db.\$disconnect();});"
 
 echo ""
 echo "=== Done! Test image URL: ==="
