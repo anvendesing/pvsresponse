@@ -19,9 +19,9 @@ public sealed class AppConfig
 {
     private const string FileName = "api.json";
 
-    // Production VPS — works from any network (home, mobile data, etc.)
-    public const string ProductionUrl = "http://217.216.78.119/v1";
-    public const string ProductionOrigin = "http://217.216.78.119";
+    // Production VPS — shop nginx on :8080 proxies /v1/* and /uploads/* to the backend.
+    public const string ProductionUrl = "http://217.216.78.119:8080/v1";
+    public const string ProductionOrigin = "http://217.216.78.119:8080";
 
     public string ApiBaseUrl { get; private set; } =
 #if ANDROID

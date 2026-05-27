@@ -64,7 +64,7 @@
           <TextBlock Text="Backend not reachable" FontWeight="Bold"
                      Foreground="{StaticResource StatusError}" />
           <TextBlock Text="{Binding ErrorMessage}" Classes="muted" TextWrapping="Wrap" />
-          <TextBlock Text="Account → API Settings → enter http://217.216.78.119/v1 for the live VPS, or your dev machine's LAN IP for local testing."
+          <TextBlock Text="Account → API Settings → enter http://217.216.78.119:8080/v1 for the live VPS, or your dev machine's LAN IP for local testing."
                      Classes="muted" TextWrapping="Wrap" />
           <Button Classes="outline" Content="Retry" HorizontalAlignment="Left"
                   Command="{Binding LoadCommand}" />

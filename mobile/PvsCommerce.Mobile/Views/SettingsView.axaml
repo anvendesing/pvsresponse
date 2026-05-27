@@ -10,13 +10,13 @@
       <StackPanel Spacing="4">
         <TextBlock Text="API Settings" Classes="h2" />
         <TextBlock Classes="muted" TextWrapping="Wrap"
-                   Text="Point the app at your backend. Production VPS: http://217.216.78.119/v1. Emulator: http://10.0.2.2:4000/v1. Real phone on LAN: http://192.168.x.x:4000/v1." />
+                   Text="Point the app at your backend. Production VPS: http://217.216.78.119:8080/v1. Emulator: http://10.0.2.2:4000/v1. Real phone on LAN: http://192.168.x.x:4000/v1." />
       </StackPanel>
 
       <StackPanel Spacing="6">
         <TextBlock Text="API base URL" FontWeight="SemiBold" />
         <TextBox Text="{Binding ApiBaseUrl, Mode=TwoWay}"
-                 Watermark="http://217.216.78.119/v1"
+                 Watermark="http://217.216.78.119:8080/v1"
                  FontSize="14" />
       </StackPanel>
 

@@ -21,6 +21,11 @@ mono_crash.*
 [Dd]ebugPublic/
 [Rr]elease/
 [Rr]eleases/
+# Keep the signed APK for sideloading distribution
+!release/
+!release/android/
+!release/android/*.apk
+!release/android/*.md
 x64/
 x86/
 [Ww][Ii][Nn]32/
