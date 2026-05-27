@@ -611,12 +611,13 @@ ol {
 
 .category-card-inner {
   border-radius: 16px;
-  padding: 1.25rem;
+  padding: 0;
   height: 130px;
   display: flex;
   align-items: center;
   justify-content: center;
   background-color: var(--primary-gold-cream);
+  overflow: hidden;
   transition: transform var(--transition-normal);
 }
 
@@ -627,6 +628,24 @@ ol {
 .category-card-inner svg {
   width: 90px;
   height: 90px;
+}
+
+/* PNG category image — fills the inner frame, object-fit: cover for a clean crop */
+.category-card-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 12px;
+  display: block;
+}
+
+/* SVG icon is only shown when the PNG fails to load */
+.category-card-icon-fallback {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
 }
 
 .category-card-badge {
@@ -731,6 +750,14 @@ ol {
 .product-card-art svg {
   width: 70%;
   height: 70%;
+}
+
+/* Real product photo — fills the art frame with a clean crop */
+.product-card-photo {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
 }
 
 .product-card-wishlist {
@@ -1522,12 +1549,21 @@ ol {
   justify-content: center;
   padding: 3rem 2rem;
   min-height: 360px;
+  overflow: hidden;
 }
 
 .pdp-art-frame svg {
   width: 100%;
   max-width: 280px;
   height: auto;
+}
+
+.pdp-product-photo {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  max-height: 400px;
+  border-radius: var(--radius-md);
 }
 
 .pdp-tags {

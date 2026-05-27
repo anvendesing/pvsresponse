@@ -69,5 +69,16 @@ mobile/**/*.suo
 # ── Misc ──────────────────────────────────────────────────────────────────────
 *.tmp
 *.bak
+# Source image archive and Excel master — large, not needed in the repo
+imagespvs1x_Upload/
+ItemMaster_PVS_05102023.xlsx
+# Ignore user-uploaded files in general, but track the seeded product
+# photos committed from the Excel image master (backend/uploads/products/).
 uploads/
+!backend/uploads/
+!backend/uploads/products/
+!backend/uploads/products/*.jpg
+!backend/uploads/products/*.jpeg
+!backend/uploads/products/*.png
+!backend/uploads/products/*.webp
 public/images/products/

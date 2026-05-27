@@ -4,7 +4,7 @@
 // out-of-stock) operates on the displayed list. Pagination is
 // client-side and 9 items per page to match the design spec.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { CATEGORIES, bucketFor, getCategory } from "@/data/categories";
 import { useCatalog } from "@/state/CatalogContext";
@@ -26,6 +26,9 @@ export const CategoryPage = () => {
   const [showInStock, setShowInStock] = useState(true);
   const [showOutOfStock, setShowOutOfStock] = useState(false);
   const [page, setPage] = useState(1);
+
+  // Reset to page 1 whenever the category changes.
+  useEffect(() => { setPage(1); }, [slug]);
 
   const inBucket = useMemo(() => {
     if (!cat) return [];

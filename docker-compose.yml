@@ -47,6 +47,7 @@ services:
       CORS_ORIGIN: ${CORS_ORIGIN:-*}
     volumes:
       - novaerp_db:/data
+      - novaerp_uploads:/app/uploads
     # No `ports:` here - keep the API off the public network.
     expose:
       - "4000"
@@ -109,9 +110,13 @@ services:
       retries: 5
       start_period: 10s
 
-# Named volume so the SQLite database survives container rebuilds.
+# Named volumes so state survives container rebuilds.
+#   novaerp_db      - SQLite database
+#   novaerp_uploads - Product photo uploads (/app/uploads inside backend)
 volumes:
   novaerp_db:
+    driver: local
+  novaerp_uploads:
     driver: local
 
 networks:

@@ -79,7 +79,19 @@ export const HomePage = () => {
         <div className="categories-exact-grid">
           {CATEGORIES.map((c) => (
             <Link key={c.id} to={`/category/${c.id}`} className="category-card">
-              <div className="category-card-inner">{c.icon()}</div>
+              <div className="category-card-inner">
+                <img
+                  src={`/images/category_${c.id}.png`}
+                  alt={c.name}
+                  className="category-card-img"
+                  onError={(e) => {
+                    // fall back to SVG icon if image is missing
+                    e.currentTarget.style.display = "none";
+                    (e.currentTarget.nextElementSibling as HTMLElement | null)?.style.setProperty("display", "flex");
+                  }}
+                />
+                <span className="category-card-icon-fallback">{c.icon()}</span>
+              </div>
               <span className="category-card-badge">{c.name}</span>
             </Link>
           ))}

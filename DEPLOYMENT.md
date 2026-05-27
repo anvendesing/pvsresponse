@@ -150,6 +150,63 @@ docker compose down
 docker compose down -v
 ```
 
+---
+
+## Uploading Product Images
+
+Product photos live in the `novaerp_uploads` Docker volume (mounted at
+`/app/uploads` inside the backend container). They persist across
+redeploys but are **not** included in the git repo or the Docker image,
+so they must be transferred manually the first time (and re-run whenever
+new images are added locally).
+
+### One-command upload (PowerShell — from your dev machine)
+
+```powershell
+# Default: connects to 217.216.78.119 as root using your default SSH key
+.\scripts\upload-images-to-vps.ps1
+
+# Custom SSH key
+.\scripts\upload-images-to-vps.ps1 -SshKey "C:\Users\Sharath\.ssh\pvs_key"
+
+# Different user or host
+.\scripts\upload-images-to-vps.ps1 -VpsUser ubuntu -VpsHost 217.216.78.119
+```
+
+The script:
+1. Tars `backend/uploads/products/` locally
+2. SCPs the archive to `/tmp/` on the VPS
+3. SSHs in, extracts, and `docker cp`s every image into the running
+   backend container at `/app/uploads/products/`
+
+### Verify on the VPS
+
+```bash
+# Count images inside the container
+docker exec $(docker ps --filter name=backend --format '{{.Names}}' | head -1) \
+  ls /app/uploads/products/ | wc -l
+
+# Test one image URL
+curl -I http://localhost:4000/uploads/products/I61.jpg
+```
+
+### Re-run the import script after a DB wipe
+
+If the VPS database is wiped (`docker compose down -v`), run the
+import script again to restore `imageUrl` on all products:
+
+```bash
+# On the VPS, inside the repo directory
+docker exec -it $(docker ps --filter name=backend --format '{{.Names}}' | head -1) \
+  sh -c "ls /app/uploads/products/ | head -5"   # confirm images are there first
+
+# Then from your dev machine, re-run the Python import script
+python scripts/import-product-images.py
+# and commit + push + redeploy to re-seed the DB
+```
+
+---
+
 ### Backups (SQLite)
 
 The DB is a single file inside a docker volume. Snapshot it nightly

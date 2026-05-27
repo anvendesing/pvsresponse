@@ -28,6 +28,7 @@ export const ProductDetailPage = () => {
 
   const [variantId, setVariantId] = useState<string | null>(null);
   const [qty, setQty] = useState(1);
+  const [imgFailed, setImgFailed] = useState(false);
   const [tab, setTab] = useState<"description" | "ingredients" | "how-to-use">(
     "description"
   );
@@ -119,7 +120,17 @@ export const ProductDetailPage = () => {
         {/* Left — artwork */}
         <div className="pdp-artwork-col">
           <div className="pdp-art-frame">
-            <PackagingArt kind={packagingKind} />
+            {product.imageUrl && !imgFailed ? (
+              <img
+                src={product.imageUrl}
+                alt={product.name}
+                className="pdp-product-photo"
+                loading="eager"
+                onError={() => setImgFailed(true)}
+              />
+            ) : (
+              <PackagingArt kind={packagingKind} />
+            )}
           </div>
           {product.tags.length > 0 && (
             <div className="pdp-tags">

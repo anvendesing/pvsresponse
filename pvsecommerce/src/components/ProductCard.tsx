@@ -35,6 +35,8 @@ export const ProductCard = ({ product, badge }: Props) => {
     ? variants.find((v) => v.id === variantId) ?? variants[0]
     : null;
 
+  const [imgFailed, setImgFailed] = useState(false);
+
   const stock = variant ? variant.stockOnHand : product.stockOnHand;
   const price = variant ? variant.price : product.sellingPrice;
   const lowStock = stock <= 5;
@@ -58,7 +60,17 @@ export const ProductCard = ({ product, badge }: Props) => {
       onKeyDown={(e) => e.key === "Enter" && navigate(`/product/${product.id}`)}
     >
       <div className="product-card-art">
-        <PackagingArt kind={packagingFromName(product.name)} />
+        {product.imageUrl && !imgFailed ? (
+          <img
+            src={product.imageUrl}
+            alt={product.name}
+            className="product-card-photo"
+            loading="lazy"
+            onError={() => setImgFailed(true)}
+          />
+        ) : (
+          <PackagingArt kind={packagingFromName(product.name)} />
+        )}
         <span className={`product-card-stockbadge ${lowStock ? "low" : ""}`}>
           {stock > 0 ? (lowStock ? `${stock} left` : "In Stock") : "Sold out"}
         </span>

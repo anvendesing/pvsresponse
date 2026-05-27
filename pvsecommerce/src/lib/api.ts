@@ -15,6 +15,16 @@ const RAW_API_URL = (import.meta.env.VITE_API_URL as string | undefined)?.trim()
 const API_URL = RAW_API_URL ? RAW_API_URL.replace(/\/$/, "") : "";
 const MOCK_TOKEN = (import.meta.env.VITE_MOCK_STOREFRONT_TOKEN as string | undefined) ?? "";
 
+// Derive the API origin (scheme + host + port) so relative image paths like
+// /uploads/products/I97.jpg can be turned into absolute URLs.
+const getApiOrigin = (): string => {
+  if (API_URL) {
+    try { return new URL(API_URL).origin; } catch { /* fall through */ }
+  }
+  return typeof window !== "undefined" ? window.location.origin : "http://localhost:4000";
+};
+export const API_ORIGIN = getApiOrigin();
+
 const buildUrl = (path: string, query?: Record<string, string | number | undefined>): string => {
   const base =
     API_URL || (typeof window !== "undefined" ? window.location.origin : "http://localhost");
@@ -55,6 +65,7 @@ export interface CatalogProduct {
   stockOnHand: number;
   description: string | null;
   imageHint: string | null;
+  imageUrl: string | null;
   tags: string[];
   variants: CatalogVariant[];
 }

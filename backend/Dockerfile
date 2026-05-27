@@ -48,11 +48,17 @@ COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
 RUN npm prune --omit=dev \
  && npm install prisma@^5.22.0 --omit=dev --no-save
 
+# Bundle product images as a seed. The uploads volume mounts at
+# /app/uploads at runtime and shadows this directory, so we place
+# images in /app/uploads-seed/ instead. The entrypoint copies them
+# into the volume on first boot (when the volume is empty).
+COPY uploads/ /app/uploads-seed/
+
 # SQLite database lives in /data so a docker volume can persist it.
 # We also keep the legacy /app/prisma/dev.db location working: the
 # container's entrypoint symlinks it at boot if DATABASE_URL points
 # at the volume.
-RUN mkdir -p /data && chown -R node:node /data /app
+RUN mkdir -p /data /app/uploads/products && chown -R node:node /data /app
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 USER root
