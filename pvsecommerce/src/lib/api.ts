@@ -25,6 +25,14 @@ const getApiOrigin = (): string => {
 };
 export const API_ORIGIN = getApiOrigin();
 
+/** Resolve /uploads/… paths for img src (same-origin or dev backend). */
+export function resolveUploadUrl(url: string | null | undefined): string | undefined {
+  if (!url) return undefined;
+  if (!url.startsWith("/uploads")) return url;
+  if (API_URL) return `${API_URL}${url}`;
+  return url;
+}
+
 const buildUrl = (path: string, query?: Record<string, string | number | undefined>): string => {
   const base =
     API_URL || (typeof window !== "undefined" ? window.location.origin : "http://localhost");
@@ -194,11 +202,29 @@ const fetchJson = async <T,>(
 // Public api.
 // =====================================================================
 
+const mapCatalogProduct = (p: CatalogProduct): CatalogProduct => ({
+  ...p,
+  imageUrl: resolveUploadUrl(p.imageUrl) ?? null,
+});
+
 export const api = {
-  categories: () => fetchJson<StorefrontCategory[]>(buildUrl("/storefront-mock/categories")),
-  catalog: () => fetchJson<CatalogProduct[]>(buildUrl("/storefront-mock/catalog")),
-  product: (id: string) =>
-    fetchJson<ProductDetail>(buildUrl(`/storefront-mock/products/${encodeURIComponent(id)}`)),
+  categories: async () => {
+    const list = await fetchJson<StorefrontCategory[]>(buildUrl("/storefront-mock/categories"));
+    return list.map((c) => ({
+      ...c,
+      imageUrl: resolveUploadUrl(c.imageUrl) ?? null,
+    }));
+  },
+  catalog: async () => {
+    const list = await fetchJson<CatalogProduct[]>(buildUrl("/storefront-mock/catalog"));
+    return list.map(mapCatalogProduct);
+  },
+  product: async (id: string) => {
+    const p = await fetchJson<ProductDetail>(
+      buildUrl(`/storefront-mock/products/${encodeURIComponent(id)}`)
+    );
+    return mapCatalogProduct(p) as ProductDetail;
+  },
   placeOrder: (input: PlaceOrderInput) =>
     fetchJson<PlaceOrderResult>(buildUrl("/storefront-mock/order"), {
       method: "POST",

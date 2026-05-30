@@ -21,6 +21,14 @@ const API_URL = RAW_API_URL ? RAW_API_URL.replace(/\/$/, "") : "";
 export const apiEnabled =
   typeof window !== "undefined" || !!API_URL;
 
+/** Turn DB paths like /uploads/products/I61.jpg into a browser-loadable URL. */
+export function resolveUploadUrl(url: string | null | undefined): string | undefined {
+  if (!url) return undefined;
+  if (!url.startsWith("/uploads")) return url;
+  if (API_URL) return `${API_URL}${url}`;
+  return url;
+}
+
 const TOKEN_KEY = "nova.token";
 const USER_KEY = "nova.user";
 

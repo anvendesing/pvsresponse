@@ -5,7 +5,7 @@ import { Chip } from "@/components/common/Chip";
 import { Input } from "@/components/common/Input";
 import { UomPicker } from "@/components/common/UomPicker";
 import type { Product, ProductState, ProductType, ProductVariant } from "@/data/types";
-import { api } from "@/lib/api";
+import { api, resolveUploadUrl } from "@/lib/api";
 import { useApi } from "@/hooks/useApi";
 import type { ProductCategory } from "@/data/types";
 
@@ -259,7 +259,7 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
             >
               {form.imageUrl ? (
                 <img
-                  src={form.imageUrl.startsWith("/uploads") ? `${import.meta.env.VITE_API_URL ?? "http://localhost:4000"}${form.imageUrl}` : form.imageUrl}
+                  src={resolveUploadUrl(form.imageUrl)}
                   alt={form.name}
                   className="w-full h-full object-cover"
                 />
@@ -674,9 +674,7 @@ const VariantImagePicker = ({
 }) => {
   const inputRef = useRef<HTMLInputElement>(null);
   const canUpload = mode === "edit" && !!productId && !!variantId;
-  const resolvedSrc = imageUrl?.startsWith("/uploads")
-    ? `${import.meta.env.VITE_API_URL ?? "http://localhost:4000"}${imageUrl}`
-    : imageUrl ?? undefined;
+  const resolvedSrc = resolveUploadUrl(imageUrl);
 
   return (
     <div className="flex items-center gap-2">

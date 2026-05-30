@@ -23,7 +23,7 @@ import { EmptyState } from "@/components/common/EmptyState";
 import { ProductEditor } from "@/components/products/ProductEditor";
 import { effectiveUom, type Product, type ProductType } from "@/data/types";
 import { inr, num } from "@/lib/format";
-import { api } from "@/lib/api";
+import { api, resolveUploadUrl } from "@/lib/api";
 import { useApi } from "@/hooks/useApi";
 
 const typeChip = (t: ProductType) => {
@@ -90,11 +90,7 @@ export const Products = () => {
       key: "image",
       header: "",
       cell: (r) => {
-        const src = r.imageUrl
-          ? r.imageUrl.startsWith("/uploads")
-            ? `${import.meta.env.VITE_API_URL ?? "http://localhost:4000"}${r.imageUrl}`
-            : r.imageUrl
-          : null;
+        const src = resolveUploadUrl(r.imageUrl) ?? null;
         return src ? (
           <img src={src} alt={r.name} className="w-9 h-9 object-cover rounded border border-border" />
         ) : (
@@ -307,11 +303,7 @@ export const Products = () => {
               <div className="relative group">
                 {selected.imageUrl ? (
                   <img
-                    src={
-                      selected.imageUrl.startsWith("/uploads")
-                        ? `${import.meta.env.VITE_API_URL ?? "http://localhost:4000"}${selected.imageUrl}`
-                        : selected.imageUrl
-                    }
+                    src={resolveUploadUrl(selected.imageUrl)}
                     alt={selected.name}
                     className="w-full aspect-[4/3] object-cover rounded-lg border border-border"
                   />
@@ -388,13 +380,7 @@ export const Products = () => {
                       const vu = effectiveUom(selected, v);
                       const pack = v.packSize ?? 1;
                       // Resolved image: variant-specific first, then fall back to product image
-                      const varImgSrc = (() => {
-                        const url = v.imageUrl || selected.imageUrl;
-                        if (!url) return null;
-                        return url.startsWith("/uploads")
-                          ? `${import.meta.env.VITE_API_URL ?? "http://localhost:4000"}${url}`
-                          : url;
-                      })();
+                      const varImgSrc = resolveUploadUrl(v.imageUrl || selected.imageUrl) ?? null;
                       return (
                         <div
                           key={v.id ?? i}
@@ -402,7 +388,7 @@ export const Products = () => {
                         >
                           {/* Variant image thumbnail / upload trigger */}
                           <VariantImgCell
-                            src={v.imageUrl ? (v.imageUrl.startsWith("/uploads") ? `${import.meta.env.VITE_API_URL ?? "http://localhost:4000"}${v.imageUrl}` : v.imageUrl) : varImgSrc}
+                            src={resolveUploadUrl(v.imageUrl) ?? varImgSrc}
                             hasOwnImage={!!v.imageUrl}
                             variantId={v.id ?? null}
                             productId={selected.id}

@@ -6,13 +6,10 @@ import { Button } from "@/components/common/Button";
 import { Card } from "@/components/common/Card";
 import { Chip } from "@/components/common/Chip";
 import { Input } from "@/components/common/Input";
-import { api, apiEnabled } from "@/lib/api";
+import { api, apiEnabled, resolveUploadUrl } from "@/lib/api";
 import type { ProductCategory } from "@/data/types";
 
-const API_BASE = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, "") ?? "http://localhost:4000";
-
-const imgSrc = (url: string | null | undefined) =>
-  url?.startsWith("/uploads") ? `${API_BASE}${url}` : url ?? undefined;
+const imgSrc = (url: string | null | undefined) => resolveUploadUrl(url);
 
 interface FormState {
   slug: string;
