@@ -24,7 +24,7 @@ interface PickItem {
   notes?: string | null;
   product?: { sku?: string; name?: string; uom?: string; barcode?: string | null };
   variant?: { sku?: string; uom?: string; size?: string; color?: string; barcode?: string | null } | null;
-  bin?: { id?: string; code?: string; zone?: string; rack?: string; shelf?: string; bin?: string };
+  bin?: { id?: string; code?: string; zone?: string; shelf?: string; bin?: string };
 }
 
 interface PickList {

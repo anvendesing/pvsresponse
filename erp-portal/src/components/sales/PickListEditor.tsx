@@ -52,7 +52,7 @@ const statusTone = (s: PickListStatus): "neutral" | "primary" | "success" | "dan
 };
 
 const binLabel = (b: BinSummary | undefined | null) =>
-  b ? `${b.zone}-${b.rack}-${b.shelf}-${b.bin}` : "(no bin)";
+  b ? `${b.zone}-${b.shelf}-${b.bin}` : "(no bin)";
 
 interface LineDraft {
   binId: string | null;

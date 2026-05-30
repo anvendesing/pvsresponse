@@ -59,11 +59,11 @@ export const reportsRoutes = async (app: FastifyInstance) => {
 
   app.get("/reports/procurement-split", async () => {
     const rows = await db.purchaseOrderItem.findMany({
-      include: { product: { select: { category: true } } },
+      include: { product: { select: { category: { select: { name: true } } } } },
     });
     const by: Record<string, number> = {};
     for (const r of rows) {
-      const cat = r.product.category;
+      const cat = r.product.category?.name ?? "Uncategorized";
       by[cat] = (by[cat] ?? 0) + r.amount;
     }
     return Object.entries(by).map(([name, value]) => ({ name, value }));
@@ -300,5 +300,66 @@ export const reportsRoutes = async (app: FastifyInstance) => {
       });
     }
     return out;
+  });
+
+  // GET /reports/transfer-throughput
+  // Returns daily TransferOrder completion counts (done) over the last 30 days,
+  // broken down by kind (putaway / replenishment / manual).
+  app.get("/reports/transfer-throughput", async (req) => {
+    const q = (req.query as Record<string, string>) ?? {};
+    const days = Math.min(parseInt(q.days ?? "30", 10) || 30, 90);
+    const since = new Date(Date.now() - days * 86400000);
+    const done = await db.transferOrder.findMany({
+      where: { status: "done", droppedAt: { gte: since } },
+      select: { kind: true, droppedAt: true, items: { select: { qtyDropped: true } } },
+    });
+
+    const buckets: Record<string, Record<string, number>> = {};
+    for (const to of done) {
+      if (!to.droppedAt) continue;
+      const date = to.droppedAt.toISOString().slice(0, 10);
+      buckets[date] ??= {};
+      buckets[date][to.kind] = (buckets[date][to.kind] ?? 0) + 1;
+    }
+
+    const rows: Array<{ date: string; putaway: number; replenishment: number; manual: number; total: number }> = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10);
+      const b = buckets[d] ?? {};
+      rows.push({
+        date: d,
+        putaway: b.putaway ?? 0,
+        replenishment: b.replenishment ?? 0,
+        manual: b.manual ?? 0,
+        total: (b.putaway ?? 0) + (b.replenishment ?? 0) + (b.manual ?? 0),
+      });
+    }
+    return rows;
+  });
+
+  // GET /reports/skus-missing-putaway-rules
+  // Lists active products that have no active PutawayRule, so ops teams
+  // know which SKUs need to be configured before routing will work.
+  app.get("/reports/skus-missing-putaway-rules", async () => {
+    const allProducts = await db.product.findMany({
+      where: {},
+      select: { id: true, sku: true, name: true, uom: true, stockOnHand: true },
+      orderBy: { sku: "asc" },
+    });
+
+    const ruledProductIds = new Set(
+      (await db.putawayRule.findMany({
+        where: { active: true },
+        select: { productId: true },
+      })).map((r) => r.productId)
+    );
+
+    return allProducts.filter((p) => !ruledProductIds.has(p.id)).map((p) => ({
+      id: p.id,
+      sku: p.sku,
+      name: p.name,
+      uom: p.uom,
+      stockOnHand: p.stockOnHand,
+    }));
   });
 };

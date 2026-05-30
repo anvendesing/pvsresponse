@@ -13,7 +13,6 @@ import { db } from "../db.js";
 import {
   decodeLocation,
   encodeBin,
-  encodeRack,
   encodeShelf,
 } from "../lib/codes.js";
 
@@ -82,7 +81,28 @@ export const locationsRoutes = async (app: FastifyInstance) => {
       const pickStatus = { in: ["draft", "picking"] };
       const packStatus = { in: ["open"] };
 
-      const [pickClaimed, pickAvailable, packClaimed, packAvailable] = await Promise.all([
+      const transferSelect = {
+        id: true,
+        transferNo: true,
+        kind: true,
+        status: true,
+        fromWarehouseId: true,
+        toWarehouseId: true,
+        productionOrderId: true,
+        assignedToId: true,
+        claimedAt: true,
+        createdAt: true,
+        updatedAt: true,
+        fromWarehouse: { select: { id: true, code: true, name: true, kind: true } },
+        toWarehouse: { select: { id: true, code: true, name: true, kind: true } },
+        productionOrder: { select: { id: true, orderNo: true } },
+        assignedTo: { select: { id: true, name: true, username: true } },
+        _count: { select: { items: true } },
+      } as const;
+
+      const transferStatus = { in: ["ready", "in_transit"] };
+
+      const [pickClaimed, pickAvailable, packClaimed, packAvailable, transferClaimed, transferAvailable] = await Promise.all([
         db.pickList.findMany({
           where: { status: pickStatus, assignedToId: me },
           select: taskSelect.pickList,
@@ -107,6 +127,18 @@ export const locationsRoutes = async (app: FastifyInstance) => {
           orderBy: { createdAt: "asc" },
           take: limit,
         }),
+        db.transferOrder.findMany({
+          where: { status: transferStatus, assignedToId: me },
+          select: transferSelect,
+          orderBy: { claimedAt: "desc" },
+          take: limit,
+        }),
+        db.transferOrder.findMany({
+          where: { status: transferStatus, assignedToId: null },
+          select: transferSelect,
+          orderBy: { createdAt: "asc" },
+          take: limit,
+        }),
       ]);
 
       return {
@@ -114,18 +146,22 @@ export const locationsRoutes = async (app: FastifyInstance) => {
         pickAvailable,
         packClaimed,
         packAvailable,
+        transferClaimed,
+        transferAvailable,
         counts: {
           pickClaimed: pickClaimed.length,
           pickAvailable: pickAvailable.length,
           packClaimed: packClaimed.length,
           packAvailable: packAvailable.length,
+          transferClaimed: transferClaimed.length,
+          transferAvailable: transferAvailable.length,
         },
       };
     }
   );
 
   // ------------------------------------------------------------ /locations/scan
-  // Resolves any of: zone code, rack code, shelf code, bin code, or
+  // Resolves any of: zone code, shelf code, bin code, or
   // a raw product SKU/barcode. Always returns 200 with `{ kind: ... }`
   // when something matched, or 404 when nothing did.
   app.get(
@@ -157,78 +193,40 @@ export const locationsRoutes = async (app: FastifyInstance) => {
         if (loc.kind === "zone") {
           const bins = await db.bin.findMany({
             where: { warehouseId: wh.id, zone: loc.zone },
-            select: { rack: true, shelf: true, qty: true, productId: true },
+            select: { shelf: true, qty: true, productId: true },
           });
           if (bins.length === 0) {
             return reply
               .code(404)
               .send({ error: { code: "zone_empty", message: "No bins in this zone." } });
           }
-          const racks = new Map<
+          const shelves = new Map<
             string,
-            { rack: string; shelves: Set<string>; bins: number; qty: number }
+            { shelf: string; bins: number; qty: number }
           >();
           for (const b of bins) {
-            const key = b.rack;
-            const cur = racks.get(key) ?? {
-              rack: b.rack,
-              shelves: new Set<string>(),
+            const key = b.shelf;
+            const cur = shelves.get(key) ?? {
+              shelf: b.shelf,
               bins: 0,
               qty: 0,
             };
-            cur.shelves.add(b.shelf);
             cur.bins += 1;
             cur.qty += b.qty ?? 0;
-            racks.set(key, cur);
+            shelves.set(key, cur);
           }
           return {
             kind: "zone",
             warehouse: wh,
             zone: loc.zone,
-            racks: Array.from(racks.values())
-              .map((r) => ({
-                rack: r.rack,
-                shelfCount: r.shelves.size,
-                totalBins: r.bins,
-                totalQty: r.qty,
-                code: encodeRack(wh.code, loc.zone, r.rack),
+            shelves: Array.from(shelves.values())
+              .map((s) => ({
+                shelf: s.shelf,
+                totalBins: s.bins,
+                totalQty: s.qty,
+                code: encodeShelf(wh.code, loc.zone, s.shelf),
               }))
-              .sort((a, b) => a.rack.localeCompare(b.rack)),
-          };
-        }
-
-        if (loc.kind === "rack") {
-          const bins = await db.bin.findMany({
-            where: {
-              warehouseId: wh.id,
-              zone: loc.zone,
-              rack: loc.rack,
-            },
-            select: { shelf: true, qty: true },
-          });
-          if (bins.length === 0) {
-            return reply
-              .code(404)
-              .send({ error: { code: "rack_empty", message: "No bins on this rack." } });
-          }
-          const shelves = new Map<string, { bins: number; qty: number }>();
-          for (const b of bins) {
-            const cur = shelves.get(b.shelf) ?? { bins: 0, qty: 0 };
-            cur.bins += 1;
-            cur.qty += b.qty ?? 0;
-            shelves.set(b.shelf, cur);
-          }
-          return {
-            kind: "rack",
-            warehouse: wh,
-            zone: loc.zone,
-            rack: loc.rack,
-            shelves: Array.from(shelves, ([shelf, agg]) => ({
-              shelf,
-              totalBins: agg.bins,
-              totalQty: agg.qty,
-              code: encodeShelf(wh.code, loc.zone, loc.rack!, shelf),
-            })).sort((a, b) => a.shelf.localeCompare(b.shelf)),
+              .sort((a, b) => a.shelf.localeCompare(b.shelf)),
           };
         }
 
@@ -237,7 +235,6 @@ export const locationsRoutes = async (app: FastifyInstance) => {
             where: {
               warehouseId: wh.id,
               zone: loc.zone,
-              rack: loc.rack,
               shelf: loc.shelf,
             },
             include: {
@@ -254,11 +251,10 @@ export const locationsRoutes = async (app: FastifyInstance) => {
             kind: "shelf",
             warehouse: wh,
             zone: loc.zone,
-            rack: loc.rack,
             shelf: loc.shelf,
             bins: bins.map((b) => ({
               id: b.id,
-              code: b.code ?? encodeBin(wh.code, b.zone, b.rack, b.shelf, b.bin),
+              code: b.code ?? encodeBin(wh.code, b.zone, b.shelf, b.bin),
               bin: b.bin,
               qty: b.qty,
               reservedQty: b.reservedQty,
@@ -274,7 +270,6 @@ export const locationsRoutes = async (app: FastifyInstance) => {
           where: {
             warehouseId: wh.id,
             zone: loc.zone,
-            rack: loc.rack,
             shelf: loc.shelf,
             bin: loc.bin,
           },
@@ -299,7 +294,7 @@ export const locationsRoutes = async (app: FastifyInstance) => {
         const recentMoves = await db.stockLedger.findMany({
           where: {
             warehouseId: wh.id,
-            bin: `${bin.zone}/${bin.rack}/${bin.shelf}/${bin.bin}`,
+            bin: `${bin.zone}/${bin.shelf}/${bin.bin}`,
           },
           orderBy: { date: "desc" },
           take: 10,
@@ -325,9 +320,8 @@ export const locationsRoutes = async (app: FastifyInstance) => {
           warehouse: bin.warehouse,
           bin: {
             id: bin.id,
-            code: bin.code ?? encodeBin(bin.warehouse.code, bin.zone, bin.rack, bin.shelf, bin.bin),
+            code: bin.code ?? encodeBin(bin.warehouse.code, bin.zone, bin.shelf, bin.bin),
             zone: bin.zone,
-            rack: bin.rack,
             shelf: bin.shelf,
             bin: bin.bin,
             qty: bin.qty,
@@ -413,10 +407,9 @@ export const locationsRoutes = async (app: FastifyInstance) => {
         bins: bins.map((b) => ({
           id: b.id,
           code:
-            b.code ?? encodeBin(b.warehouse.code, b.zone, b.rack, b.shelf, b.bin),
+            b.code ?? encodeBin(b.warehouse.code, b.zone, b.shelf, b.bin),
           warehouseCode: b.warehouse.code,
           zone: b.zone,
-          rack: b.rack,
           shelf: b.shelf,
           bin: b.bin,
           qty: b.qty,
@@ -436,7 +429,7 @@ export const locationsRoutes = async (app: FastifyInstance) => {
     async (req, reply) => {
       const body = z
         .object({
-          kind: z.enum(["bin", "rack", "shelf", "zone", "product", "unknown"]),
+          kind: z.enum(["bin", "shelf", "zone", "product", "unknown"]),
           code: z.string().min(1).max(120),
           context: z.string().max(120).nullable().optional(),
           outcome: z.enum(["ok", "mismatch", "not_found"]),
@@ -497,7 +490,6 @@ export const locationsRoutes = async (app: FastifyInstance) => {
               id: true,
               code: true,
               zone: true,
-              rack: true,
               shelf: true,
               bin: true,
               warehouse: { select: { code: true, name: true } },

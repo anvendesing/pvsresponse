@@ -95,8 +95,10 @@ export const products: Product[] = productNames.map((name, i) => {
     reorderLevel: Math.round(50 + seed(i + 1) * 200),
     costPrice: cost,
     sellingPrice: Math.round(cost * (1.25 + seed(i + 2) * 0.4)),
-    category: ["Metals", "Electrical", "Mechanical", "Polymers", "Assemblies"][i % 5],
+    categoryId: "mock-cat-grains",
+    category: { id: "mock-cat-grains", slug: "grains", name: "Grains, Pulses & Flours", sortOrder: 2, active: true },
     hsn: `7${String(2000 + i).slice(-4)}`,
+    gstRate: [5, 12, 18, 28][i % 4],
     batchTracked: i % 3 === 0,
   };
 });
@@ -233,27 +235,24 @@ const zones = ["A", "B", "C"];
 export const bins: Bin[] = [];
 for (let w = 0; w < warehouses.length; w++) {
   for (let z = 0; z < zones.length; z++) {
-    for (let r = 1; r <= 4; r++) {
-      for (let s = 1; s <= 3; s++) {
-        for (let b = 1; b <= 4; b++) {
-          const idx = bins.length;
-          const has = idx % 4 !== 0;
-          const product = has ? products[idx % products.length] : undefined;
-          bins.push({
-            id: `${warehouses[w]}-${zones[z]}-${r}-${s}-${b}`,
-            warehouse: warehouses[w],
-            zone: zones[z],
-            rack: `R${r}`,
-            shelf: `S${s}`,
-            bin: `B${b}`,
-            capacity: 100,
-            occupied: has ? Math.floor(seed(idx) * 100) : 0,
-            productSku: product?.sku,
-            productName: product?.name,
-            qty: has ? Math.floor(seed(idx + 22) * 90 + 5) : undefined,
-            batch: has && product?.batchTracked ? `BT-${String(2000 + (idx % 100))}` : undefined,
-          });
-        }
+    for (let s = 1; s <= 4; s++) {
+      for (let b = 1; b <= 4; b++) {
+        const idx = bins.length;
+        const has = idx % 4 !== 0;
+        const product = has ? products[idx % products.length] : undefined;
+        bins.push({
+          id: `${warehouses[w]}-${zones[z]}-${s}-${b}`,
+          warehouse: warehouses[w],
+          zone: zones[z],
+          shelf: `S${s}`,
+          bin: `B${b}`,
+          capacity: 100,
+          occupied: has ? Math.floor(seed(idx) * 100) : 0,
+          productSku: product?.sku,
+          productName: product?.name,
+          qty: has ? Math.floor(seed(idx + 22) * 90 + 5) : undefined,
+          batch: has && product?.batchTracked ? `BT-${String(2000 + (idx % 100))}` : undefined,
+        });
       }
     }
   }

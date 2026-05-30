@@ -1,5 +1,6 @@
 import { NavLink, useNavigate } from "react-router-dom";
 import {
+  ArrowRightLeft,
   BarChart3,
   Boxes,
   Building2,
@@ -38,6 +39,7 @@ const NAV_ROLES: Record<string, string[]> = {
   returns:       ["admin", "supervisor", "billing", "warehouse"],
   inventory:     ["admin", "supervisor", "warehouse", "procurement"],
   warehouse:     ["admin", "supervisor", "warehouse"],
+  transfers:     ["admin", "supervisor", "warehouse"],
   "warehouse-audit": ["admin", "warehouse"],
   manufacturing: ["admin", "supervisor"],
   productivity:  ["admin", "supervisor"],
@@ -72,6 +74,7 @@ const ALL_ITEMS = [
   { id: "returns", label: "Returns", icon: RotateCcw, path: "/returns" },
   { id: "inventory", label: "Inventory", icon: Boxes, path: "/inventory" },
   { id: "warehouse", label: "Warehouse", icon: Warehouse, path: "/warehouse" },
+  { id: "transfers", label: "Transfers", icon: ArrowRightLeft, path: "/transfers" },
   { id: "manufacturing", label: "Manufacturing", icon: Factory, path: "/manufacturing" },
   { id: "productivity", label: "Productivity", icon: Users, path: "/productivity" },
   { id: "transport", label: "Transport", icon: Truck, path: "/transport" },

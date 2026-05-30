@@ -67,7 +67,6 @@ const fullPickInclude = {
           id: true,
           code: true,
           zone: true,
-          rack: true,
           shelf: true,
           bin: true,
           qty: true,
@@ -145,15 +144,15 @@ export const fulfilmentRoutes = async (app: FastifyInstance) => {
     const id = (req.params as { id: string }).id;
     const pl = await db.pickList.findUnique({ where: { id }, include: fullPickInclude });
     if (!pl) return reply.code(404).send({ error: { code: "not_found" } });
-    // Walk-path ordering: sort lines by the bin's zone/rack/shelf/bin
+    // Walk-path ordering: sort lines by the bin's zone/shelf/bin
     // so the mobile picker walks the warehouse in a predictable
     // serpentine instead of zig-zagging. Lines without a bin go last.
     pl.items.sort((a, b) => {
       const aKey = a.bin
-        ? `${a.bin.zone}|${a.bin.rack}|${a.bin.shelf}|${a.bin.bin}`
+        ? `${a.bin.zone}|${a.bin.shelf}|${a.bin.bin}`
         : "~";
       const bKey = b.bin
-        ? `${b.bin.zone}|${b.bin.rack}|${b.bin.shelf}|${b.bin.bin}`
+        ? `${b.bin.zone}|${b.bin.shelf}|${b.bin.bin}`
         : "~";
       return aKey.localeCompare(bKey);
     });

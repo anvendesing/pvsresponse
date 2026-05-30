@@ -8,8 +8,9 @@
 
 import { useMemo } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import { CATEGORIES, bucketFor } from "@/data/categories";
+import { getCategoryIcon } from "@/data/categories";
 import { useCatalog } from "@/state/CatalogContext";
+import { useCategories } from "@/state/CategoriesContext";
 import { ProductCard } from "@/components/ProductCard";
 import type { CatalogProduct } from "@/lib/api";
 
@@ -26,6 +27,7 @@ const matches = (p: CatalogProduct, q: string): boolean => {
 
 export const HomePage = () => {
   const { products, loading, error } = useCatalog();
+  const { categories, categoryImageUrl } = useCategories();
   const [params] = useSearchParams();
   const q = params.get("q") ?? "";
 
@@ -77,24 +79,33 @@ export const HomePage = () => {
           <h2 className="section-title">A garden's worth of goodness</h2>
         </header>
         <div className="categories-exact-grid">
-          {CATEGORIES.map((c) => (
-            <Link key={c.id} to={`/category/${c.id}`} className="category-card">
-              <div className="category-card-inner">
-                <img
-                  src={`/images/category_${c.id}.png`}
-                  alt={c.name}
-                  className="category-card-img"
-                  onError={(e) => {
-                    // fall back to SVG icon if image is missing
-                    e.currentTarget.style.display = "none";
-                    (e.currentTarget.nextElementSibling as HTMLElement | null)?.style.setProperty("display", "flex");
-                  }}
-                />
-                <span className="category-card-icon-fallback">{c.icon()}</span>
-              </div>
-              <span className="category-card-badge">{c.name}</span>
-            </Link>
-          ))}
+          {categories.map((c) => {
+            const Icon = getCategoryIcon(c.slug);
+            return (
+              <Link key={c.id} to={`/category/${c.slug}`} className="category-card">
+                <div className="category-card-inner">
+                  <img
+                    src={categoryImageUrl(c)}
+                    alt={c.name}
+                    className="category-card-img"
+                    onError={(e) => {
+                      e.currentTarget.style.display = "none";
+                      (e.currentTarget.nextElementSibling as HTMLElement | null)?.style.setProperty(
+                        "display",
+                        "flex"
+                      );
+                    }}
+                  />
+                  {Icon && (
+                    <span className="category-card-icon-fallback" style={{ display: "none" }}>
+                      <Icon />
+                    </span>
+                  )}
+                </div>
+                <span className="category-card-badge">{c.name}</span>
+              </Link>
+            );
+          })}
         </div>
       </section>
 
@@ -165,11 +176,11 @@ export const HomePage = () => {
 
 const badgeFor = (p: CatalogProduct, kind: "best" | "combo"): string => {
   if (kind === "combo") return "Combo Save";
-  const bucket = bucketFor(p.category, p.name);
-  if (bucket === "millets") return "Stone Ground";
-  if (bucket === "oils") return "Wood Pressed";
-  if (bucket === "wellness") return "Herbal";
-  if (bucket === "sweeteners") return "Forest Honey";
+  const slug = p.categorySlug ?? "";
+  if (slug === "millets") return "Stone Ground";
+  if (slug === "oils") return "Wood Pressed";
+  if (slug === "wellness") return "Herbal";
+  if (slug === "sweeteners") return "Forest Honey";
   return "Best Seller";
 };
 

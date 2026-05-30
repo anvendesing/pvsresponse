@@ -55,10 +55,22 @@ export interface CatalogVariant {
   price: number;
 }
 
+export interface StorefrontCategory {
+  id: string;
+  slug: string;
+  name: string;
+  sortOrder: number;
+  imageUrl: string | null;
+}
+
 export interface CatalogProduct {
   id: string;
   sku: string;
   name: string;
+  categoryId: string | null;
+  categorySlug: string | null;
+  categoryName: string | null;
+  /** Display name; same as categoryName for search compatibility */
   category: string;
   uom: string;
   sellingPrice: number;
@@ -183,6 +195,7 @@ const fetchJson = async <T,>(
 // =====================================================================
 
 export const api = {
+  categories: () => fetchJson<StorefrontCategory[]>(buildUrl("/storefront-mock/categories")),
   catalog: () => fetchJson<CatalogProduct[]>(buildUrl("/storefront-mock/catalog")),
   product: (id: string) =>
     fetchJson<ProductDetail>(buildUrl(`/storefront-mock/products/${encodeURIComponent(id)}`)),

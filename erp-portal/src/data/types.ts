@@ -26,10 +26,24 @@ export interface UomCategory {
   uoms: Uom[];
 }
 
+export interface ProductCategory {
+  id: string;
+  slug: string;
+  name: string;
+  sortOrder: number;
+  active: boolean;
+  imageUrl?: string | null;
+  _count?: { products: number };
+}
+
 export interface ProductVariant {
   id?: string;
   sku: string;
   barcode?: string | null;
+  // Optional variant-level HSN (overrides product HSN when non-null).
+  hsn?: string | null;
+  // Optional GST rate override. null/undefined = inherit parent product.gstRate.
+  gstRate?: number | null;
   size?: string | null;
   color?: string | null;
   grade?: string | null;
@@ -44,6 +58,7 @@ export interface ProductVariant {
   sellingPriceOverride?: number | null;
   stockOnHand: number;
   active: boolean;
+  imageUrl?: string | null;
 }
 
 export interface Product {
@@ -58,9 +73,13 @@ export interface Product {
   reorderLevel: number;
   costPrice: number;
   sellingPrice: number;
-  category: string;
+  categoryId?: string | null;
+  category?: ProductCategory | null;
   hsn: string;
+  // GST rate percentage e.g. 18 = 18%. Default 18.
+  gstRate: number;
   batchTracked: boolean;
+  imageUrl?: string | null;
   variants?: ProductVariant[];
 }
 
@@ -86,7 +105,6 @@ export interface Bin {
   // Optional display name (e.g. "Main Warehouse") if the API supplied one.
   warehouseName?: string;
   zone: string;
-  rack: string;
   shelf: string;
   bin: string;
   capacity: number;

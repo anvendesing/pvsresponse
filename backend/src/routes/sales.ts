@@ -16,6 +16,39 @@ import { z } from "zod";
 import { db } from "../db.js";
 import { mintShareToken } from "../lib/share.js";
 import { recordChange } from "../sync/log.js";
+import { resolveGstRate, computeTax } from "../lib/tax.js";
+
+// ---------------------------------------------------------------- helpers ----
+
+/**
+ * Fetches the effective GST rate for each line item.
+ * Returns an array parallel to `items` with the resolved rate.
+ */
+const resolveLineGstRates = async (
+  items: Array<{ productId: string; variantId?: string | null }>
+): Promise<number[]> => {
+  const productIds = [...new Set(items.map((i) => i.productId))];
+  const variantIds = [...new Set(items.map((i) => i.variantId).filter(Boolean) as string[])];
+
+  const [products, variants] = await Promise.all([
+    db.product.findMany({ where: { id: { in: productIds } }, select: { id: true, gstRate: true } }),
+    variantIds.length
+      ? db.productVariant.findMany({
+          where: { id: { in: variantIds } },
+          select: { id: true, gstRate: true },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const pMap = new Map(products.map((p) => [p.id, p.gstRate]));
+  const vMap = new Map(variants.map((v) => [v.id, v.gstRate]));
+
+  return items.map((it) => {
+    const productRate = pMap.get(it.productId) ?? 18;
+    const variantRate = it.variantId ? (vMap.get(it.variantId) ?? null) : null;
+    return variantRate ?? productRate;
+  });
+};
 
 // ---------------------------------------------------------------- schemas ----
 
@@ -76,12 +109,16 @@ const soDirectCreate = z.object({
 // ---------------------------------------------------------- helper utilities --
 
 const computeTotals = (
-  items: { qty: number; rate: number; discount?: number }[]
+  items: { qty: number; rate: number; discount?: number; gstRate?: number }[]
 ): { subTotal: number; tax: number; total: number; lines: number[] } => {
-  const lines = items.map((it) => it.qty * it.rate * (1 - (it.discount ?? 0) / 100));
-  const subTotal = lines.reduce((s, n) => s + n, 0);
-  const tax = Math.round(subTotal * 0.18);
-  return { subTotal, tax, total: subTotal + tax, lines };
+  const amounts = items.map((it) => it.qty * it.rate * (1 - (it.discount ?? 0) / 100));
+  const subTotal = amounts.reduce((s, n) => s + n, 0);
+  const taxLines = items.map((it, i) => ({
+    amount: amounts[i],
+    gstRate: it.gstRate ?? 18,
+  }));
+  const tax = computeTax(taxLines);
+  return { subTotal, tax, total: subTotal + tax, lines: amounts };
 };
 
 // Compute the next sequence number for Q-{year}-{####} / SO-{year}-{####}.
@@ -469,7 +506,8 @@ export const salesRoutes = async (app: FastifyInstance) => {
 
   app.post("/quotes", { preHandler: [app.authenticate] }, async (req) => {
     const body = quoteCreate.parse(req.body);
-    const totals = computeTotals(body.items);
+    const lineRates = await resolveLineGstRates(body.items);
+    const totals = computeTotals(body.items.map((it, i) => ({ ...it, gstRate: lineRates[i] })));
     const quoteNo = await nextDocNo("Q", 2026, 1001);
     const validUntil = body.validUntil
       ? new Date(body.validUntil)
@@ -537,7 +575,8 @@ export const salesRoutes = async (app: FastifyInstance) => {
     if (body.notes !== undefined) headerData.notes = body.notes;
 
     if (items !== undefined) {
-      const totals = computeTotals(items);
+      const lineRates = await resolveLineGstRates(items);
+      const totals = computeTotals(items.map((it, i) => ({ ...it, gstRate: lineRates[i] })));
       headerData.subTotal = totals.subTotal;
       headerData.tax = totals.tax;
       headerData.total = totals.total;
@@ -810,7 +849,8 @@ export const salesRoutes = async (app: FastifyInstance) => {
 
   app.post("/sales-orders", { preHandler: [app.authenticate] }, async (req) => {
     const body = soDirectCreate.parse(req.body);
-    const totals = computeTotals(body.items);
+    const lineRates = await resolveLineGstRates(body.items);
+    const totals = computeTotals(body.items.map((it, i) => ({ ...it, gstRate: lineRates[i] })));
     const soNo = await nextDocNo("SO", 2026, 2001);
     const so = await db.salesOrder.create({
       data: {
@@ -963,7 +1003,7 @@ export const salesRoutes = async (app: FastifyInstance) => {
         include: {
           items: {
             include: {
-              product: { select: { id: true, sku: true, name: true, uom: true, stockOnHand: true } },
+              product: { select: { id: true, sku: true, name: true, uom: true, stockOnHand: true, gstRate: true } },
               variant: {
                 select: {
                   id: true,
@@ -971,6 +1011,7 @@ export const salesRoutes = async (app: FastifyInstance) => {
                   uom: true,
                   packSize: true,
                   stockOnHand: true,
+                  gstRate: true,
                 },
               },
             },
@@ -1045,7 +1086,12 @@ export const salesRoutes = async (app: FastifyInstance) => {
 
       // -------- Create invoice + lines + decrement stock + draw down SO --------
       const sub = planned.reduce((s, p) => s + p.qty * p.item.rate, 0);
-      const tax = Math.round(sub * 0.18);
+      const tax = computeTax(
+        planned.map((p) => ({
+          amount: p.qty * p.item.rate,
+          gstRate: resolveGstRate(p.item.product, p.item.variant),
+        }))
+      );
       const invoiceNo = await nextDocNo("INV", 2026, 5500);
       const wh = await db.warehouse.findFirst();
 
@@ -1060,14 +1106,20 @@ export const salesRoutes = async (app: FastifyInstance) => {
           paymentMode: body.paymentMode,
           status: "issued",
           items: {
-            create: planned.map((p) => ({
-              productId: p.item.productId,
-              variantId: p.item.variantId,
-              salesOrderItemId: p.item.id,
-              qty: p.qty,
-              rate: p.item.rate,
-              amount: p.qty * p.item.rate,
-            })),
+            create: planned.map((p) => {
+              const lineAmount = p.qty * p.item.rate;
+              const lineGstRate = resolveGstRate(p.item.product, p.item.variant);
+              return {
+                productId: p.item.productId,
+                variantId: p.item.variantId,
+                salesOrderItemId: p.item.id,
+                qty: p.qty,
+                rate: p.item.rate,
+                amount: lineAmount,
+                gstRate: lineGstRate,
+                taxAmount: Math.round(lineAmount * (lineGstRate / 100) * 100) / 100,
+              };
+            }),
           },
         },
         include: {

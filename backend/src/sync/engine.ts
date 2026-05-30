@@ -44,6 +44,9 @@ export const SYNCABLE_ENTITIES = [
   "DispatchOrder",
   "Approval",
   "StockLedger",
+  "PutawayRule",
+  "TransferOrder",
+  "TransferOrderItem",
 ] as const;
 
 export type SyncableEntity = (typeof SYNCABLE_ENTITIES)[number];
@@ -153,6 +156,9 @@ const dbModelFor = (entity: SyncableEntity) => {
     DispatchOrder: "dispatchOrder",
     Approval: "approval",
     StockLedger: "stockLedger",
+    PutawayRule: "putawayRule",
+    TransferOrder: "transferOrder",
+    TransferOrderItem: "transferOrderItem",
   };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   return (db as any)[map[entity]] as any;

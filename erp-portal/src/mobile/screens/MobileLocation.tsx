@@ -6,27 +6,19 @@ import { api, ApiError } from "../../lib/api";
 // /m/loc/:code
 // =====================================================================
 // Renders the right "next level" view based on the kind returned by
-// /v1/locations/scan. The worker can drill from zone -> rack -> shelf ->
-// bin, or land directly on a bin if they scanned its code.
+// /v1/locations/scan. The worker can drill from zone -> shelf -> bin,
+// or land directly on a bin if they scanned its code.
 
 interface ZoneResult {
   kind: "zone";
   warehouse: { code: string; name: string };
   zone: string;
-  racks: { rack: string; code: string; shelfCount: number; totalBins: number; totalQty: number }[];
-}
-interface RackResult {
-  kind: "rack";
-  warehouse: { code: string; name: string };
-  zone: string;
-  rack: string;
   shelves: { shelf: string; code: string; totalBins: number; totalQty: number }[];
 }
 interface ShelfResult {
   kind: "shelf";
   warehouse: { code: string; name: string };
   zone: string;
-  rack: string;
   shelf: string;
   bins: {
     id: string;
@@ -52,7 +44,6 @@ interface ProductResult {
     code: string;
     warehouseCode: string;
     zone: string;
-    rack: string;
     shelf: string;
     bin: string;
     qty: number;
@@ -61,7 +52,7 @@ interface ProductResult {
   }[];
 }
 
-type Result = ZoneResult | RackResult | ShelfResult | BinResult | ProductResult;
+type Result = ZoneResult | ShelfResult | BinResult | ProductResult;
 
 export const MobileLocation = () => {
   const { code } = useParams<{ code: string }>();
@@ -121,35 +112,7 @@ export const MobileLocation = () => {
       <div className="px-4 pt-4">
         <Header
           title={`Zone ${data.zone}`}
-          sub={`${data.warehouse.code} — ${data.racks.length} rack(s)`}
-        />
-        <div className="space-y-2 pb-4">
-          {data.racks.map((r) => (
-            <Link
-              key={r.rack}
-              to={`/m/loc/${encodeURIComponent(r.code)}`}
-              className="flex items-center justify-between rounded-xl bg-white px-4 py-3 ring-1 ring-slate-200"
-            >
-              <div>
-                <div className="font-mono text-sm font-semibold text-[#003087]">{r.rack}</div>
-                <div className="text-xs text-slate-500">
-                  {r.shelfCount} shelves · {r.totalBins} bins · {r.totalQty} units
-                </div>
-              </div>
-              <span className="text-slate-400">›</span>
-            </Link>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  if (data.kind === "rack") {
-    return (
-      <div className="px-4 pt-4">
-        <Header
-          title={`Rack ${data.rack}`}
-          sub={`${data.warehouse.code} · zone ${data.zone}`}
+          sub={`${data.warehouse.code} — ${data.shelves.length} shelf(ves)`}
         />
         <div className="space-y-2 pb-4">
           {data.shelves.map((s) => (
@@ -177,7 +140,7 @@ export const MobileLocation = () => {
       <div className="px-4 pt-4">
         <Header
           title={`Shelf ${data.shelf}`}
-          sub={`${data.warehouse.code} · zone ${data.zone} · rack ${data.rack}`}
+          sub={`${data.warehouse.code} · zone ${data.zone}`}
         />
         <div className="space-y-2 pb-4">
           {data.bins.map((b) => (

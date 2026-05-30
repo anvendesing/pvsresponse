@@ -5,14 +5,18 @@ import { api, ApiError } from "../../lib/api";
 // =====================================================================
 // /m/tasks
 // =====================================================================
-// Two segmented sections (Pick and Pack), each with two sub-buckets:
-//   - Mine     : tasks assigned to the logged-in user
-//   - Available: tasks waiting in the queue. Tap "Claim" to take one.
+// Three segmented sections (Pick, Pack, Transfer), each with Mine / Available.
 
 interface TaskRow {
   id: string;
   pickListNo?: string;
   packingSlipNo?: string;
+  // Transfer order fields
+  transferNo?: string;
+  kind?: string;
+  fromWarehouse?: { code: string; name: string };
+  toWarehouse?: { code: string; name: string };
+  productionOrder?: { orderNo: string } | null;
   status: string;
   assignedToId?: string | null;
   claimedAt?: string | null;
@@ -28,16 +32,20 @@ interface TasksResponse {
   pickAvailable: TaskRow[];
   packClaimed: TaskRow[];
   packAvailable: TaskRow[];
+  transferClaimed: TaskRow[];
+  transferAvailable: TaskRow[];
   counts: {
     pickClaimed: number;
     pickAvailable: number;
     packClaimed: number;
     packAvailable: number;
+    transferClaimed: number;
+    transferAvailable: number;
   };
 }
 
 export const MobileTasks = () => {
-  const [tab, setTab] = useState<"pick" | "pack">("pick");
+  const [tab, setTab] = useState<"pick" | "pack" | "transfer">("pick");
   const [data, setData] = useState<TasksResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -62,11 +70,12 @@ export const MobileTasks = () => {
     return () => clearInterval(t);
   }, [refresh]);
 
-  const claim = async (id: string, kind: "pick" | "pack") => {
+  const claim = async (id: string, kind: "pick" | "pack" | "transfer") => {
     setClaiming(id);
     try {
       if (kind === "pick") await api.claimPickList(id);
-      else await api.claimPackingSlip(id);
+      else if (kind === "pack") await api.claimPackingSlip(id);
+      else await api.claimTransferOrder(id);
       await refresh();
     } catch (err) {
       const message =
@@ -80,9 +89,21 @@ export const MobileTasks = () => {
     }
   };
 
-  const mine = tab === "pick" ? data?.pickClaimed ?? [] : data?.packClaimed ?? [];
+  const mine =
+    tab === "pick"
+      ? data?.pickClaimed ?? []
+      : tab === "pack"
+      ? data?.packClaimed ?? []
+      : data?.transferClaimed ?? [];
   const available =
-    tab === "pick" ? data?.pickAvailable ?? [] : data?.packAvailable ?? [];
+    tab === "pick"
+      ? data?.pickAvailable ?? []
+      : tab === "pack"
+      ? data?.packAvailable ?? []
+      : data?.transferAvailable ?? [];
+
+  const transferTotal =
+    (data?.counts.transferClaimed ?? 0) + (data?.counts.transferAvailable ?? 0);
 
   return (
     <div className="px-4 pt-4">
@@ -96,6 +117,11 @@ export const MobileTasks = () => {
           active={tab === "pack"}
           onClick={() => setTab("pack")}
           label={`Pack (${(data?.counts.packClaimed ?? 0) + (data?.counts.packAvailable ?? 0)})`}
+        />
+        <SegmentBtn
+          active={tab === "transfer"}
+          onClick={() => setTab("transfer")}
+          label={`Move (${transferTotal})`}
         />
       </div>
 
@@ -188,6 +214,18 @@ const Section = ({
   );
 };
 
+const KIND_BADGE: Record<string, string> = {
+  putaway: "bg-purple-100 text-purple-800",
+  replenishment: "bg-orange-100 text-orange-800",
+  manual: "bg-slate-100 text-slate-700",
+};
+
+const KIND_LABEL: Record<string, string> = {
+  putaway: "Putaway",
+  replenishment: "Replenish",
+  manual: "Manual",
+};
+
 const TaskCard = ({
   task,
   kind,
@@ -196,11 +234,59 @@ const TaskCard = ({
   onClaim,
 }: {
   task: TaskRow;
-  kind: "pick" | "pack";
+  kind: "pick" | "pack" | "transfer";
   mine: boolean;
   claiming?: boolean;
   onClaim?: () => void;
 }) => {
+  if (kind === "transfer") {
+    const detailHref = `/m/transfers/${task.id}`;
+    const toKindBadge = KIND_BADGE[task.kind ?? "manual"] ?? "bg-slate-100 text-slate-700";
+    const toKindLabel = KIND_LABEL[task.kind ?? "manual"] ?? "Transfer";
+    const items = task._count?.items ?? 0;
+    return (
+      <div className="rounded-xl bg-white px-4 py-3 ring-1 ring-slate-200 shadow-sm">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span className="font-mono text-sm font-semibold text-[#003087]">
+                {task.transferNo ?? task.id.slice(0, 8)}
+              </span>
+              <span className={["rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide", toKindBadge].join(" ")}>
+                {toKindLabel}
+              </span>
+              <StatusPill status={task.status} />
+            </div>
+            <div className="mt-1 text-sm font-medium text-slate-900 truncate">
+              {task.fromWarehouse?.code ?? "?"} → {task.toWarehouse?.code ?? "?"}
+            </div>
+            <div className="mt-0.5 text-xs text-slate-500">
+              {items} item{items === 1 ? "" : "s"}
+              {task.productionOrder ? ` · MO ${task.productionOrder.orderNo}` : ""}
+            </div>
+          </div>
+          {mine ? (
+            <a
+              href={detailHref}
+              className="flex-shrink-0 rounded-xl bg-[#003087] px-4 py-2 text-sm font-semibold text-white"
+            >
+              Open
+            </a>
+          ) : (
+            <button
+              type="button"
+              disabled={claiming}
+              onClick={onClaim}
+              className="flex-shrink-0 rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+            >
+              {claiming ? "…" : "Claim"}
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   const docNo = kind === "pick" ? task.pickListNo : task.packingSlipNo;
   const detailHref = kind === "pick" ? `/m/picks/${task.id}` : `/m/packs/${task.id}`;
   const customer = task.salesOrder?.customer?.name ?? "—";

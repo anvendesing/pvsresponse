@@ -21,7 +21,6 @@ interface BinDetail {
     id: string;
     code: string;
     zone: string;
-    rack: string;
     shelf: string;
     bin: string;
     qty: number;
@@ -148,7 +147,7 @@ export const MobileBin = () => {
 
       <div className="mb-3 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
         <div className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
-          {data.warehouse?.code ?? ""} · {b.zone}/{b.rack}/{b.shelf}
+          {data.warehouse?.code ?? ""} · {b.zone}/{b.shelf}
         </div>
         <div className="font-mono text-2xl font-bold text-[#003087]">
           {b.bin}

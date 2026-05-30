@@ -1,9 +1,11 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
+  Camera,
   CheckCircle2,
   Download,
   Filter,
+  ImagePlus,
   Layers,
   Pencil,
   Plus,
@@ -40,6 +42,24 @@ export const Products = () => {
   const [type, setType] = useState<ProductType | "all">("all");
   const [selected, setSelected] = useState<Product | null>(null);
   const [editorMode, setEditorMode] = useState<"create" | "edit" | null>(null);
+  const [imgUploading, setImgUploading] = useState(false);
+  const [imgError, setImgError] = useState<string | null>(null);
+  const productImgRef = useRef<HTMLInputElement>(null);
+
+  const handleProductImageUpload = async (file: File) => {
+    if (!selected?.id) return;
+    setImgUploading(true);
+    setImgError(null);
+    try {
+      const r = await api.uploadProductImage(selected.id, file);
+      setSelected((s) => s ? { ...s, imageUrl: r.imageUrl } : s);
+      await live.refetch();
+    } catch (e) {
+      setImgError((e as Error).message);
+    } finally {
+      setImgUploading(false);
+    }
+  };
 
   const live = useApi(() => api.products({ limit: 500 }), []);
   const products = live.data ?? [];
@@ -53,7 +73,7 @@ export const Products = () => {
         p.name.toLowerCase().includes(t) ||
         p.sku.toLowerCase().includes(t) ||
         p.barcode.includes(q) ||
-        p.category.toLowerCase().includes(t) ||
+        (p.category?.name ?? "").toLowerCase().includes(t) ||
         (p.variants ?? []).some(
           (v) =>
             v.sku.toLowerCase().includes(t) ||
@@ -66,6 +86,23 @@ export const Products = () => {
   }, [q, type, products]);
 
   const columns: Column<Product>[] = [
+    {
+      key: "image",
+      header: "",
+      cell: (r) => {
+        const src = r.imageUrl
+          ? r.imageUrl.startsWith("/uploads")
+            ? `${import.meta.env.VITE_API_URL ?? "http://localhost:4000"}${r.imageUrl}`
+            : r.imageUrl
+          : null;
+        return src ? (
+          <img src={src} alt={r.name} className="w-9 h-9 object-cover rounded border border-border" />
+        ) : (
+          <div className="w-9 h-9 rounded border border-border bg-canvas" />
+        );
+      },
+      width: "52px",
+    },
     {
       key: "sku",
       header: "SKU",
@@ -111,7 +148,7 @@ export const Products = () => {
     {
       key: "category",
       header: "Category",
-      cell: (r) => <span className="text-ink">{r.category}</span>,
+      cell: (r) => <span className="text-ink">{r.category?.name ?? "—"}</span>,
       width: "120px",
     },
     {
@@ -266,23 +303,69 @@ export const Products = () => {
               </button>
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
-              <div className="aspect-[4/3] bg-canvas rounded-lg grid place-items-center text-ink-muted border border-border">
-                <div className="text-center">
-                  <div className="text-h2 font-bold text-primary">{selected.uom}</div>
-                  <div className="text-caption">Image preview</div>
-                </div>
+              {/* Product image */}
+              <div className="relative group">
+                {selected.imageUrl ? (
+                  <img
+                    src={
+                      selected.imageUrl.startsWith("/uploads")
+                        ? `${import.meta.env.VITE_API_URL ?? "http://localhost:4000"}${selected.imageUrl}`
+                        : selected.imageUrl
+                    }
+                    alt={selected.name}
+                    className="w-full aspect-[4/3] object-cover rounded-lg border border-border"
+                  />
+                ) : (
+                  <div className="aspect-[4/3] bg-canvas rounded-lg border-2 border-dashed border-border flex flex-col items-center justify-center gap-2 text-ink-muted">
+                    <ImagePlus size={32} />
+                    <span className="text-body-sm">No product image</span>
+                  </div>
+                )}
+                {/* Upload overlay — appears on hover */}
+                <button
+                  className="absolute inset-0 rounded-lg bg-ink/0 hover:bg-ink/40 transition-colors flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100"
+                  onClick={() => productImgRef.current?.click()}
+                  title="Upload product image"
+                >
+                  <Camera size={20} className="text-white" />
+                  <span className="text-white text-body-sm font-semibold">
+                    {selected.imageUrl ? "Replace image" : "Upload image"}
+                  </span>
+                </button>
+                {imgUploading && (
+                  <div className="absolute inset-0 rounded-lg bg-ink/60 flex items-center justify-center">
+                    <span className="text-white text-body-sm font-semibold">Uploading…</span>
+                  </div>
+                )}
+                <input
+                  ref={productImgRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) handleProductImageUpload(file);
+                    e.target.value = "";
+                  }}
+                />
               </div>
+              {imgError && (
+                <div className="text-danger text-body-sm bg-danger-soft border border-danger rounded px-2 py-1">
+                  {imgError}
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <Stat label="On Hand" value={num(selected.stockOnHand)} />
                 <Stat label="Reorder" value={num(selected.reorderLevel)} />
                 <Stat label="Cost" value={inr(selected.costPrice)} />
                 <Stat label="Selling" value={inr(selected.sellingPrice)} />
                 <Stat label="HSN" value={selected.hsn} />
+                <Stat label="GST" value={`${selected.gstRate ?? 18}%`} />
                 <Stat label="UOM" value={selected.uom} />
               </div>
               <Card title="Attributes" noPadding>
                 <div className="divide-y divide-border">
-                  <Row k="Category" v={selected.category} />
+                  <Row k="Category" v={selected.category?.name ?? "—"} />
                   <Row k="Type" v={typeChip(selected.type).label} />
                   <Row k="Barcode" v={selected.barcode} mono />
                   <Row k="Batch tracked" v={selected.batchTracked ? "Yes" : "No"} />
@@ -304,25 +387,67 @@ export const Products = () => {
                     {selected.variants.map((v, i) => {
                       const vu = effectiveUom(selected, v);
                       const pack = v.packSize ?? 1;
+                      // Resolved image: variant-specific first, then fall back to product image
+                      const varImgSrc = (() => {
+                        const url = v.imageUrl || selected.imageUrl;
+                        if (!url) return null;
+                        return url.startsWith("/uploads")
+                          ? `${import.meta.env.VITE_API_URL ?? "http://localhost:4000"}${url}`
+                          : url;
+                      })();
                       return (
                         <div
                           key={v.id ?? i}
-                          className="px-3 py-2 flex items-start justify-between gap-3"
+                          className="px-3 py-2 flex items-start gap-3"
                         >
-                          <div className="min-w-0">
-                            <div className="font-mono text-caption text-ink-muted">
-                              {v.sku}
+                          {/* Variant image thumbnail / upload trigger */}
+                          <VariantImgCell
+                            src={v.imageUrl ? (v.imageUrl.startsWith("/uploads") ? `${import.meta.env.VITE_API_URL ?? "http://localhost:4000"}${v.imageUrl}` : v.imageUrl) : varImgSrc}
+                            hasOwnImage={!!v.imageUrl}
+                            variantId={v.id ?? null}
+                            productId={selected.id}
+                            onUploaded={(url) => {
+                              setSelected((s) =>
+                                s
+                                  ? {
+                                      ...s,
+                                      variants: (s.variants ?? []).map((vv) =>
+                                        vv.id === v.id ? { ...vv, imageUrl: url } : vv
+                                      ),
+                                    }
+                                  : s
+                              );
+                            }}
+                          />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <div className="font-mono text-caption text-ink-muted">
+                                {v.sku}
+                              </div>
+                              {v.barcode && (
+                                <div className="font-mono text-caption text-ink-muted">
+                                  · {v.barcode}
+                                </div>
+                              )}
                             </div>
                             <div className="text-body-sm font-semibold">
                               {[v.size, v.color, v.grade].filter(Boolean).join(" · ") || "—"}
                             </div>
-                            <div className="text-caption text-ink-muted tnum mt-0.5">
-                              sells in <span className="font-mono">{vu}</span>
-                              {pack !== 1 && (
-                                <>
-                                  {" "}
-                                  · 1 {vu} = <b>{pack}</b> {selected.uom}
-                                </>
+                            <div className="text-caption text-ink-muted tnum mt-0.5 flex gap-2 flex-wrap">
+                              <span>
+                                sells in <span className="font-mono">{vu}</span>
+                                {pack !== 1 && (
+                                  <>
+                                    {" "}
+                                    · 1 {vu} = <b>{pack}</b> {selected.uom}
+                                  </>
+                                )}
+                              </span>
+                              {v.gstRate != null && (
+                                <span className="text-ink-muted">· GST {v.gstRate}%</span>
+                              )}
+                              {v.hsn && (
+                                <span className="text-ink-muted">· HSN {v.hsn}</span>
                               )}
                             </div>
                           </div>
@@ -624,5 +749,84 @@ const VariantStockCell = ({ product }: { product: Product }) => {
           )
         : null}
     </>
+  );
+};
+
+// Small variant image cell with hover-to-upload.
+// Shows the variant's own image when set; falls back to the product image.
+// Clicking always uploads a NEW image specifically for that variant.
+const VariantImgCell = ({
+  src,
+  hasOwnImage,
+  variantId,
+  productId,
+  onUploaded,
+}: {
+  src: string | null;
+  hasOwnImage: boolean;
+  variantId: string | null;
+  productId: string;
+  onUploaded: (url: string) => void;
+}) => {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const canUpload = !!variantId && !!productId;
+
+  const handleFile = async (file: File) => {
+    if (!variantId) return;
+    setUploading(true);
+    setErr(null);
+    try {
+      const r = await api.uploadVariantImage(productId, variantId, file);
+      onUploaded(r.imageUrl);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  return (
+    <div
+      className="relative w-14 h-14 rounded-md border border-border overflow-hidden flex-shrink-0 group cursor-pointer"
+      onClick={() => canUpload && inputRef.current?.click()}
+      title={canUpload ? "Click to upload variant image" : ""}
+    >
+      {src ? (
+        <img src={src} alt="variant" className="w-full h-full object-cover" />
+      ) : (
+        <div className="w-full h-full bg-canvas flex items-center justify-center">
+          <ImagePlus size={16} className="text-ink-muted" />
+        </div>
+      )}
+      {/* Hover overlay */}
+      {canUpload && !uploading && (
+        <div className="absolute inset-0 bg-ink/0 hover:bg-ink/50 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
+          <Camera size={14} className="text-white" />
+        </div>
+      )}
+      {uploading && (
+        <div className="absolute inset-0 bg-ink/60 flex items-center justify-center">
+          <span className="text-white text-[10px]">…</span>
+        </div>
+      )}
+      {!hasOwnImage && src && (
+        <div className="absolute bottom-0 left-0 right-0 bg-ink/60 text-white text-[9px] text-center leading-tight py-0.5">
+          product
+        </div>
+      )}
+      <input
+        ref={inputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) handleFile(file);
+          e.target.value = "";
+        }}
+      />
+    </div>
   );
 };

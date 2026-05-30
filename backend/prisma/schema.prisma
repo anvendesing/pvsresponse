@@ -36,6 +36,9 @@ model User {
   packingSlipClaims  PackingSlip[] @relation("PackingSlipAssignee")
   binCounts          BinCount[]
   scanEvents         ScanEvent[]
+  transferOrderClaims  TransferOrder[] @relation("TransferOrderAssignee")
+  transferOrderPicks   TransferOrder[] @relation("TransferOrderPicker")
+  transferOrderDrops   TransferOrder[] @relation("TransferOrderDropper")
 }
 
 model Session {
@@ -118,21 +121,28 @@ model Warehouse {
   code      String   @unique
   name      String
   city      String
+  // "storage" = normal stock warehouse; "production" = production-line holding area
+  // Each WorkCenter optionally owns one production warehouse.
+  kind      String   @default("storage")
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   bins      Bin[]
   ledger    StockLedger[]
+  // Reverse relation: the WorkCenter that owns this production warehouse
+  productionWorkCenter WorkCenter? @relation("WorkCenterProductionWarehouse")
+  putawayRulesTo       PutawayRule[] @relation("PutawayRuleTo")
+  transferOrdersFrom   TransferOrder[] @relation("TransferOrderFromWarehouse")
+  transferOrdersTo     TransferOrder[] @relation("TransferOrderToWarehouse")
 }
 
 model Bin {
   id           String     @id @default(cuid())
   warehouseId  String
   zone         String
-  rack         String
   shelf        String
   bin          String
-  // Mobile-scan code "B-<warehouseCode>-<zone>-<rack>-<shelf>-<bin>".
+  // Mobile-scan code "B.<warehouseCode>.<zone>.<shelf>.<bin>".
   // Materialised on insert/update for O(1) lookup from the camera scanner;
   // existing rows are backfilled by scripts/backfill-bin-codes.ts.
   code         String?    @unique
@@ -151,9 +161,24 @@ model Bin {
   product      Product?   @relation(fields: [productId], references: [id])
   pickListItems PickListItem[]
   binCounts    BinCount[]
+  putawayRules  PutawayRule[]
+  transferItemsFrom TransferOrderItem[] @relation("TransferItemFromBin")
+  transferItemsTo   TransferOrderItem[] @relation("TransferItemToBin")
 
-  @@unique([warehouseId, zone, rack, shelf, bin])
+  @@unique([warehouseId, zone, shelf, bin])
   @@index([productId])
+}
+
+model ProductCategory {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  name      String
+  sortOrder Int      @default(0)
+  active    Boolean  @default(true)
+  imageUrl  String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  products  Product[]
 }
 
 model Product {
@@ -164,8 +189,10 @@ model Product {
   uom           String
   barcode       String   @unique
   state         String   @default("active") // draft | active | discontinued | blocked
-  category      String
+  categoryId    String?
+  category      ProductCategory? @relation(fields: [categoryId], references: [id])
   hsn           String
+  gstRate       Float    @default(18) // GST percentage e.g. 18 = 18%
   costPrice     Float
   sellingPrice  Float
   reorderLevel  Int      @default(0)
@@ -193,6 +220,8 @@ model Product {
   creditNoteItems CreditNoteItem[]
   packingSlipItems PackingSlipItem[]
   priceListItems PriceListItem[]
+  putawayRules  PutawayRule[]
+  transferOrderItems TransferOrderItem[]
 }
 
 model ProductVariant {
@@ -200,6 +229,9 @@ model ProductVariant {
   productId           String
   sku                 String   @unique
   barcode             String?  @unique
+  // Optional per-variant HSN and GST rate. Null = inherit from parent product.
+  hsn                 String?
+  gstRate             Float?   // override; null = inherit parent.gstRate
   // Free-form variant axes (size / color / grade per PRD).
   size                String?
   color               String?
@@ -223,6 +255,8 @@ model ProductVariant {
   sellingPriceOverride Float?
   stockOnHand         Int      @default(0)
   active              Boolean  @default(true)
+  // Optional per-variant image (falls back to parent Product.imageUrl at read time).
+  imageUrl            String?  // relative path e.g. /uploads/products/variants/<id>.jpg
   createdAt           DateTime @default(now())
   updatedAt           DateTime @updatedAt
   product             Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
@@ -235,6 +269,8 @@ model ProductVariant {
   boms                Bom[]
   returnItems         CustomerReturnItem[]
   creditNoteItems     CreditNoteItem[]
+  putawayRules        PutawayRule[]
+  transferOrderItems  TransferOrderItem[]
 
   @@index([productId])
 }
@@ -560,6 +596,7 @@ model ProductionOrder {
   updatedAt   DateTime @updatedAt
   bom         Bom      @relation(fields: [bomId], references: [id])
   workOrders  WorkOrder[]
+  transferOrders TransferOrder[]
 
   @@index([status])
   @@index([bomId])
@@ -613,11 +650,16 @@ model WorkCenter {
   // Unit is "produced units / hour" (interpretation is up to the
   // operator since unit varies by product).
   capacityPerHour Float?
+  // Optional dedicated production-line warehouse. When set, MO completion
+  // lands FG here (instead of any storage warehouse) and material issue
+  // pulls ONLY from here. A putaway TO then moves FG to storage.
+  productionLineWarehouseId String? @unique
   active          Boolean   @default(true)
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
   machines        Machine[]
   defaultedByBoms Bom[]
+  productionLineWarehouse Warehouse? @relation("WorkCenterProductionWarehouse", fields: [productionLineWarehouseId], references: [id])
 
   @@index([active])
 }
@@ -680,6 +722,108 @@ model Attendance {
   worker    Worker   @relation(fields: [workerId], references: [id], onDelete: Cascade)
 
   @@index([workerId, date])
+}
+
+// =====================================================================
+// Putaway rules + internal transfer orders
+// =====================================================================
+
+// Declares "when a finished product X (optionally variant Y) is received
+// at the production line, move it to this storage warehouse / bin".
+// Resolution waterfall used by resolvePutawayDestination():
+//   variant rule (lowest priority number) > product rule > system fallback.
+model PutawayRule {
+  id            String   @id @default(cuid())
+  productId     String
+  variantId     String?
+  toWarehouseId String
+  // Optional preferred bin within toWarehouse. When null the system
+  // auto-picks the best available bin via pickBinForReceive().
+  toBinId       String?
+  // Lower = higher priority when multiple rules match.
+  priority      Int      @default(100)
+  active        Boolean  @default(true)
+  notes         String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  product       Product  @relation(fields: [productId], references: [id])
+  variant       ProductVariant? @relation(fields: [variantId], references: [id])
+  toWarehouse   Warehouse @relation("PutawayRuleTo", fields: [toWarehouseId], references: [id])
+  tobin         Bin?      @relation(fields: [toBinId], references: [id])
+
+  @@index([productId])
+  @@index([variantId])
+  @@index([toWarehouseId])
+}
+
+// A first-class internal movement document. Three kinds:
+//   putaway      - FG leaving production line -> storage (auto-created on MO complete)
+//   replenishment - raw materials leaving storage -> production line (auto-created on MO release)
+//   manual       - operator-initiated movement between any two warehouses
+//
+// Status flow: draft -> ready -> in_transit -> done
+//              any -> cancelled
+model TransferOrder {
+  id                String   @id @default(cuid())
+  transferNo        String   @unique  // TRF-2026-NNNN
+  kind              String            // putaway | replenishment | manual
+  status            String   @default("ready") // draft | ready | in_transit | done | cancelled
+  fromWarehouseId   String
+  toWarehouseId     String
+  // Back-link to the MO that triggered this TO (null for manual).
+  productionOrderId String?
+  // Who is handling this TO on the mobile.
+  assignedToId      String?
+  claimedAt         DateTime?
+  // Timestamps for pick (items leave source bins) and drop (items enter destination bins).
+  pickedById        String?
+  pickedAt          DateTime?
+  droppedById       String?
+  droppedAt         DateTime?
+  cancelledAt       DateTime?
+  notes             String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  fromWarehouse     Warehouse @relation("TransferOrderFromWarehouse", fields: [fromWarehouseId], references: [id])
+  toWarehouse       Warehouse @relation("TransferOrderToWarehouse", fields: [toWarehouseId], references: [id])
+  productionOrder   ProductionOrder? @relation(fields: [productionOrderId], references: [id])
+  assignedTo        User?    @relation("TransferOrderAssignee", fields: [assignedToId], references: [id])
+  pickedBy          User?    @relation("TransferOrderPicker", fields: [pickedById], references: [id])
+  droppedBy         User?    @relation("TransferOrderDropper", fields: [droppedById], references: [id])
+  items             TransferOrderItem[]
+
+  @@index([status])
+  @@index([kind])
+  @@index([productionOrderId])
+  @@index([fromWarehouseId])
+  @@index([toWarehouseId])
+  @@index([assignedToId])
+}
+
+model TransferOrderItem {
+  id               String   @id @default(cuid())
+  transferOrderId  String
+  productId        String
+  variantId        String?
+  // System-computed required quantity.
+  qtyRequested     Float
+  // Filled in at pick time (may be <= qtyRequested if short).
+  qtyPicked        Float    @default(0)
+  // Filled in at drop time (may differ from qtyPicked on variance).
+  qtyDropped       Float    @default(0)
+  // Source bin (system-suggested; operator may override at pick time).
+  fromBinId        String?
+  // Destination bin resolved from PutawayRule or operator scan at drop time.
+  toBinId          String?
+  notes            String?
+  transferOrder    TransferOrder @relation(fields: [transferOrderId], references: [id], onDelete: Cascade)
+  product          Product       @relation(fields: [productId], references: [id])
+  variant          ProductVariant? @relation(fields: [variantId], references: [id])
+  fromBin          Bin?          @relation("TransferItemFromBin", fields: [fromBinId], references: [id])
+  tobin            Bin?          @relation("TransferItemToBin", fields: [toBinId], references: [id])
+
+  @@index([transferOrderId])
+  @@index([productId])
 }
 
 // =====================================================================
@@ -758,6 +902,10 @@ model InvoiceItem {
   qty                 Float
   rate                Float
   amount              Float
+  // Snapshot of the GST rate at time of invoicing so historical accuracy is
+  // preserved even if the product rate is changed later.
+  gstRate             Float?  @default(18)
+  taxAmount           Float?
   invoice             Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   product             Product @relation(fields: [productId], references: [id])
   variant             ProductVariant? @relation(fields: [variantId], references: [id])
@@ -1299,6 +1447,10 @@ model CompanyProfile {
   bankIfsc      String?
   bankBranch    String?
   upi           String?
+  // When true (default), an MO must be "released" (material shortage check
+  // + replenishment TOs created) before issue-materials is allowed.
+  // Set to false for plants that don't use dedicated production-line warehouses.
+  requireMoReleaseBeforeIssue Boolean @default(false)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
@@ -1398,6 +1550,8 @@ model CreditNoteItem {
   qty           Float
   rate          Float
   amount        Float
+  gstRate       Float?  @default(18)
+  taxAmount     Float?
   reason        String
   returnItemId  String?    // back-link to the source CustomerReturnItem
 

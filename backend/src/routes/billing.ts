@@ -3,6 +3,7 @@ import { z } from "zod";
 import { db } from "../db.js";
 import { mintShareToken } from "../lib/share.js";
 import { recordChange } from "../sync/log.js";
+import { resolveGstRate, computeTax, lineTax } from "../lib/tax.js";
 
 const invoiceCreate = z.object({
   customerId: z.string(),
@@ -143,8 +144,29 @@ export const billingRoutes = async (app: FastifyInstance) => {
     }
     // -------- End pre-flight guard --------
 
-    const sub = body.items.reduce((s, i) => s + i.qty * i.rate, 0);
-    const tax = Math.round(sub * 0.18);
+    // Resolve per-line GST rates.
+    const gstProductIds = [...new Set(body.items.map((i) => i.productId))];
+    const gstVariantIds = [...new Set(body.items.map((i) => i.variantId).filter(Boolean) as string[])];
+    const [gstProducts, gstVariants] = await Promise.all([
+      db.product.findMany({ where: { id: { in: gstProductIds } }, select: { id: true, gstRate: true } }),
+      gstVariantIds.length
+        ? db.productVariant.findMany({ where: { id: { in: gstVariantIds } }, select: { id: true, gstRate: true } })
+        : Promise.resolve([]),
+    ]);
+    const gstPMap = new Map(gstProducts.map((p) => [p.id, p.gstRate]));
+    const gstVMap = new Map(gstVariants.map((v) => [v.id, v.gstRate]));
+
+    const itemsWithGst = body.items.map((i) => ({
+      ...i,
+      lineAmount: i.qty * i.rate,
+      lineGstRate: resolveGstRate(
+        { gstRate: gstPMap.get(i.productId) ?? 18 },
+        i.variantId ? { gstRate: gstVMap.get(i.variantId) } : null
+      ),
+    }));
+
+    const sub = itemsWithGst.reduce((s, i) => s + i.lineAmount, 0);
+    const tax = computeTax(itemsWithGst.map((i) => ({ amount: i.lineAmount, gstRate: i.lineGstRate })));
     const next = await db.invoice.count();
     const inv = await db.invoice.create({
       data: {
@@ -156,12 +178,14 @@ export const billingRoutes = async (app: FastifyInstance) => {
         paymentMode: body.paymentMode,
         status: "issued",
         items: {
-          create: body.items.map((i) => ({
+          create: itemsWithGst.map((i) => ({
             productId: i.productId,
             variantId: i.variantId ?? null,
             qty: i.qty,
             rate: i.rate,
-            amount: i.qty * i.rate,
+            amount: i.lineAmount,
+            gstRate: i.lineGstRate,
+            taxAmount: lineTax(i.lineAmount, i.lineGstRate),
           })),
         },
       },

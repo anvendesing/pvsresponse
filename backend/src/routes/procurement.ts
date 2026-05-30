@@ -697,7 +697,7 @@ export const procurementRoutes = async (app: FastifyInstance) => {
               productId: bin.productId ?? productId,
             },
           });
-          binLabel = `${bin.zone}/${bin.rack}/${bin.shelf}/${bin.bin}`;
+          binLabel = `${bin.zone}/${bin.shelf}/${bin.bin}`;
           await db.stockLedger.create({
             data: {
               productId,

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
+  ArrowRightLeft,
   Bell,
   Building,
   Check,
@@ -21,6 +22,7 @@ import {
   ScanLine,
   Shield,
   Smartphone,
+  Tags,
   Trash2,
   Users,
   Warehouse as WarehouseIcon,
@@ -36,16 +38,20 @@ import {
   api,
   type CompanyProfile,
   type CompanyProfileUpdate,
+  type PutawayRuleRow,
   type WarehouseRow,
 } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { useBrand } from "@/hooks/useBrand";
 import { UserManager } from "@/components/settings/UserManager";
+import { CategoryManager } from "@/components/settings/CategoryManager";
 
 const SECTIONS = [
   { id: "company", label: "Company", icon: Building },
   { id: "warehouses", label: "Warehouses", icon: WarehouseIcon },
   { id: "production", label: "Production lines", icon: Factory },
+  { id: "putaway", label: "Putaway rules", icon: ArrowRightLeft },
+  { id: "categories", label: "Categories", icon: Tags },
   { id: "users", label: "Users & Roles", icon: Users },
   { id: "security", label: "Security", icon: Shield },
   { id: "scanner", label: "Scanner", icon: ScanLine },
@@ -92,6 +98,9 @@ export const Settings = () => {
           {active === "company" && <CompanyForm />}
           {active === "warehouses" && <WarehouseManager />}
           {active === "production" && <ProductionMaster />}
+          {active === "putaway" && <PutawayRulesManager />}
+
+          {active === "categories" && <CategoryManager />}
 
           {active === "users" && <UserManager />}
 
@@ -1474,6 +1483,8 @@ interface WorkCenterRow {
   name: string;
   description: string | null;
   capacityPerHour: number | null;
+  productionLineWarehouseId: string | null;
+  productionLineWarehouse: { id: string; code: string; name: string } | null;
   active: boolean;
   machines: Array<{
     id: string;
@@ -1498,6 +1509,7 @@ interface MachineRow {
 const ProductionMaster = () => {
   const [workCenters, setWorkCenters] = useState<WorkCenterRow[]>([]);
   const [machines, setMachines] = useState<MachineRow[]>([]);
+  const [warehouses, setWarehouses] = useState<WarehouseRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -1505,9 +1517,14 @@ const ProductionMaster = () => {
     setLoading(true);
     setError(null);
     try {
-      const [wc, m] = await Promise.all([api.workCenters(), api.machines()]);
+      const [wc, m, wh] = await Promise.all([
+        api.workCenters(),
+        api.machines(),
+        api.warehouses({ includeInactive: false }),
+      ]);
       setWorkCenters(wc as unknown as WorkCenterRow[]);
       setMachines(m as unknown as MachineRow[]);
+      setWarehouses(wh);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -1527,6 +1544,7 @@ const ProductionMaster = () => {
       )}
       <WorkCentersCard
         rows={workCenters}
+        warehouses={warehouses}
         loading={loading}
         onChanged={reload}
       />
@@ -1544,10 +1562,12 @@ const ProductionMaster = () => {
 
 const WorkCentersCard = ({
   rows,
+  warehouses,
   loading,
   onChanged,
 }: {
   rows: WorkCenterRow[];
+  warehouses: WarehouseRow[];
   loading: boolean;
   onChanged: () => void | Promise<void>;
 }) => {
@@ -1556,6 +1576,7 @@ const WorkCentersCard = ({
     name: string;
     capacity: string;
     description: string;
+    autoCreateProdWarehouse: boolean;
   } | null>(null);
   const [editId, setEditId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState<{
@@ -1563,6 +1584,7 @@ const WorkCentersCard = ({
     name: string;
     capacity: string;
     description: string;
+    productionLineWarehouseId: string;
     active: boolean;
   } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -1574,6 +1596,7 @@ const WorkCentersCard = ({
       name: r.name,
       capacity: r.capacityPerHour ? String(r.capacityPerHour) : "",
       description: r.description ?? "",
+      productionLineWarehouseId: r.productionLineWarehouseId ?? "",
       active: r.active,
     });
   };
@@ -1589,6 +1612,7 @@ const WorkCentersCard = ({
         description: draft.description.trim() || null,
         capacityPerHour: draft.capacity ? Number(draft.capacity) : null,
         active: true,
+        ...(draft.autoCreateProdWarehouse ? { autoCreateProductionWarehouse: true } : {}),
       });
       setDraft(null);
       await onChanged();
@@ -1608,6 +1632,7 @@ const WorkCentersCard = ({
         name: editDraft.name.trim(),
         description: editDraft.description.trim() || null,
         capacityPerHour: editDraft.capacity ? Number(editDraft.capacity) : null,
+        productionLineWarehouseId: editDraft.productionLineWarehouseId || null,
         active: editDraft.active,
       });
       setEditId(null);
@@ -1644,7 +1669,7 @@ const WorkCentersCard = ({
             size="sm"
             icon={<Plus size={14} />}
             onClick={() =>
-              setDraft({ code: "", name: "", capacity: "", description: "" })
+              setDraft({ code: "", name: "", capacity: "", description: "", autoCreateProdWarehouse: false })
             }
             disabled={busy}
           >
@@ -1661,6 +1686,7 @@ const WorkCentersCard = ({
               <th className="text-left px-3 py-2">Code</th>
               <th className="text-left px-3 py-2">Name</th>
               <th className="text-right px-3 py-2">Capacity / hr</th>
+              <th className="text-left px-3 py-2">Prod. warehouse</th>
               <th className="text-right px-3 py-2">Machines</th>
               <th className="text-center px-3 py-2">Status</th>
               <th className="text-right px-3 py-2 w-24"></th>
@@ -1698,6 +1724,16 @@ const WorkCentersCard = ({
                     }
                   />
                 </td>
+                <td className="px-3 py-2">
+                  <label className="inline-flex items-center gap-1 cursor-pointer text-caption">
+                    <input
+                      type="checkbox"
+                      checked={draft.autoCreateProdWarehouse}
+                      onChange={(e) => setDraft({ ...draft, autoCreateProdWarehouse: e.target.checked })}
+                    />
+                    Auto-create
+                  </label>
+                </td>
                 <td className="px-3 py-2 text-right text-ink-muted">—</td>
                 <td className="px-3 py-2 text-center">
                   <Chip size="sm" tone="success">
@@ -1727,14 +1763,14 @@ const WorkCentersCard = ({
             )}
             {loading && rows.length === 0 && !draft && (
               <tr>
-                <td colSpan={6} className="px-3 py-6 text-center text-ink-muted">
+                <td colSpan={7} className="px-3 py-6 text-center text-ink-muted">
                   <Loader2 size={14} className="inline animate-spin mr-1" /> Loading…
                 </td>
               </tr>
             )}
             {!loading && rows.length === 0 && !draft && (
               <tr>
-                <td colSpan={6} className="px-3 py-6 text-center text-ink-muted">
+                <td colSpan={7} className="px-3 py-6 text-center text-ink-muted">
                   No work centers yet. Click <strong>Add work center</strong> to start.
                 </td>
               </tr>
@@ -1772,6 +1808,22 @@ const WorkCentersCard = ({
                           setEditDraft({ ...editDraft, capacity: e.target.value })
                         }
                       />
+                    </td>
+                    <td className="px-3 py-2">
+                      <select
+                        className="h-7 rounded border border-border bg-surface text-body-sm px-2 w-full"
+                        value={editDraft.productionLineWarehouseId}
+                        onChange={(e) =>
+                          setEditDraft({ ...editDraft, productionLineWarehouseId: e.target.value })
+                        }
+                      >
+                        <option value="">— none —</option>
+                        {warehouses.map((wh) => (
+                          <option key={wh.id} value={wh.id}>
+                            {wh.code} ({wh.kind})
+                          </option>
+                        ))}
+                      </select>
                     </td>
                     <td className="px-3 py-2 text-right text-ink-muted">
                       {r.machines.length}
@@ -1828,6 +1880,15 @@ const WorkCentersCard = ({
                   </td>
                   <td className="px-3 py-2 text-right tnum">
                     {r.capacityPerHour ? r.capacityPerHour : "—"}
+                  </td>
+                  <td className="px-3 py-2">
+                    {r.productionLineWarehouse ? (
+                      <span className="font-mono text-caption text-primary">
+                        {r.productionLineWarehouse.code}
+                      </span>
+                    ) : (
+                      <span className="text-ink-muted text-caption">—</span>
+                    )}
                   </td>
                   <td className="px-3 py-2 text-right tnum">{r.machines.length}</td>
                   <td className="px-3 py-2 text-center">
@@ -2240,6 +2301,260 @@ const MachinesCard = ({
           </table>
         </div>
       )}
+    </Card>
+  );
+};
+
+// =====================================================================
+// Putaway Rules
+// =====================================================================
+
+const PutawayRulesManager = () => {
+  const [rules, setRules] = useState<PutawayRuleRow[]>([]);
+  const [warehouses, setWarehouses] = useState<WarehouseRow[]>([]);
+  const [products, setProducts] = useState<Array<{ id: string; sku: string; name: string }>>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [draft, setDraft] = useState({
+    productId: "",
+    toWarehouseId: "",
+    priority: "100",
+    notes: "",
+  });
+  const [busy, setBusy] = useState(false);
+
+  const reload = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [r, wh, p] = await Promise.all([
+        api.putawayRules(),
+        api.warehouses(),
+        api.products(),
+      ]);
+      setRules(r);
+      setWarehouses(wh);
+      setProducts(
+        (p as unknown as Array<{ id: string; sku: string; name: string }>).map((x) => ({
+          id: x.id,
+          sku: x.sku,
+          name: x.name,
+        }))
+      );
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void reload();
+  }, []);
+
+  const submitNew = async () => {
+    if (!draft.productId || !draft.toWarehouseId) {
+      alert("Product and destination warehouse are required.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.createPutawayRule({
+        productId: draft.productId,
+        toWarehouseId: draft.toWarehouseId,
+        priority: Number(draft.priority) || 100,
+        notes: draft.notes.trim() || null,
+        active: true,
+      });
+      setShowAdd(false);
+      setDraft({ productId: "", toWarehouseId: "", priority: "100", notes: "" });
+      await reload();
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleActive = async (rule: PutawayRuleRow) => {
+    setBusy(true);
+    try {
+      await api.updatePutawayRule(rule.id, { active: !rule.active });
+      await reload();
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (rule: PutawayRuleRow) => {
+    if (!confirm(`Delete putaway rule for ${rule.product.sku}?`)) return;
+    setBusy(true);
+    try {
+      await api.deletePutawayRule(rule.id);
+      await reload();
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card
+      title="Putaway rules"
+      subtitle="When a production order is completed, finished goods are automatically transferred to the configured storage warehouse/bin."
+      actions={
+        !showAdd ? (
+          <Button size="sm" icon={<Plus size={14} />} onClick={() => setShowAdd(true)} disabled={busy}>
+            Add rule
+          </Button>
+        ) : null
+      }
+      noPadding
+    >
+      {error && (
+        <div className="px-4 py-2 text-danger text-body-sm">{error}</div>
+      )}
+      {showAdd && (
+        <div className="px-4 py-3 bg-primary-50/30 border-b border-border space-y-3">
+          <p className="text-body-sm font-medium text-ink">New putaway rule</p>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-caption text-ink-muted block mb-1">Product</label>
+              <select
+                className="h-8 w-full rounded border border-border bg-surface text-body-sm px-2"
+                value={draft.productId}
+                onChange={(e) => setDraft({ ...draft, productId: e.target.value })}
+              >
+                <option value="">— select product —</option>
+                {products.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.sku} — {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-caption text-ink-muted block mb-1">Destination warehouse</label>
+              <select
+                className="h-8 w-full rounded border border-border bg-surface text-body-sm px-2"
+                value={draft.toWarehouseId}
+                onChange={(e) => setDraft({ ...draft, toWarehouseId: e.target.value })}
+              >
+                <option value="">— select warehouse —</option>
+                {warehouses.map((wh) => (
+                  <option key={wh.id} value={wh.id}>
+                    {wh.code} — {wh.name} ({wh.kind})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-caption text-ink-muted block mb-1">Priority (lower = higher priority)</label>
+              <Input
+                size="sm"
+                type="number"
+                min={1}
+                max={999}
+                value={draft.priority}
+                onChange={(e) => setDraft({ ...draft, priority: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className="text-caption text-ink-muted block mb-1">Notes</label>
+              <Input
+                size="sm"
+                placeholder="Optional"
+                value={draft.notes}
+                onChange={(e) => setDraft({ ...draft, notes: e.target.value })}
+              />
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <Button size="sm" icon={<Save size={12} />} onClick={submitNew} disabled={busy}>
+              Save rule
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setShowAdd(false)} disabled={busy}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+      <div className="overflow-x-auto">
+        <table className="w-full text-body-sm">
+          <thead className="bg-canvas text-caption uppercase font-semibold text-ink-muted">
+            <tr>
+              <th className="text-left px-3 py-2">Product</th>
+              <th className="text-left px-3 py-2">Variant</th>
+              <th className="text-left px-3 py-2">Destination warehouse</th>
+              <th className="text-left px-3 py-2">Bin</th>
+              <th className="text-right px-3 py-2">Priority</th>
+              <th className="text-center px-3 py-2">Status</th>
+              <th className="text-right px-3 py-2 w-24"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading && (
+              <tr>
+                <td colSpan={7} className="px-3 py-6 text-center text-ink-muted">
+                  <Loader2 size={14} className="inline animate-spin mr-1" /> Loading…
+                </td>
+              </tr>
+            )}
+            {!loading && rules.length === 0 && (
+              <tr>
+                <td colSpan={7} className="px-3 py-6 text-center text-ink-muted">
+                  No putaway rules yet. Add a rule to auto-route finished goods from production to storage.
+                </td>
+              </tr>
+            )}
+            {rules.map((r) => (
+              <tr key={r.id} className="border-t border-border hover:bg-canvas/50">
+                <td className="px-3 py-2">
+                  <span className="font-mono text-caption text-primary">{r.product.sku}</span>
+                  <div className="text-caption text-ink-muted">{r.product.name}</div>
+                </td>
+                <td className="px-3 py-2 text-ink-muted">
+                  {r.variant ? (
+                    <span className="font-mono text-caption">{r.variant.sku}</span>
+                  ) : (
+                    <span className="text-caption">all variants</span>
+                  )}
+                </td>
+                <td className="px-3 py-2">
+                  <span className="font-mono text-caption text-primary">{r.toWarehouse.code}</span>
+                  <div className="text-caption text-ink-muted">{r.toWarehouse.name}</div>
+                </td>
+                <td className="px-3 py-2 text-caption text-ink-muted">
+                  {r.tobin
+                    ? `${r.tobin.zone}/${r.tobin.shelf}/${r.tobin.bin}`
+                    : "auto-pick"}
+                </td>
+                <td className="px-3 py-2 text-right tnum">{r.priority}</td>
+                <td className="px-3 py-2 text-center">
+                  <button onClick={() => toggleActive(r)} disabled={busy} title="Toggle active">
+                    <Chip size="sm" tone={r.active ? "success" : "neutral"}>
+                      {r.active ? "active" : "inactive"}
+                    </Chip>
+                  </button>
+                </td>
+                <td className="px-3 py-2 text-right">
+                  <button
+                    onClick={() => remove(r)}
+                    className="h-7 w-7 grid place-items-center rounded text-danger hover:bg-danger-soft"
+                    title="Delete rule"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </Card>
   );
 };

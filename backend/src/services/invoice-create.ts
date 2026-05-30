@@ -30,6 +30,7 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { mintShareToken } from "../lib/share.js";
 import { nextFulfilmentDocNo } from "../lib/pick-list-helpers.js";
+import { computeTax } from "../lib/tax.js";
 
 type Tx = Prisma.TransactionClient | PrismaClient;
 
@@ -61,7 +62,15 @@ export const ensureInvoiceForSalesOrder = async (
 
   const so = await client.salesOrder.findUnique({
     where: { id: salesOrderId },
-    include: { items: true, customer: true },
+    include: {
+      items: {
+        include: {
+          product: { select: { gstRate: true } },
+          variant: { select: { gstRate: true } },
+        },
+      },
+      customer: true,
+    },
   });
   if (!so) {
     throw new Error(`ensureInvoiceForSalesOrder: SO ${salesOrderId} not found`);
@@ -84,14 +93,19 @@ export const ensureInvoiceForSalesOrder = async (
       status: opts.status ?? "issued",
       paymentMode: opts.paymentMode ?? "credit",
       items: {
-        create: so.items.map((it) => ({
-          productId: it.productId,
-          variantId: it.variantId,
-          salesOrderItemId: it.id,
-          qty: it.qtyOrdered,
-          rate: it.rate,
-          amount: it.amount,
-        })),
+        create: so.items.map((it) => {
+          const lineGstRate = (it.variant?.gstRate ?? null) ?? it.product.gstRate;
+          return {
+            productId: it.productId,
+            variantId: it.variantId,
+            salesOrderItemId: it.id,
+            qty: it.qtyOrdered,
+            rate: it.rate,
+            amount: it.amount,
+            gstRate: lineGstRate,
+            taxAmount: Math.round(it.amount * (lineGstRate / 100) * 100) / 100,
+          };
+        }),
       },
     },
     include: {
@@ -135,9 +149,15 @@ export const reconcileInvoiceWithPack = async (
     if (want <= 0) {
       await client.invoiceItem.delete({ where: { id: it.id } });
     } else {
+      const newAmount = want * it.rate;
+      const gst = it.gstRate ?? 18;
       await client.invoiceItem.update({
         where: { id: it.id },
-        data: { qty: want, amount: want * it.rate },
+        data: {
+          qty: want,
+          amount: newAmount,
+          taxAmount: Math.round(newAmount * (gst / 100) * 100) / 100,
+        },
       });
     }
   }
@@ -154,10 +174,12 @@ export const reconcileInvoiceWithPack = async (
 
   const remainingItems = await client.invoiceItem.findMany({
     where: { invoiceId },
-    select: { amount: true },
+    select: { amount: true, gstRate: true },
   });
   const sub = remainingItems.reduce((s, r) => s + r.amount, 0);
-  const tax = Math.round(sub * 0.18);
+  const tax = computeTax(
+    remainingItems.map((r) => ({ amount: r.amount, gstRate: r.gstRate ?? 18 }))
+  );
   await client.invoice.update({
     where: { id: invoiceId },
     data: { amount: sub + tax, tax },

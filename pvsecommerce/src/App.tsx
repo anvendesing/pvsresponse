@@ -26,6 +26,7 @@ import { WishlistProvider } from "@/state/WishlistContext";
 import { AuthProvider } from "@/state/AuthContext";
 import { ToastProvider } from "@/state/ToastContext";
 import { CatalogProvider } from "@/state/CatalogContext";
+import { CategoriesProvider } from "@/state/CategoriesContext";
 
 const router = createBrowserRouter([
   {
@@ -58,9 +59,11 @@ export const App = () => (
     <AuthProvider>
       <WishlistProvider>
         <CartProvider>
-          <CatalogProvider>
-            <RouterProvider router={router} />
-          </CatalogProvider>
+          <CategoriesProvider>
+            <CatalogProvider>
+              <RouterProvider router={router} />
+            </CatalogProvider>
+          </CategoriesProvider>
         </CartProvider>
       </WishlistProvider>
     </AuthProvider>

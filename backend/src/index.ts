@@ -9,6 +9,7 @@ import { config } from "./config.js";
 import { registerAuth } from "./auth/plugin.js";
 import { authRoutes } from "./routes/auth.js";
 import { catalogRoutes } from "./routes/catalog.js";
+import { categoriesRoutes } from "./routes/categories.js";
 import { inventoryRoutes } from "./routes/inventory.js";
 import { mfgRoutes } from "./routes/manufacturing.js";
 import { procurementRoutes } from "./routes/procurement.js";
@@ -29,6 +30,7 @@ import { storefrontMockRoutes } from "./routes/storefront-mock.js";
 import { bulkOrderRoutes } from "./routes/bulk-order.js";
 import { customerPaymentRoutes } from "./routes/customer-payments.js";
 import { returnsRoutes } from "./routes/returns.js";
+import { transfersRoutes } from "./routes/transfers.js";
 import multipart from "@fastify/multipart";
 import fastifyStatic from "@fastify/static";
 import { fileURLToPath } from "url";
@@ -51,6 +53,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const uploadsRoot = join(__dirname, "..", "uploads");
 mkdirSync(join(uploadsRoot, "products"), { recursive: true });
+mkdirSync(join(uploadsRoot, "categories"), { recursive: true });
 await app.register(fastifyStatic, {
   root: uploadsRoot,
   prefix: "/uploads/",
@@ -153,6 +156,7 @@ await app.register(
 
     // Catalog — read-only by everyone; write protected per-route inside catalog.ts
     await api.register(catalogRoutes);
+    await api.register(categoriesRoutes);
 
     // Sales & order management
     await withRole(api, salesRoutes,         "supervisor", "billing");
@@ -178,6 +182,9 @@ await app.register(
     // Manufacturing & workforce
     await withRole(api, mfgRoutes,           "supervisor");
     await withRole(api, workforceRoutes,     "supervisor");
+
+    // Transfers & putaway rules (warehouse + supervisor)
+    await withRole(api, transfersRoutes,     "supervisor", "warehouse");
 
     // Reports — read access for supervisors, billing, procurement
     await withRole(api, reportsRoutes,       "supervisor", "billing", "procurement");

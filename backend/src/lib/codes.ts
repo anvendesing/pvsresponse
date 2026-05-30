@@ -1,29 +1,27 @@
 // Location code encoder/decoder for the warehouse mobile flows.
 //
-// Codes are deterministic and round-trip with the four flat columns
-// already on the Bin model (zone, rack, shelf, bin) plus the parent
-// Warehouse.code. We intentionally avoid introducing a separate Zone
-// or Rack entity - the existing schema treats them as labels and any
-// nesting is implicit via the unique key on Bin.
+// Codes are deterministic and round-trip with the three flat columns
+// on the Bin model (zone, shelf, bin) plus the parent Warehouse.code.
+// We intentionally avoid introducing separate Zone/Shelf entities -
+// the existing schema treats them as labels and any nesting is
+// implicit via the unique key on Bin.
 //
 // Format (separator is "." because Warehouse.code legitimately
 // contains hyphens, e.g. "WH-MAIN"):
 //   Z.<warehouse>.<zone>
-//   R.<warehouse>.<zone>.<rack>
-//   S.<warehouse>.<zone>.<rack>.<shelf>
-//   B.<warehouse>.<zone>.<rack>.<shelf>.<bin>
+//   S.<warehouse>.<zone>.<shelf>
+//   B.<warehouse>.<zone>.<shelf>.<bin>
 //
 // Segments are uppercased and trimmed; warehouse codes may contain
-// hyphens; zone/rack/shelf/bin labels are restricted to A-Z, 0-9
+// hyphens; zone/shelf/bin labels are restricted to A-Z, 0-9
 // and underscore so the parser stays unambiguous.
 
-export type LocationKind = "zone" | "rack" | "shelf" | "bin";
+export type LocationKind = "zone" | "shelf" | "bin";
 
 export interface LocationCode {
   kind: LocationKind;
   warehouseCode: string;
   zone: string;
-  rack?: string;
   shelf?: string;
   bin?: string;
 }
@@ -65,58 +63,38 @@ export const encodeZone = (warehouseCode: string, zone: string) => {
   return `Z.${wh}.${z}`;
 };
 
-export const encodeRack = (
-  warehouseCode: string,
-  zone: string,
-  rack: string
-) => {
-  const wh = norm(warehouseCode);
-  const z = norm(zone);
-  const r = norm(rack);
-  validateWarehouse(wh);
-  validateLabel("zone", z);
-  validateLabel("rack", r);
-  return `R.${wh}.${z}.${r}`;
-};
-
 export const encodeShelf = (
   warehouseCode: string,
   zone: string,
-  rack: string,
   shelf: string
 ) => {
   const wh = norm(warehouseCode);
   const z = norm(zone);
-  const r = norm(rack);
   const s = norm(shelf);
   validateWarehouse(wh);
   validateLabel("zone", z);
-  validateLabel("rack", r);
   validateLabel("shelf", s);
-  return `S.${wh}.${z}.${r}.${s}`;
+  return `S.${wh}.${z}.${s}`;
 };
 
 export const encodeBin = (
   warehouseCode: string,
   zone: string,
-  rack: string,
   shelf: string,
   bin: string
 ) => {
   const wh = norm(warehouseCode);
   const z = norm(zone);
-  const r = norm(rack);
   const s = norm(shelf);
   const b = norm(bin);
   validateWarehouse(wh);
   validateLabel("zone", z);
-  validateLabel("rack", r);
   validateLabel("shelf", s);
   validateLabel("bin", b);
-  return `B.${wh}.${z}.${r}.${s}.${b}`;
+  return `B.${wh}.${z}.${s}.${b}`;
 };
 
-// Parse any of the four prefixed forms. Returns null if the string
+// Parse any of the three prefixed forms. Returns null if the string
 // doesn't look like a location code; callers can then fall through to
 // SKU/barcode resolution. Never throws on shape - operators may scan
 // arbitrary product barcodes through the same endpoint.
@@ -132,32 +110,22 @@ export const decodeLocation = (raw: string): LocationCode | null => {
     case "Z":
       if (rest.length !== 1) return null;
       return { kind: "zone", warehouseCode, zone: rest[0] };
-    case "R":
-      if (rest.length !== 2) return null;
-      return {
-        kind: "rack",
-        warehouseCode,
-        zone: rest[0],
-        rack: rest[1],
-      };
     case "S":
-      if (rest.length !== 3) return null;
+      if (rest.length !== 2) return null;
       return {
         kind: "shelf",
         warehouseCode,
         zone: rest[0],
-        rack: rest[1],
-        shelf: rest[2],
+        shelf: rest[1],
       };
     case "B":
-      if (rest.length !== 4) return null;
+      if (rest.length !== 3) return null;
       return {
         kind: "bin",
         warehouseCode,
         zone: rest[0],
-        rack: rest[1],
-        shelf: rest[2],
-        bin: rest[3],
+        shelf: rest[1],
+        bin: rest[2],
       };
     default:
       return null;
@@ -167,7 +135,7 @@ export const decodeLocation = (raw: string): LocationCode | null => {
 // Look up a Bin's printable code from its row, given the parent
 // Warehouse.code. Pure helper; doesn't touch the DB.
 export const binCodeFromRow = (
-  bin: { zone: string; rack: string; shelf: string; bin: string },
+  bin: { zone: string; shelf: string; bin: string },
   warehouseCode: string
 ): string =>
-  encodeBin(warehouseCode, bin.zone, bin.rack, bin.shelf, bin.bin);
+  encodeBin(warehouseCode, bin.zone, bin.shelf, bin.bin);

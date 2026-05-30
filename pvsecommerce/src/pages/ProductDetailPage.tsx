@@ -12,7 +12,6 @@ import { useToast } from "@/state/ToastContext";
 import { useCatalog } from "@/state/CatalogContext";
 import { PackagingArt } from "@/components/PackagingArt";
 import { HeartIcon } from "@/assets/icons";
-import { bucketFor, getCategory } from "@/data/categories";
 
 export const ProductDetailPage = () => {
   const { id = "" } = useParams<{ id: string }>();
@@ -81,14 +80,11 @@ export const ProductDetailPage = () => {
     toast.show(`Added ${product.name} to cart`, "success");
   };
 
-  const categoryId = bucketFor(product.category, product.name);
-  const categoryDef = getCategory(categoryId);
+  const categorySlug = product.categorySlug ?? "";
+  const categoryLabel = product.categoryName ?? product.category;
 
   const related = allProducts
-    .filter(
-      (p) =>
-        bucketFor(p.category, p.name) === categoryId && p.id !== product.id
-    )
+    .filter((p) => p.categorySlug === categorySlug && p.id !== product.id)
     .slice(0, 4);
 
   const descriptionText =
@@ -108,8 +104,8 @@ export const ProductDetailPage = () => {
       <nav className="pdp-breadcrumb" aria-label="breadcrumb">
         <Link to="/">Home</Link>
         <span className="pdp-crumb-sep">›</span>
-        <Link to={`/category/${categoryId}`}>
-          {categoryDef?.name ?? product.category}
+        <Link to={`/category/${categorySlug}`}>
+          {categoryLabel}
         </Link>
         <span className="pdp-crumb-sep">›</span>
         <span>{product.name}</span>
@@ -330,7 +326,7 @@ export const ProductDetailPage = () => {
       {/* Related products */}
       {related.length > 0 && (
         <section className="pdp-related">
-          <h2 className="section-title">More from {categoryDef?.name ?? product.category}</h2>
+          <h2 className="section-title">More from {categoryLabel}</h2>
           <div className="pdp-related-grid">
             {related.map((rel) => {
               const relVariant = rel.variants[0] ?? null;

@@ -21,6 +21,7 @@ import { resolveEffectivePrice } from "./pricing.js";
 import { mintShareToken } from "../lib/share.js";
 import { recordChange } from "../sync/log.js";
 import { nextDocNo } from "./sales.js";
+import { computeTax } from "../lib/tax.js";
 
 // ------------------------------------------------------------------- Config ---
 
@@ -435,8 +436,9 @@ export const bulkOrderRoutes = async (app: FastifyInstance) => {
       // Load all active products with their active variants
       const products = await db.product.findMany({
         where: { state: "active" },
-        orderBy: [{ category: "asc" }, { name: "asc" }],
+        orderBy: [{ category: { name: "asc" } }, { name: "asc" }],
         include: {
+          category: { select: { name: true } },
           variants: {
             where: { active: true },
             orderBy: [{ size: "asc" }, { grade: "asc" }],
@@ -475,7 +477,7 @@ export const bulkOrderRoutes = async (app: FastifyInstance) => {
               sku: v.sku,
               productName: p.name,
               variantLabel: variantParts.join(" / "),
-              category: p.category ?? "General",
+              category: p.category?.name ?? "General",
               pack: buildPackLabel(v.uom ?? p.uom, v.packSize),
               stock: v.stockOnHand,
               rate: resolved.price,
@@ -495,7 +497,7 @@ export const bulkOrderRoutes = async (app: FastifyInstance) => {
             sku: p.sku,
             productName: p.name,
             variantLabel: "",
-            category: p.category ?? "General",
+            category: p.category?.name ?? "General",
             pack: buildPackLabel(p.uom, 1),
             stock: p.stockOnHand,
             rate: resolved.price,
@@ -660,6 +662,7 @@ export const bulkOrderRoutes = async (app: FastifyInstance) => {
         qty: number;
         rate: number;
         amount: number;
+        gstRate: number;
         discount: number;
         stockOnHand: number;
         stockWarning: boolean;
@@ -746,8 +749,17 @@ export const bulkOrderRoutes = async (app: FastifyInstance) => {
 
         const product = await db.product.findUnique({
           where: { id: ids.productId },
-          select: { name: true },
+          select: { name: true, gstRate: true },
         });
+        const variantGstRate = ids.variantId
+          ? (
+              await db.productVariant.findUnique({
+                where: { id: ids.variantId },
+                select: { gstRate: true },
+              })
+            )?.gstRate ?? null
+          : null;
+        const lineGstRate = variantGstRate ?? product?.gstRate ?? 18;
 
         accepted.push({
           productId: ids.productId,
@@ -757,6 +769,7 @@ export const bulkOrderRoutes = async (app: FastifyInstance) => {
           qty,
           rate,
           amount: Math.round(qty * rate * 100) / 100,
+          gstRate: lineGstRate,
           discount: 0,
           stockOnHand,
           stockWarning: qty > stockOnHand,
@@ -774,7 +787,7 @@ export const bulkOrderRoutes = async (app: FastifyInstance) => {
       }
 
       const subTotal = accepted.reduce((s, l) => s + l.amount, 0);
-      const tax = Math.round(subTotal * 0.18);
+      const tax = computeTax(accepted.map((l) => ({ amount: l.amount, gstRate: l.gstRate })));
       const total = subTotal + tax;
 
       if (isDryRun) {

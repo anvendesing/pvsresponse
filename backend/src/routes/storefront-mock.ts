@@ -32,6 +32,7 @@ import { db } from "../db.js";
 import { mintShareToken } from "../lib/share.js";
 import { recordChange } from "../sync/log.js";
 import { createPickListForSalesOrder } from "../services/pick-list-create.js";
+import { resolveGstRate, computeTax, lineTax } from "../lib/tax.js";
 
 const orderSchema = z.object({
   name: z.string().trim().min(1).max(120),
@@ -134,6 +135,7 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
             productId: true,
             sellingPriceOverride: true,
             active: true,
+            gstRate: true,
           },
         })
       : [];
@@ -146,6 +148,7 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
         state: true,
         stockOnHand: true,
         sellingPrice: true,
+        gstRate: true,
       },
     });
     const vMap = new Map(variants.map((v) => [v.id, v]));
@@ -218,13 +221,14 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
       });
     }
 
-    // ---- Compute totals. 18% GST flat. ---------------------------------
+    // ---- Compute totals using per-line GST rates. ---------------------------------
     type LineCalc = {
       productId: string;
       variantId: string | null;
       qty: number;
       rate: number;
       amount: number;
+      gstRate: number;
     };
     const lines: LineCalc[] = body.items.map((it) => {
       const p = pMap.get(it.productId)!;
@@ -236,10 +240,11 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
         qty: it.qty,
         rate,
         amount: it.qty * rate,
+        gstRate: resolveGstRate({ gstRate: p.gstRate }, v ? { gstRate: v.gstRate } : null),
       };
     });
     const subTotal = lines.reduce((s, l) => s + l.amount, 0);
-    const tax = Math.round(subTotal * 0.18);
+    const tax = computeTax(lines.map((l) => ({ amount: l.amount, gstRate: l.gstRate })));
     const total = subTotal + tax;
 
     // Atomic write: customer/account upsert -> SO -> invoice -> stock decs.
@@ -354,6 +359,8 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
               qty: l.qty,
               rate: l.rate,
               amount: l.amount,
+              gstRate: l.gstRate,
+              taxAmount: lineTax(l.amount, l.gstRate),
             })),
           },
         },
@@ -448,15 +455,31 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
     });
   });
 
+  // Active storefront categories for home page / nav (admin-configurable).
+  app.get("/storefront-mock/categories", async () => {
+    return db.productCategory.findMany({
+      where: { active: true },
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+      select: {
+        id: true,
+        slug: true,
+        name: true,
+        sortOrder: true,
+        imageUrl: true,
+      },
+    });
+  });
+
   // Public catalog used by the dummy store page so it doesn't need a
   // login to render variants. Filters out inactive products and
   // variants/products with zero stock so the demo can't accidentally
   // place orders that will immediately fail the oversell check.
   app.get("/storefront-mock/catalog", async () => {
     const products = await db.product.findMany({
-      where: { state: "active" },
+      where: { state: "active", category: { active: true } },
       orderBy: { sku: "asc" },
       include: {
+        category: { select: { id: true, slug: true, name: true } },
         variants: {
           select: {
             id: true,
@@ -469,19 +492,25 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
             stockOnHand: true,
             sellingPriceOverride: true,
             active: true,
+            gstRate: true,
           },
         },
       },
     });
     return products
+      .filter((p) => p.category)
       .map((p) => ({
         id: p.id,
         sku: p.sku,
         name: p.name,
-        category: p.category,
+        categoryId: p.categoryId,
+        categorySlug: p.category!.slug,
+        categoryName: p.category!.name,
+        category: p.category!.name,
         uom: p.uom,
         sellingPrice: p.sellingPrice,
         stockOnHand: p.stockOnHand,
+        gstRate: p.gstRate,
         description: p.description ?? null,
         imageHint: p.imageHint ?? null,
         imageUrl: p.imageUrl ?? null,
@@ -498,6 +527,7 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
             packSize: v.packSize,
             stockOnHand: v.stockOnHand,
             price: v.sellingPriceOverride ?? p.sellingPrice,
+            gstRate: v.gstRate ?? p.gstRate,
           })),
       }))
       .filter((p) => p.variants.length > 0 || p.stockOnHand > 0)
@@ -510,6 +540,7 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
     const p = await db.product.findFirst({
       where: { OR: [{ id }, { sku: id }], state: "active" },
       include: {
+        category: { select: { id: true, slug: true, name: true } },
         variants: {
           select: {
             id: true,
@@ -522,6 +553,7 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
             stockOnHand: true,
             sellingPriceOverride: true,
             active: true,
+            gstRate: true,
           },
         },
       },
@@ -531,10 +563,14 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
       id: p.id,
       sku: p.sku,
       name: p.name,
-      category: p.category,
+      categoryId: p.categoryId,
+      categorySlug: p.category?.slug ?? null,
+      categoryName: p.category?.name ?? null,
+      category: p.category?.name ?? null,
       uom: p.uom,
       sellingPrice: p.sellingPrice,
       stockOnHand: p.stockOnHand,
+      gstRate: p.gstRate,
       description: p.description ?? null,
       ingredients: p.ingredients ?? null,
       imageHint: p.imageHint ?? null,
@@ -552,6 +588,7 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
           packSize: v.packSize,
           stockOnHand: v.stockOnHand ?? 0,
           price: v.sellingPriceOverride ?? p.sellingPrice,
+          gstRate: v.gstRate ?? p.gstRate,
         })),
     };
   });

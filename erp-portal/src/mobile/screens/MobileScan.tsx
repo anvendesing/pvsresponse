@@ -7,7 +7,7 @@ import { BarcodeScanner } from "../BarcodeScanner";
 // /m/scan
 // =====================================================================
 // Camera-first landing page. Resolves whatever the worker scans:
-//   - bin/rack/shelf/zone -> drill into MobileLocation
+//   - bin/shelf/zone -> drill into MobileLocation
 //   - product SKU/barcode -> drill into MobileLocation as a product card
 // Manual entry stays available so a faded label can still be punched in.
 
@@ -25,7 +25,7 @@ export const MobileScan = () => {
     setScanning(false);
     try {
       const result = (await api.resolveLocation(raw)) as {
-        kind: "zone" | "rack" | "shelf" | "bin" | "product";
+        kind: "zone" | "shelf" | "bin" | "product";
         bin?: { id?: string };
       };
       if (result.kind === "bin" && result.bin?.id) {

@@ -12,11 +12,22 @@ import { readFileSync } from "fs";
 import { resolve } from "path";
 import { PrismaClient } from "@prisma/client";
 import { binCodeFromRow } from "../lib/codes.js";
+import {
+  bucketCategorySlug,
+  DEFAULT_PRODUCT_CATEGORIES,
+} from "../lib/product-categories.js";
 
 const db = new PrismaClient();
 
 interface ExportFile {
   version: number;
+  productCategories?: Array<{
+    slug: string;
+    name: string;
+    sortOrder: number;
+    active: boolean;
+    imageUrl?: string | null;
+  }>;
   products: Array<{
     sku: string;
     name: string;
@@ -24,8 +35,11 @@ interface ExportFile {
     uom: string;
     barcode: string;
     state: string;
-    category: string;
+    categorySlug?: string | null;
+    /** @deprecated legacy exports */
+    category?: string;
     hsn: string;
+    gstRate?: number | null;
     costPrice: number;
     sellingPrice: number;
     reorderLevel: number;
@@ -39,6 +53,8 @@ interface ExportFile {
     variants: Array<{
       sku: string;
       barcode?: string | null;
+      hsn?: string | null;
+      gstRate?: number | null;
       size?: string | null;
       color?: string | null;
       grade?: string | null;
@@ -73,7 +89,6 @@ interface ExportFile {
   bins: Array<{
     warehouseCode: string;
     zone: string;
-    rack: string;
     shelf: string;
     bin: string;
     code?: string | null;
@@ -153,6 +168,7 @@ async function wipeCatalog(fullWipe: boolean) {
   await db.bin.deleteMany();
   await db.productVariant.deleteMany();
   await db.product.deleteMany();
+  await db.productCategory.deleteMany();
 }
 
 async function main() {
@@ -178,6 +194,49 @@ async function main() {
   }
   console.log(`✓ ${data.warehouses.length} warehouses`);
 
+  const categoryBySlug = new Map<string, string>();
+  const catsToImport =
+    data.productCategories?.length
+      ? data.productCategories
+      : DEFAULT_PRODUCT_CATEGORIES.map((c) => ({
+          slug: c.slug,
+          name: c.name,
+          sortOrder: c.sortOrder,
+          active: true,
+          imageUrl: null as string | null,
+        }));
+  for (const c of catsToImport) {
+    const row = await db.productCategory.upsert({
+      where: { slug: c.slug },
+      create: {
+        slug: c.slug,
+        name: c.name,
+        sortOrder: c.sortOrder,
+        active: c.active ?? true,
+        imageUrl: c.imageUrl ?? null,
+      },
+      update: {
+        name: c.name,
+        sortOrder: c.sortOrder,
+        active: c.active ?? true,
+        imageUrl: c.imageUrl ?? null,
+      },
+    });
+    categoryBySlug.set(c.slug, row.id);
+  }
+  console.log(`✓ ${catsToImport.length} product categories`);
+
+  const resolveCategoryId = (p: ExportFile["products"][number]): string => {
+    const slug =
+      p.categorySlug ??
+      bucketCategorySlug(p.category ?? null, p.name);
+    const id = categoryBySlug.get(slug);
+    if (id) return id;
+    const grains = categoryBySlug.get("grains");
+    if (grains) return grains;
+    throw new Error(`No category for slug ${slug} and no grains fallback`);
+  };
+
   const productBySku = new Map<string, string>();
   const variantBySku = new Map<string, string>();
 
@@ -190,8 +249,9 @@ async function main() {
         uom: p.uom,
         barcode: p.barcode,
         state: p.state,
-        category: p.category,
+        categoryId: resolveCategoryId(p),
         hsn: p.hsn,
+        gstRate: p.gstRate ?? 18,
         costPrice: p.costPrice,
         sellingPrice: p.sellingPrice,
         reorderLevel: p.reorderLevel,
@@ -206,6 +266,8 @@ async function main() {
           create: p.variants.map((v) => ({
             sku: v.sku,
             barcode: v.barcode ?? null,
+            hsn: v.hsn ?? null,
+            gstRate: v.gstRate ?? null,
             size: v.size ?? null,
             color: v.color ?? null,
             grade: v.grade ?? null,
@@ -281,7 +343,7 @@ async function main() {
     const code =
       b.code ??
       binCodeFromRow(
-        { zone: b.zone, rack: b.rack, shelf: b.shelf, bin: b.bin },
+        { zone: b.zone, shelf: b.shelf, bin: b.bin },
         b.warehouseCode
       );
 
@@ -289,7 +351,6 @@ async function main() {
       data: {
         warehouseId,
         zone: b.zone,
-        rack: b.rack,
         shelf: b.shelf,
         bin: b.bin,
         code,

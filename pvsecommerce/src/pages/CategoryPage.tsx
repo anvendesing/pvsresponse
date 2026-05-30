@@ -6,8 +6,8 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { CATEGORIES, bucketFor, getCategory } from "@/data/categories";
 import { useCatalog } from "@/state/CatalogContext";
+import { useCategories } from "@/state/CategoriesContext";
 import { ProductCard } from "@/components/ProductCard";
 import { CheckIcon, ChevronLeftIcon, ChevronRightIcon } from "@/assets/icons";
 
@@ -21,7 +21,8 @@ const productInStock = (p: { stockOnHand: number; variants: { stockOnHand: numbe
 export const CategoryPage = () => {
   const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
-  const cat = getCategory(slug);
+  const { bySlug, categories } = useCategories();
+  const cat = slug ? bySlug.get(slug) : undefined;
   const { products, loading, error } = useCatalog();
   const [showInStock, setShowInStock] = useState(true);
   const [showOutOfStock, setShowOutOfStock] = useState(false);
@@ -32,9 +33,7 @@ export const CategoryPage = () => {
 
   const inBucket = useMemo(() => {
     if (!cat) return [];
-    return products.filter(
-      (p) => bucketFor(p.category, p.name) === cat.id
-    );
+    return products.filter((p) => p.categorySlug === cat.slug);
   }, [products, cat]);
 
   const filtered = useMemo(() => {
@@ -82,11 +81,11 @@ export const CategoryPage = () => {
         <aside className="listing-sidebar">
           <div className="sidebar-block-title">Categories</div>
           <ul className="sidebar-category-links">
-            {CATEGORIES.map((c) => (
+            {categories.map((c) => (
               <li key={c.id}>
                 <Link
-                  to={`/category/${c.id}`}
-                  className={c.id === cat.id ? "active" : ""}
+                  to={`/category/${c.slug}`}
+                  className={c.slug === cat.slug ? "active" : ""}
                 >
                   {c.name}
                 </Link>

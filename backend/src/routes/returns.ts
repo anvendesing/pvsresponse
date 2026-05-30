@@ -30,6 +30,7 @@ import { mintShareToken } from "../lib/share.js";
 import { nextDocNo } from "./sales.js";
 import { nextPaymentNo, invoiceOpenAmount } from "./customer-payments.js";
 import { recordChange } from "../sync/log.js";
+import { computeTax } from "../lib/tax.js";
 
 // ------------------------------------------------------------------ helpers ---
 
@@ -357,6 +358,7 @@ export const returnsRoutes = async (app: FastifyInstance) => {
         qty: number;
         rate: number;
         amount: number;
+        gstRate: number;
         reason: ReturnReason;
         reasonNotes: string | undefined;
       };
@@ -412,6 +414,7 @@ export const returnsRoutes = async (app: FastifyInstance) => {
           qty: number;
           rate: number;
           invoiceId: string;
+          gstRate: number | null;
         } | null = null;
 
         if (anchorInvoice) {
@@ -434,6 +437,7 @@ export const returnsRoutes = async (app: FastifyInstance) => {
             qty: hit.qty,
             rate: hit.rate,
             invoiceId: anchorInvoice.id,
+            gstRate: (hit as { gstRate?: number | null }).gstRate ?? null,
           };
         } else {
           // Find most-recent eligible invoice for this customer + product
@@ -452,6 +456,7 @@ export const returnsRoutes = async (app: FastifyInstance) => {
               qty: true,
               rate: true,
               invoiceId: true,
+              gstRate: true,
             },
           });
           if (!invItem) {
@@ -497,14 +502,15 @@ export const returnsRoutes = async (app: FastifyInstance) => {
           qty: entry.qty,
           rate: invoiceItem.rate,
           amount: Math.round(entry.qty * invoiceItem.rate * 100) / 100,
+          gstRate: invoiceItem.gstRate ?? 18,
           reason,
           reasonNotes: entry.reasonNotes,
         });
       }
 
-      // Compute totals
+      // Compute totals using per-line GST from invoice snapshot
       const subTotal = accepted.reduce((s, l) => s + l.amount, 0);
-      const tax = Math.round(subTotal * 0.18 * 100) / 100;
+      const tax = computeTax(accepted.map((l) => ({ amount: l.amount, gstRate: l.gstRate })));
       const total = Math.round((subTotal + tax) * 100) / 100;
 
       if (accepted.length === 0) {
@@ -707,10 +713,27 @@ export const returnsRoutes = async (app: FastifyInstance) => {
       }
 
       const approvedItems = items.filter((i) => i.decision === "approved");
+
+      // Resolve per-line GST rate from the original InvoiceItem snapshots.
+      const invoiceItemIds = approvedItems
+        .map((i) => i.invoiceItemId)
+        .filter(Boolean) as string[];
+      const invItemsGst = invoiceItemIds.length
+        ? await db.invoiceItem.findMany({
+            where: { id: { in: invoiceItemIds } },
+            select: { id: true, gstRate: true },
+          })
+        : [];
+      const invItemGstMap = new Map(invItemsGst.map((ii) => [ii.id, ii.gstRate ?? 18]));
+
       const cnSubTotal =
-        Math.round(approvedItems.reduce((s, i) => s + i.amount, 0) * 100) /
-        100;
-      const cnTax = Math.round(cnSubTotal * 0.18 * 100) / 100;
+        Math.round(approvedItems.reduce((s, i) => s + i.amount, 0) * 100) / 100;
+      const cnTax = computeTax(
+        approvedItems.map((i) => ({
+          amount: i.amount,
+          gstRate: i.invoiceItemId ? (invItemGstMap.get(i.invoiceItemId) ?? 18) : 18,
+        }))
+      );
       const cnTotal = Math.round((cnSubTotal + cnTax) * 100) / 100;
 
       // ── Run everything in a single transaction ───────────────────────────────
@@ -734,15 +757,20 @@ export const returnsRoutes = async (app: FastifyInstance) => {
               createdById: req.user.sub,
               notes: `Credit note for return ${doc.returnNo}`,
               items: {
-                create: approvedItems.map((li) => ({
-                  productId: li.productId,
-                  variantId: li.variantId,
-                  qty: li.qty,
-                  rate: li.rate,
-                  amount: li.amount,
-                  reason: li.reason,
-                  returnItemId: li.id,
-                })),
+                create: approvedItems.map((li) => {
+                  const lineGst = li.invoiceItemId ? (invItemGstMap.get(li.invoiceItemId) ?? 18) : 18;
+                  return {
+                    productId: li.productId,
+                    variantId: li.variantId,
+                    qty: li.qty,
+                    rate: li.rate,
+                    amount: li.amount,
+                    gstRate: lineGst,
+                    taxAmount: Math.round(li.amount * (lineGst / 100) * 100) / 100,
+                    reason: li.reason,
+                    returnItemId: li.id,
+                  };
+                }),
               },
             },
           });

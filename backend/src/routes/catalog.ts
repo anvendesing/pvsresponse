@@ -1,11 +1,21 @@
 // Master data: products, vendors, customers, warehouses, bins.
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
 import { db } from "../db.js";
 import { recordChange } from "../sync/log.js";
 import { normalizeUomCode } from "../lib/uom.js";
 import { binCodeFromRow } from "../lib/codes.js";
 import { customerNetOpenBalance } from "./customer-payments.js";
+import { generateVariantSku, generateVariantBarcode } from "../lib/tax.js";
+import { createWriteStream, mkdirSync } from "fs";
+import { join, dirname } from "path";
+import { fileURLToPath } from "url";
+import { pipeline } from "stream/promises";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const uploadsRoot = join(__dirname, "..", "..", "uploads");
+mkdirSync(join(uploadsRoot, "products", "variants"), { recursive: true });
 
 // Normalize a free-text uom string against the canonical UoM master.
 // Throws a 400-friendly error message if the input cannot be mapped.
@@ -26,8 +36,14 @@ const requireCanonicalUom = (input: string): string => {
 
 const variantInput = z.object({
   id: z.string().optional(),
-  sku: z.string().min(1),
+  // SKU may be omitted for new variants; auto-generated from parent SKU if blank.
+  sku: z.string().optional(),
+  // Barcode may be omitted for new variants; auto-generated from parent barcode if blank.
   barcode: z.string().nullable().optional(),
+  // Optional variant-level HSN code (overrides product HSN when set).
+  hsn: z.string().nullable().optional(),
+  // Optional variant-level GST rate override. null = inherit parent product.gstRate.
+  gstRate: z.number().min(0).max(100).nullable().optional(),
   size: z.string().nullable().optional(),
   color: z.string().nullable().optional(),
   grade: z.string().nullable().optional(),
@@ -45,12 +61,15 @@ const variantInput = z.object({
 
 // Builds the persistence shape for a variant, normalising uom and packSize.
 // Empty / null uom is preserved as null (= inherit parent's UoM at read).
-const variantPersist = (v: z.infer<typeof variantInput>) => {
+// SKU and barcode are expected to already be resolved before calling this.
+const variantPersist = (v: z.infer<typeof variantInput> & { sku: string; barcode: string }) => {
   const uomRaw = (v.uom ?? "").trim();
   const uom = uomRaw.length === 0 ? null : requireCanonicalUom(uomRaw);
   return {
     sku: v.sku,
-    barcode: v.barcode ?? null,
+    barcode: v.barcode,
+    hsn: v.hsn ?? null,
+    gstRate: v.gstRate ?? null,
     size: v.size ?? null,
     color: v.color ?? null,
     grade: v.grade ?? null,
@@ -70,8 +89,10 @@ const productCreate = z.object({
   uom: z.string().min(1),
   barcode: z.string().min(1),
   state: z.enum(["draft", "active", "discontinued", "blocked"]).default("active"),
-  category: z.string(),
+  categoryId: z.string().min(1),
   hsn: z.string(),
+  // Default GST rate for this product (and inherited by variants that don't override).
+  gstRate: z.number().min(0).max(100).default(18),
   costPrice: z.number().nonnegative(),
   sellingPrice: z.number().nonnegative(),
   reorderLevel: z.number().int().nonnegative().default(0),
@@ -85,9 +106,27 @@ const productUpdate = productCreate.partial();
 export const catalogRoutes = async (app: FastifyInstance) => {
   // ============= Products =============
   const productInclude = {
+    category: { select: { id: true, slug: true, name: true, active: true } },
     variants: {
       orderBy: { sku: "asc" as const },
     },
+  };
+
+  const assertCategoryId = async (categoryId: string, reply: FastifyReply) => {
+    const cat = await db.productCategory.findUnique({ where: { id: categoryId } });
+    if (!cat) {
+      void reply.code(400).send({
+        error: { code: "invalid_category", message: "Category not found." },
+      });
+      return null;
+    }
+    if (!cat.active) {
+      void reply.code(400).send({
+        error: { code: "inactive_category", message: "Category is inactive." },
+      });
+      return null;
+    }
+    return cat;
   };
 
   app.get("/products", async (req) => {
@@ -145,16 +184,63 @@ export const catalogRoutes = async (app: FastifyInstance) => {
     return { ...v.product, matchedVariantId: v.id };
   });
 
-  app.post("/products", { preHandler: [app.authenticate] }, async (req) => {
+  app.post("/products", { preHandler: [app.authenticate] }, async (req, reply) => {
     const data = productCreate.parse(req.body);
     const { variants, ...productData } = data;
     productData.uom = requireCanonicalUom(productData.uom);
+    if (!(await assertCategoryId(productData.categoryId, reply))) return;
+
+    // ── SKU/barcode uniqueness pre-check ─────────────────────────────────────
+    // Collect all existing SKUs and barcodes in one pass so we can both
+    // auto-generate missing variant codes and detect duplicates.
+    const allSkus = new Set(
+      (await db.product.findMany({ select: { sku: true } })).map((p) => p.sku).concat(
+        (await db.productVariant.findMany({ select: { sku: true } })).map((v) => v.sku)
+      )
+    );
+    const allBarcodes = new Set(
+      (await db.product.findMany({ select: { barcode: true } }))
+        .map((p) => p.barcode)
+        .filter(Boolean)
+        .concat(
+          (await db.productVariant.findMany({ select: { barcode: true } }))
+            .map((v) => v.barcode)
+            .filter(Boolean) as string[]
+        ) as string[]
+    );
+
+    // Check product-level SKU/barcode first.
+    const duplicates: string[] = [];
+    if (allSkus.has(productData.sku)) duplicates.push(`SKU '${productData.sku}' already exists`);
+    if (allBarcodes.has(productData.barcode)) duplicates.push(`Barcode '${productData.barcode}' already exists`);
+    if (duplicates.length) {
+      return reply.code(409).send({ error: { code: "duplicate_code", messages: duplicates } });
+    }
+
+    // Add product codes to the working set so variant auto-gen avoids them.
+    allSkus.add(productData.sku);
+    allBarcodes.add(productData.barcode);
+
+    // Resolve/validate each variant's SKU and barcode.
+    const resolvedVariants = variants.map((v) => {
+      const sku = v.sku?.trim() || generateVariantSku(productData.sku, allSkus);
+      const barcode = v.barcode?.trim() || generateVariantBarcode(productData.barcode, allBarcodes);
+      if (allSkus.has(sku)) duplicates.push(`Variant SKU '${sku}' already exists`);
+      else allSkus.add(sku);
+      if (allBarcodes.has(barcode)) duplicates.push(`Variant barcode '${barcode}' already exists`);
+      else allBarcodes.add(barcode);
+      return { ...v, sku, barcode };
+    });
+    if (duplicates.length) {
+      return reply.code(409).send({ error: { code: "duplicate_code", messages: duplicates } });
+    }
+
     const created = await db.product.create({
       data: {
         ...productData,
-        variants: variants.length
+        variants: resolvedVariants.length
           ? {
-              create: variants.map(variantPersist),
+              create: resolvedVariants.map(variantPersist),
             }
           : undefined,
       },
@@ -174,17 +260,64 @@ export const catalogRoutes = async (app: FastifyInstance) => {
     if (productData.uom !== undefined) {
       productData.uom = requireCanonicalUom(productData.uom);
     }
+    if (productData.categoryId !== undefined) {
+      if (!(await assertCategoryId(productData.categoryId, reply))) return;
+    }
 
     if (variants !== undefined) {
+      // ── Auto-gen + uniqueness check for variant SKU/barcode ──────────────
+      const parentSku = data.sku ?? before.sku;
+      const parentBarcode = data.barcode ?? before.barcode;
+
+      // Collect all existing codes excluding the variants belonging to this product
+      // (they'll be replaced by the incoming payload, so we must not count them as
+      // "already taken" when generating codes).
+      const siblingIds = new Set(
+        (await db.productVariant.findMany({ where: { productId: id }, select: { id: true } })).map((v) => v.id)
+      );
+      const allSkus = new Set(
+        (await db.product.findMany({ where: { id: { not: id } }, select: { sku: true } })).map((p) => p.sku).concat(
+          (await db.productVariant.findMany({ where: { id: { notIn: [...siblingIds] } }, select: { sku: true } })).map((v) => v.sku)
+        )
+      );
+      const allBarcodes = new Set(
+        (await db.product.findMany({ where: { id: { not: id } }, select: { barcode: true } }))
+          .map((p) => p.barcode)
+          .filter(Boolean)
+          .concat(
+            (await db.productVariant.findMany({ where: { id: { notIn: [...siblingIds] }, barcode: { not: null } }, select: { barcode: true } }))
+              .map((v) => v.barcode)
+              .filter(Boolean) as string[]
+          ) as string[]
+      );
+
+      // Also exclude the product's own new codes from collision detection.
+      if (parentSku) allSkus.add(parentSku);
+      if (parentBarcode) allBarcodes.add(parentBarcode);
+
+      const duplicates: string[] = [];
+      const resolvedVariants = variants.map((v) => {
+        const sku = v.sku?.trim() || generateVariantSku(parentSku, allSkus);
+        const barcode = v.barcode?.trim() || generateVariantBarcode(parentBarcode, allBarcodes);
+        if (allSkus.has(sku) && sku !== (v.sku?.trim())) duplicates.push(`Variant SKU '${sku}' already exists`);
+        else allSkus.add(sku);
+        if (allBarcodes.has(barcode) && barcode !== (v.barcode?.trim())) duplicates.push(`Variant barcode '${barcode}' already exists`);
+        else allBarcodes.add(barcode);
+        return { ...v, sku, barcode };
+      });
+      if (duplicates.length) {
+        return reply.code(409).send({ error: { code: "duplicate_code", messages: duplicates } });
+      }
+
       // Reconcile variants: insert / update / delete via diff against current set.
       const existing = await db.productVariant.findMany({ where: { productId: id } });
-      const incomingIds = new Set(variants.filter((v) => v.id).map((v) => v.id!));
+      const incomingIds = new Set(resolvedVariants.filter((v) => v.id).map((v) => v.id!));
       const toDelete = existing.filter((e) => !incomingIds.has(e.id));
       await db.$transaction([
         ...(toDelete.length
           ? [db.productVariant.deleteMany({ where: { id: { in: toDelete.map((d) => d.id) } } })]
           : []),
-        ...variants.map((v) =>
+        ...resolvedVariants.map((v) =>
           v.id
             ? db.productVariant.update({
                 where: { id: v.id },
@@ -262,7 +395,7 @@ export const catalogRoutes = async (app: FastifyInstance) => {
     return db.bin.findMany({
       where: { warehouseId: id },
       include: { product: { select: { sku: true, name: true, uom: true } } },
-      orderBy: [{ zone: "asc" }, { rack: "asc" }, { shelf: "asc" }, { bin: "asc" }],
+      orderBy: [{ zone: "asc" }, { shelf: "asc" }, { bin: "asc" }],
     });
   });
 
@@ -379,15 +512,15 @@ export const catalogRoutes = async (app: FastifyInstance) => {
   );
 
   // ============= Bins =============
-  // Bins are addressed by zone/rack/shelf/bin within a warehouse and
-  // are unique on the composite (warehouseId, zone, rack, shelf, bin).
+  // Bins are addressed by zone/shelf/bin within a warehouse and
+  // are unique on the composite (warehouseId, zone, shelf, bin).
   // We expose:
   //   POST   /warehouses/:id/bins         single-bin create
-  //   POST   /warehouses/:id/bins/bulk    create a whole rack with
+  //   POST   /warehouses/:id/bins/bulk    create a whole shelf-set with
   //                                       N shelves x M bins per shelf
   //   PATCH  /bins/:id                    rename/recapacity
   //   DELETE /bins/:id                    only when bin holds no stock
-  // The warehouse code/zone/rack/shelf labels are normalised to
+  // The warehouse code/zone/shelf labels are normalised to
   // upper-case so a warehouse layout never accumulates "A1" vs "a1".
 
   const labelSchema = z
@@ -398,7 +531,6 @@ export const catalogRoutes = async (app: FastifyInstance) => {
 
   const binSingleCreate = z.object({
     zone: labelSchema,
-    rack: labelSchema,
     shelf: labelSchema,
     bin: labelSchema,
     capacity: z.number().int().positive().max(100000).default(100),
@@ -406,19 +538,18 @@ export const catalogRoutes = async (app: FastifyInstance) => {
 
   const binBulkCreate = z.object({
     zone: labelSchema,
-    rack: labelSchema,
     // List of shelf labels e.g. ["S1","S2","S3"]. Either provide this
     // explicitly or use shelfCount which generates S1..Sn.
     shelves: z.array(labelSchema).min(1).max(100).optional(),
     shelfCount: z.number().int().min(1).max(100).optional(),
     binsPerShelf: z.number().int().min(1).max(200),
-    // Bin labels are auto-generated as `${rack}-${shelf}-${seq}`.
+    // Bin labels are auto-generated as `${shelf}-${seq}`.
     capacity: z.number().int().positive().max(100000).default(100),
   });
 
   const binUpdate = z
     .object({
-      // Warehouse + zone/rack/shelf are not editable to keep history
+      // Warehouse + zone/shelf are not editable to keep history
       // simple; rename a bin only by deleting + recreating. The bin
       // label, capacity and product hint are safe to mutate.
       bin: labelSchema.optional(),
@@ -453,14 +584,12 @@ export const catalogRoutes = async (app: FastifyInstance) => {
       const data = {
         warehouseId,
         zone: body.zone.toUpperCase(),
-        rack: body.rack.toUpperCase(),
         shelf: body.shelf.toUpperCase(),
         bin: body.bin.toUpperCase(),
         capacity: body.capacity,
         code: binCodeFromRow(
           {
             zone: body.zone.toUpperCase(),
-            rack: body.rack.toUpperCase(),
             shelf: body.shelf.toUpperCase(),
             bin: body.bin.toUpperCase(),
           },
@@ -480,7 +609,7 @@ export const catalogRoutes = async (app: FastifyInstance) => {
           return reply.code(409).send({
             error: {
               code: "duplicate_bin",
-              message: `Bin ${data.zone}/${data.rack}/${data.shelf}/${data.bin} already exists in ${wh.code}.`,
+              message: `Bin ${data.zone}/${data.shelf}/${data.bin} already exists in ${wh.code}.`,
             },
           });
         }
@@ -489,8 +618,8 @@ export const catalogRoutes = async (app: FastifyInstance) => {
     }
   );
 
-  // POST /warehouses/:id/bins/bulk - create a whole rack at once.
-  // Convenience for the operator who wants "Rack R5 with 4 shelves x 5
+  // POST /warehouses/:id/bins/bulk - create a shelf-set at once.
+  // Convenience for the operator who wants "4 shelves x 5
   // bins each", which is otherwise 20 individual clicks.
   app.post(
     "/warehouses/:id/bins/bulk",
@@ -507,11 +636,9 @@ export const catalogRoutes = async (app: FastifyInstance) => {
       ).map((s) => s.toUpperCase());
 
       const zone = body.zone.toUpperCase();
-      const rack = body.rack.toUpperCase();
       const rows: Array<{
         warehouseId: string;
         zone: string;
-        rack: string;
         shelf: string;
         bin: string;
         capacity: number;
@@ -519,18 +646,15 @@ export const catalogRoutes = async (app: FastifyInstance) => {
       }> = [];
       for (const shelf of shelfLabels) {
         for (let i = 1; i <= body.binsPerShelf; i++) {
-          // Bin label uses just a numeric sequence within the shelf
-          // (e.g. "01", "02") - keeps the tree compact.
           const seq = String(i).padStart(2, "0");
           rows.push({
             warehouseId,
             zone,
-            rack,
             shelf,
             bin: seq,
             capacity: body.capacity,
             code: binCodeFromRow(
-              { zone, rack, shelf, bin: seq },
+              { zone, shelf, bin: seq },
               wh.code
             ),
           });
@@ -542,7 +666,6 @@ export const catalogRoutes = async (app: FastifyInstance) => {
         where: {
           warehouseId,
           zone,
-          rack,
           shelf: { in: shelfLabels },
         },
         select: { shelf: true, bin: true },
@@ -551,7 +674,7 @@ export const catalogRoutes = async (app: FastifyInstance) => {
         return reply.code(409).send({
           error: {
             code: "duplicate_bin",
-            message: `Rack ${rack} already has ${existing.length} bin(s) on shelves ${[...new Set(existing.map((e) => e.shelf))].join(", ")}. Pick a different rack label or delete the existing rack first.`,
+            message: `Zone ${zone} already has ${existing.length} bin(s) on shelves ${[...new Set(existing.map((e) => e.shelf))].join(", ")}. Pick different shelf labels or delete the existing bins first.`,
           },
         });
       }
@@ -564,7 +687,6 @@ export const catalogRoutes = async (app: FastifyInstance) => {
       return {
         created: result.length,
         zone,
-        rack,
         shelves: shelfLabels.length,
         binsPerShelf: body.binsPerShelf,
         bins: result,
@@ -596,7 +718,6 @@ export const catalogRoutes = async (app: FastifyInstance) => {
             data.code = binCodeFromRow(
               {
                 zone: current.zone,
-                rack: current.rack,
                 shelf: current.shelf,
                 bin: body.bin.toUpperCase(),
               },
@@ -662,6 +783,238 @@ export const catalogRoutes = async (app: FastifyInstance) => {
       await db.bin.delete({ where: { id } });
       await recordChange("Bin", id, "delete", bin, req.user.sub);
       return { deleted: true };
+    }
+  );
+
+  // ================================================================
+  // Product + Variant image upload
+  // POST /products/:id/image          — upload / replace product photo
+  // POST /products/:id/variants/:vid/image — upload / replace variant photo
+  //
+  // Storage:
+  //   product  images → uploads/products/<productId>.jpg
+  //   variant  images → uploads/products/variants/<variantId>.jpg
+  //
+  // The endpoint accepts multipart/form-data with a single file field
+  // named "image". Only image/* content-types are accepted.
+  // ================================================================
+
+  app.post(
+    "/products/:id/image",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      const { id } = req.params as { id: string };
+      const product = await db.product.findUnique({ where: { id } });
+      if (!product) return reply.code(404).send({ error: { code: "not_found" } });
+
+      const data = await req.file();
+      if (!data) return reply.code(400).send({ error: { code: "no_file", message: "No file uploaded." } });
+      if (!data.mimetype.startsWith("image/")) {
+        return reply.code(400).send({ error: { code: "invalid_type", message: "Only image files are accepted." } });
+      }
+
+      const ext = data.mimetype === "image/png" ? ".png" : data.mimetype === "image/webp" ? ".webp" : ".jpg";
+      const filename = `${id}${ext}`;
+      const dest = join(uploadsRoot, "products", filename);
+      await pipeline(data.file, createWriteStream(dest));
+
+      const imageUrl = `/uploads/products/${filename}`;
+      const updated = await db.product.update({ where: { id }, data: { imageUrl } });
+      return { imageUrl: updated.imageUrl };
+    }
+  );
+
+  app.post(
+    "/products/:id/variants/:vid/image",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      const { id, vid } = req.params as { id: string; vid: string };
+      const variant = await db.productVariant.findFirst({ where: { id: vid, productId: id } });
+      if (!variant) return reply.code(404).send({ error: { code: "not_found" } });
+
+      const data = await req.file();
+      if (!data) return reply.code(400).send({ error: { code: "no_file", message: "No file uploaded." } });
+      if (!data.mimetype.startsWith("image/")) {
+        return reply.code(400).send({ error: { code: "invalid_type", message: "Only image files are accepted." } });
+      }
+
+      const ext = data.mimetype === "image/png" ? ".png" : data.mimetype === "image/webp" ? ".webp" : ".jpg";
+      const filename = `${vid}${ext}`;
+      const dest = join(uploadsRoot, "products", "variants", filename);
+      await pipeline(data.file, createWriteStream(dest));
+
+      const imageUrl = `/uploads/products/variants/${filename}`;
+      // Use executeRaw because Prisma client was generated before imageUrl was
+      // added to ProductVariant; the column exists in the DB.
+      await db.$executeRaw`UPDATE "ProductVariant" SET "imageUrl" = ${imageUrl}, "updatedAt" = CURRENT_TIMESTAMP WHERE "id" = ${vid}`;
+      return { imageUrl };
+    }
+  );
+
+  // ================================================================
+  // Zone / Shelf bulk operations
+  // Zones and shelves are label strings on Bin rows — there is no
+  // separate entity. These endpoints operate on all bins in a
+  // zone/shelf as a batch.
+  // ================================================================
+
+  // PATCH /warehouses/:id/zones/:zone - rename a zone.
+  // Renames all bins in the zone; blocked if any has stock+ledger
+  // reference that would make the history misleading.
+  app.patch(
+    "/warehouses/:id/zones/:zone",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      if (!requireAdmin(req, reply)) return;
+      const { id: warehouseId, zone } = req.params as { id: string; zone: string };
+      const body = z.object({ newZone: labelSchema }).parse(req.body);
+      const newZone = body.newZone.toUpperCase();
+      if (newZone === zone.toUpperCase()) return { updated: 0 };
+      // Check no bin in newZone already exists (would create duplicates).
+      const conflict = await db.bin.findFirst({
+        where: { warehouseId, zone: newZone },
+      });
+      if (conflict) {
+        return reply.code(409).send({
+          error: {
+            code: "zone_exists",
+            message: `Zone ${newZone} already has bins in this warehouse. Merge manually or pick a different name.`,
+          },
+        });
+      }
+      const { count } = await db.bin.updateMany({
+        where: { warehouseId, zone: zone.toUpperCase() },
+        data: { zone: newZone },
+      });
+      if (count === 0) return reply.code(404).send({ error: { code: "zone_not_found" } });
+      // Refresh codes for all renamed bins.
+      const wh = await db.warehouse.findUnique({ where: { id: warehouseId } });
+      if (wh) {
+        const affected = await db.bin.findMany({ where: { warehouseId, zone: newZone } });
+        for (const b of affected) {
+          await db.bin.update({
+            where: { id: b.id },
+            data: { code: binCodeFromRow({ zone: b.zone, shelf: b.shelf, bin: b.bin }, wh.code) },
+          });
+        }
+      }
+      return { updated: count, newZone };
+    }
+  );
+
+  // DELETE /warehouses/:id/zones/:zone - delete all bins in zone.
+  // Only allowed when every bin in the zone is empty (qty = 0 AND reservedQty = 0).
+  app.delete(
+    "/warehouses/:id/zones/:zone",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      if (!requireAdmin(req, reply)) return;
+      const { id: warehouseId, zone } = req.params as { id: string; zone: string };
+      const bins = await db.bin.findMany({ where: { warehouseId, zone: zone.toUpperCase() } });
+      if (bins.length === 0) return reply.code(404).send({ error: { code: "zone_not_found" } });
+      const occupied = bins.filter((b) => (b.qty ?? 0) > 0 || (b.reservedQty ?? 0) > 0);
+      if (occupied.length > 0) {
+        return reply.code(409).send({
+          error: {
+            code: "zone_not_empty",
+            message: `${occupied.length} bin(s) in zone ${zone} still hold stock. Transfer all stock out before deleting the zone.`,
+          },
+        });
+      }
+      const inUse = await db.pickListItem.count({ where: { binId: { in: bins.map((b) => b.id) } } });
+      if (inUse > 0) {
+        return reply.code(409).send({
+          error: {
+            code: "zone_in_use",
+            message: `${inUse} pick-list item(s) reference bins in this zone. Cannot delete.`,
+          },
+        });
+      }
+      await db.bin.deleteMany({ where: { warehouseId, zone: zone.toUpperCase() } });
+      return { deleted: bins.length };
+    }
+  );
+
+  // PATCH /warehouses/:id/zones/:zone/shelves/:shelf - rename a shelf.
+  app.patch(
+    "/warehouses/:id/zones/:zone/shelves/:shelf",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      if (!requireAdmin(req, reply)) return;
+      const { id: warehouseId, zone, shelf } = req.params as {
+        id: string; zone: string; shelf: string;
+      };
+      const body = z.object({ newShelf: labelSchema }).parse(req.body);
+      const newShelf = body.newShelf.toUpperCase();
+      if (newShelf === shelf.toUpperCase()) return { updated: 0 };
+      const conflict = await db.bin.findFirst({
+        where: { warehouseId, zone: zone.toUpperCase(), shelf: newShelf },
+      });
+      if (conflict) {
+        return reply.code(409).send({
+          error: {
+            code: "shelf_exists",
+            message: `Shelf ${newShelf} already exists in zone ${zone}. Merge manually or pick a different name.`,
+          },
+        });
+      }
+      const { count } = await db.bin.updateMany({
+        where: { warehouseId, zone: zone.toUpperCase(), shelf: shelf.toUpperCase() },
+        data: { shelf: newShelf },
+      });
+      if (count === 0) return reply.code(404).send({ error: { code: "shelf_not_found" } });
+      // Refresh codes.
+      const wh = await db.warehouse.findUnique({ where: { id: warehouseId } });
+      if (wh) {
+        const affected = await db.bin.findMany({
+          where: { warehouseId, zone: zone.toUpperCase(), shelf: newShelf },
+        });
+        for (const b of affected) {
+          await db.bin.update({
+            where: { id: b.id },
+            data: { code: binCodeFromRow({ zone: b.zone, shelf: b.shelf, bin: b.bin }, wh.code) },
+          });
+        }
+      }
+      return { updated: count, newShelf };
+    }
+  );
+
+  // DELETE /warehouses/:id/zones/:zone/shelves/:shelf - delete all bins on shelf.
+  app.delete(
+    "/warehouses/:id/zones/:zone/shelves/:shelf",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      if (!requireAdmin(req, reply)) return;
+      const { id: warehouseId, zone, shelf } = req.params as {
+        id: string; zone: string; shelf: string;
+      };
+      const bins = await db.bin.findMany({
+        where: { warehouseId, zone: zone.toUpperCase(), shelf: shelf.toUpperCase() },
+      });
+      if (bins.length === 0) return reply.code(404).send({ error: { code: "shelf_not_found" } });
+      const occupied = bins.filter((b) => (b.qty ?? 0) > 0 || (b.reservedQty ?? 0) > 0);
+      if (occupied.length > 0) {
+        return reply.code(409).send({
+          error: {
+            code: "shelf_not_empty",
+            message: `${occupied.length} bin(s) on shelf ${shelf} still hold stock. Transfer all stock out before deleting the shelf.`,
+          },
+        });
+      }
+      const inUse = await db.pickListItem.count({ where: { binId: { in: bins.map((b) => b.id) } } });
+      if (inUse > 0) {
+        return reply.code(409).send({
+          error: {
+            code: "shelf_in_use",
+            message: `${inUse} pick-list item(s) reference bins on this shelf. Cannot delete.`,
+          },
+        });
+      }
+      await db.bin.deleteMany({
+        where: { warehouseId, zone: zone.toUpperCase(), shelf: shelf.toUpperCase() },
+      });
+      return { deleted: bins.length };
     }
   );
 

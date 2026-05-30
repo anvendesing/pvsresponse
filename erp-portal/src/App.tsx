@@ -6,6 +6,7 @@ import { Dashboard } from "./pages/Dashboard";
 import { Products } from "./pages/Products";
 import { Inventory } from "./pages/Inventory";
 import { Warehouse } from "./pages/Warehouse";
+import { Transfers } from "./pages/Transfers";
 import { Manufacturing } from "./pages/Manufacturing";
 import { Procurement } from "./pages/Procurement";
 import { Productivity } from "./pages/Productivity";
@@ -36,6 +37,7 @@ import { MobileTasks } from "./mobile/screens/MobileTasks";
 import { MobilePick } from "./mobile/screens/MobilePick";
 import { MobilePickLine } from "./mobile/screens/MobilePickLine";
 import { MobilePack } from "./mobile/screens/MobilePack";
+import { MobileTransfer } from "./mobile/screens/MobileTransfer";
 import { MobileScan } from "./mobile/screens/MobileScan";
 import { MobileVerify } from "./mobile/screens/MobileVerify";
 import { MobileLocation } from "./mobile/screens/MobileLocation";
@@ -76,6 +78,7 @@ const App = () => {
           element={<MobilePickLine />}
         />
         <Route path="/m/packs/:id" element={<MobilePack />} />
+        <Route path="/m/transfers/:id" element={<MobileTransfer />} />
         <Route path="/m/scan" element={<MobileScan />} />
         <Route path="/m/verify" element={<MobileVerify />} />
         <Route path="/m/loc/:code" element={<MobileLocation />} />
@@ -106,6 +109,7 @@ const App = () => {
 
         <Route path="/inventory"      element={<RequireRole roles={["supervisor","warehouse","procurement"]}><Inventory /></RequireRole>} />
         <Route path="/warehouse"      element={<RequireRole roles={["supervisor","warehouse"]}><Warehouse /></RequireRole>} />
+        <Route path="/transfers"      element={<RequireRole roles={["supervisor","warehouse"]}><Transfers /></RequireRole>} />
         <Route path="/warehouse-audit" element={<RequireRole roles={["warehouse"]}><WarehouseAudit /></RequireRole>} />
 
         <Route path="/manufacturing"  element={<RequireRole roles={["supervisor"]}><Manufacturing /></RequireRole>} />

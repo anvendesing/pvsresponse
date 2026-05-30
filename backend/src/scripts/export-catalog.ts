@@ -26,9 +26,15 @@ async function main() {
     select: { code: true, name: true, city: true, active: true },
   });
 
+  const productCategories = await db.productCategory.findMany({
+    orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+    select: { slug: true, name: true, sortOrder: true, active: true, imageUrl: true },
+  });
+
   const products = await db.product.findMany({
     orderBy: { sku: "asc" },
     include: {
+      category: { select: { slug: true } },
       variants: { orderBy: { sku: "asc" } },
     },
   });
@@ -47,7 +53,7 @@ async function main() {
   });
 
   const bins = await db.bin.findMany({
-    orderBy: [{ warehouseId: "asc" }, { zone: "asc" }, { rack: "asc" }],
+    orderBy: [{ warehouseId: "asc" }, { zone: "asc" }, { shelf: "asc" }],
     include: {
       warehouse: { select: { code: true } },
       product: { select: { sku: true } },
@@ -74,6 +80,7 @@ async function main() {
       bins: bins.length,
       stockLedger: stockLedger.length,
     },
+    productCategories,
     warehouses,
     products: products.map((p) => ({
       sku: p.sku,
@@ -82,8 +89,9 @@ async function main() {
       uom: p.uom,
       barcode: p.barcode,
       state: p.state,
-      category: p.category,
+      categorySlug: p.category?.slug ?? null,
       hsn: p.hsn,
+      gstRate: p.gstRate,
       costPrice: p.costPrice,
       sellingPrice: p.sellingPrice,
       reorderLevel: p.reorderLevel,
@@ -97,6 +105,8 @@ async function main() {
       variants: p.variants.map((v) => ({
         sku: v.sku,
         barcode: v.barcode,
+        hsn: v.hsn,
+        gstRate: v.gstRate,
         size: v.size,
         color: v.color,
         grade: v.grade,
@@ -130,7 +140,6 @@ async function main() {
     bins: bins.map((b) => ({
       warehouseCode: b.warehouse.code,
       zone: b.zone,
-      rack: b.rack,
       shelf: b.shelf,
       bin: b.bin,
       code: b.code,

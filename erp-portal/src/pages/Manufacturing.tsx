@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
+  ArrowRightLeft,
   CheckCircle2,
   Factory,
   Network,
@@ -18,7 +19,7 @@ import { Card } from "@/components/common/Card";
 import { Chip, StatusDot } from "@/components/common/Chip";
 import { Kpi } from "@/components/common/Kpi";
 import { Toolbar } from "@/components/common/Toolbar";
-import { api, type MoRequirements } from "@/lib/api";
+import { api, type MoRequirements, type TransferOrderRow } from "@/lib/api";
 import { useApi } from "@/hooks/useApi";
 import { EmptyState } from "@/components/common/EmptyState";
 import type { Bom, ProductionOrder } from "@/data/types";
@@ -75,6 +76,8 @@ export const Manufacturing = () => {
   // currently-selected MO. Refreshed when the selection or output
   // counts change.
   const [requirements, setRequirements] = useState<MoRequirements | null>(null);
+  // Transfer orders linked to the currently-selected MO.
+  const [linkedTOs, setLinkedTOs] = useState<TransferOrderRow[]>([]);
 
   const refreshAll = async () => {
     liveMo.refetch();
@@ -88,17 +91,24 @@ export const Manufacturing = () => {
   const order =
     productionOrders.find((p) => p.id === selectedId) ?? productionOrders[0];
 
-  // Fetch requirements when the selected MO changes.
+  // Fetch requirements + linked TOs when the selected MO changes.
   useEffect(() => {
     if (!order) {
       setRequirements(null);
+      setLinkedTOs([]);
       return;
     }
     let cancelled = false;
     void (async () => {
       try {
-        const r = await api.productionOrderRequirements(order.id);
-        if (!cancelled) setRequirements(r);
+        const [r, tos] = await Promise.all([
+          api.productionOrderRequirements(order.id),
+          api.transferOrders({ productionOrderId: order.id }),
+        ]);
+        if (!cancelled) {
+          setRequirements(r);
+          setLinkedTOs(tos);
+        }
       } catch (e) {
         if (!cancelled) setErrBanner((e as Error).message);
       }
@@ -106,7 +116,7 @@ export const Manufacturing = () => {
     return () => {
       cancelled = true;
     };
-  }, [order?.id, order?.actualQty]);
+  }, [order?.id, order?.actualQty, order?.status]);
 
   // IMPORTANT: every hook must run on every render or React throws
   // "Rendered fewer hooks than expected". Keep this useMemo (and any
@@ -196,6 +206,25 @@ export const Manufacturing = () => {
     }
   };
 
+  const onReleaseMo = async () => {
+    setBusy("release");
+    try {
+      const res = await api.releaseMo(order.id);
+      if (res.allMet) {
+        setOkBanner(`MO ${order.orderNo} released. All materials available at production line.`);
+      } else {
+        setOkBanner(
+          `MO ${order.orderNo} released. ${res.shortages.length} shortage(s) found. ${res.transferOrderIds.length} replenishment transfer(s) created.`
+        );
+      }
+      await refreshAll();
+    } catch (e) {
+      setErrBanner((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const onCompleteMo = async () => {
     if (
       !confirm(
@@ -206,9 +235,12 @@ export const Manufacturing = () => {
     setBusy("complete");
     try {
       const res = await api.completeProductionOrder(order.id);
+      const toMsg = res.putawayTransferOrderId
+        ? " Putaway transfer order created."
+        : "";
       setOkBanner(
         res.putaway
-          ? `MO ${order.orderNo} closed. ${num(res.putaway.qty)} posted to bin ${res.putaway.bin}.`
+          ? `MO ${order.orderNo} closed. ${num(res.putaway.qty)} posted to production-line bin.${toMsg}`
           : `MO ${order.orderNo} closed. (No FG bin available - transfer manually.)`
       );
       await refreshAll();
@@ -343,8 +375,18 @@ export const Manufacturing = () => {
               }
               subtitle={`${order.sku} · ${order.station} · Due ${dd(order.dueDate)}`}
               actions={
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 flex-wrap">
                   <Chip tone={statusTone(order.status)}>{order.status}</Chip>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    icon={<ArrowRightLeft size={14} />}
+                    onClick={onReleaseMo}
+                    disabled={busy === "release" || order.status === "completed"}
+                    title="Check material availability at production line and create replenishment transfers if short"
+                  >
+                    {busy === "release" ? "Releasing…" : "Release"}
+                  </Button>
                   <Button
                     size="sm"
                     variant="outline"
@@ -475,6 +517,61 @@ export const Manufacturing = () => {
                 })}
               </div>
             </Card>
+
+            {/* Linked transfer orders (putaway + replenishment) */}
+            {linkedTOs.length > 0 && (
+              <Card
+                title="Transfer orders"
+                subtitle={`${linkedTOs.length} transfer(s) linked to this MO`}
+                noPadding
+              >
+                <div className="divide-y divide-border">
+                  {linkedTOs.map((to) => {
+                    const kindColor =
+                      to.kind === "putaway"
+                        ? "bg-purple-50 text-purple-700 border-purple-200"
+                        : to.kind === "replenishment"
+                        ? "bg-orange-50 text-orange-700 border-orange-200"
+                        : "bg-canvas text-ink-muted border-border";
+                    const statusColor =
+                      to.status === "done"
+                        ? "success"
+                        : to.status === "in_transit"
+                        ? "primary"
+                        : to.status === "cancelled"
+                        ? "danger"
+                        : "neutral";
+                    return (
+                      <div key={to.id} className="px-4 py-3 flex items-center gap-3">
+                        <ArrowRightLeft size={14} className="text-ink-muted shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="font-mono text-caption text-primary font-semibold">{to.transferNo}</span>
+                            <span className={cn("text-[10px] rounded-full px-2 py-0.5 border font-semibold uppercase tracking-wide", kindColor)}>
+                              {to.kind}
+                            </span>
+                            <Chip size="sm" tone={statusColor as "neutral"}>{to.status.replace("_", " ")}</Chip>
+                          </div>
+                          <div className="text-caption text-ink-muted mt-0.5">
+                            {to.fromWarehouse.code} → {to.toWarehouse.code} · {to.items.length} item(s)
+                          </div>
+                        </div>
+                        {to.status !== "done" && to.status !== "cancelled" && (
+                          <a
+                            href={`/m/transfers/${to.id}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-caption text-primary hover:underline shrink-0"
+                          >
+                            Open mobile ↗
+                          </a>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </Card>
+            )}
 
             <Card
               title="Material requirements (multi-level)"

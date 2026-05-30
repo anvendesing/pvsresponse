@@ -190,7 +190,18 @@ export const QuoteEditor = ({
     () => lines.reduce((s, l) => s + l.qty * l.rate * (1 - l.discount / 100), 0),
     [lines]
   );
-  const tax = Math.round(subTotal * 0.18);
+  const tax = useMemo(() => {
+    // Resolve effective GST rate per line from the products prop.
+    const productMap = new Map((products ?? []).map((p) => [p.id, p]));
+    const lineTaxes = lines.map((l) => {
+      const amount = l.qty * l.rate * (1 - l.discount / 100);
+      const product = productMap.get(l.productId);
+      const variant = product?.variants?.find((v) => v.id === l.variantId);
+      const rate = (variant?.gstRate ?? null) ?? product?.gstRate ?? 18;
+      return amount * (rate / 100);
+    });
+    return Math.round(lineTaxes.reduce((s, t) => s + t, 0));
+  }, [lines, products]);
   const total = subTotal + tax;
 
   const headroom = useMemo(() => {
@@ -208,7 +219,7 @@ export const QuoteEditor = ({
         p.name.toLowerCase().includes(term) ||
         p.sku.toLowerCase().includes(term) ||
         p.barcode.includes(term) ||
-        (p.category ?? "").toLowerCase().includes(term);
+        (p.category?.name ?? "").toLowerCase().includes(term);
       if (baseHit) {
         out.push({ product: p, variant: null, label: "default", price: p.sellingPrice });
       }
@@ -848,7 +859,7 @@ export const QuoteEditor = ({
           <section className="border-t border-border pt-4">
             <div className="grid grid-cols-2 gap-x-8 max-w-md ml-auto text-body-sm">
               <Row k="Subtotal" v={inr(subTotal)} />
-              <Row k="GST 18%" v={inr(tax)} />
+              <Row k="GST" v={inr(tax)} />
               <Row k="Total" v={inr(total)} big />
             </div>
           </section>

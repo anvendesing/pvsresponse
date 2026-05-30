@@ -25,6 +25,7 @@ import { db } from "../db.js";
 import { recordChange } from "../sync/log.js";
 import { bomTree, explodeBom, whereUsed } from "../lib/bom.js";
 import { normalizeUomCode } from "../lib/uom.js";
+import { resolvePutawayDestination } from "../lib/putaway.js";
 
 // Normalize the uom field of every BOM item against the UoM master
 // and validate that each item's UoM is in the same category as the
@@ -225,8 +226,8 @@ const logOutput = z.object({
 });
 
 const completeMo = z.object({
-  // Where to post the finished goods. Defaults to first active
-  // warehouse if not specified.
+  // Where to post the finished goods. Defaults to the work center's
+  // production-line warehouse, then any active warehouse.
   warehouseId: z.string().optional(),
   // Optional final qty truth-up (else uses the existing actualQty).
   finalGoodQty: z.number().nonnegative().optional(),
@@ -249,19 +250,16 @@ const requireWriter = (
   return true;
 };
 
-// Pick a candidate bin for either issuing (qty > 0) or receiving FG.
+// Pick a candidate bin for issuing raw materials.
 //
-// Issue: prefer the operator-specified warehouse, then fall back to
-// any bin that holds the product anywhere in the company - useful in
-// dev / seed setups where raw stock isn't necessarily in the same
-// warehouse the operator picked. We always pick the bin with the
-// largest free quantity to drain bins efficiently.
-//
-// Receive: try the specified warehouse first (existing bin holding
-// this product, then an empty bin), then fall back to anywhere.
+// When strict=true (production-line warehouse mode), ONLY search the
+// specified warehouse - no global fallback. When strict=false (legacy
+// mode), fall back to any bin in the company that holds the product,
+// useful in dev/demo setups where raw stock isn't segregated.
 const pickBinForIssue = async (
   warehouseId: string | null,
-  productId: string
+  productId: string,
+  strict = false
 ) => {
   if (warehouseId) {
     const inWh = await db.bin.findFirst({
@@ -269,6 +267,7 @@ const pickBinForIssue = async (
       orderBy: { qty: "desc" },
     });
     if (inWh) return inWh;
+    if (strict) return null; // Never fall back when a production-line warehouse is set.
   }
   return db.bin.findFirst({
     where: { productId, qty: { gt: 0 } },
@@ -290,7 +289,6 @@ const pickBinForReceive = async (
       where: { warehouseId, productId: null, qty: 0 },
       orderBy: [
         { zone: "asc" },
-        { rack: "asc" },
         { shelf: "asc" },
         { bin: "asc" },
       ],
@@ -308,7 +306,6 @@ const pickBinForReceive = async (
     where: { productId: null, qty: 0 },
     orderBy: [
       { zone: "asc" },
-      { rack: "asc" },
       { shelf: "asc" },
       { bin: "asc" },
     ],
@@ -339,6 +336,21 @@ const setMachineStatusByName = async (
   await db.machine.update({ where: { id: m.id }, data: { status: next } });
 };
 
+// Sequence helper: next Transfer Order number.
+const nextTransferNo = async (): Promise<string> => {
+  const year = new Date().getUTCFullYear();
+  const prefix = `TRF-${year}-`;
+  const last = await db.transferOrder.findFirst({
+    where: { transferNo: { startsWith: prefix } },
+    orderBy: { transferNo: "desc" },
+    select: { transferNo: true },
+  });
+  const n = last
+    ? parseInt(last.transferNo.split("-").pop() ?? "2200", 10) + 1
+    : 2201;
+  return `${prefix}${String(n).padStart(4, "0")}`;
+};
+
 // Sequence helper: next MO/WO number.
 const nextMoNo = async (): Promise<string> => {
   const last = await db.productionOrder.findFirst({
@@ -367,6 +379,8 @@ export const mfgRoutes = async (app: FastifyInstance) => {
     name: z.string().min(1).max(120),
     description: z.string().nullable().optional(),
     capacityPerHour: z.number().positive().nullable().optional(),
+    productionLineWarehouseId: z.string().min(1).nullable().optional(),
+    autoCreateProductionWarehouse: z.boolean().optional(),
     active: z.boolean().default(true),
   });
   const workCenterUpdate = workCenterCreate.partial();
@@ -388,9 +402,46 @@ export const mfgRoutes = async (app: FastifyInstance) => {
     return db.workCenter.findMany({
       where,
       orderBy: { code: "asc" },
-      include: { machines: { orderBy: { code: "asc" } } },
+      include: {
+        machines: { orderBy: { code: "asc" } },
+        productionLineWarehouse: { select: { id: true, code: true, name: true, kind: true } },
+      },
     });
   });
+
+  // Helper: create and link a dedicated production warehouse for a WC.
+  const ensureProductionWarehouse = async (wcId: string, wcCode: string, wcName: string) => {
+    const whCode = `WH-PROD-${wcCode.toUpperCase().replace(/[^A-Z0-9]+/g, "-")}`;
+    let wh = await db.warehouse.findUnique({ where: { code: whCode } });
+    if (!wh) {
+      wh = await db.warehouse.create({
+        data: {
+          code: whCode,
+          name: `Production line — ${wcName}`,
+          city: "Production",
+          kind: "production",
+          active: true,
+        },
+      });
+      // Create one default bin.
+      await db.bin.create({
+        data: {
+          warehouseId: wh.id,
+          zone: "PROD",
+          shelf: "01",
+          bin: "01",
+          qty: 0,
+          reservedQty: 0,
+          capacity: 9999,
+        },
+      });
+    }
+    await db.workCenter.update({
+      where: { id: wcId },
+      data: { productionLineWarehouseId: wh.id },
+    });
+    return wh;
+  };
 
   app.post("/work-centers", { preHandler: [app.authenticate] }, async (req, reply) => {
     if (!requireWriter(req, reply)) return;
@@ -401,9 +452,20 @@ export const mfgRoutes = async (app: FastifyInstance) => {
         error: { code: "duplicate_code", message: `Work center "${body.code}" already exists.` },
       });
     }
-    const created = await db.workCenter.create({ data: body });
-    await recordChange("WorkCenter", created.id, "insert", created, req.user.sub);
-    return created;
+    const { autoCreateProductionWarehouse, ...rest } = body;
+    const created = await db.workCenter.create({ data: rest });
+    if (autoCreateProductionWarehouse && !created.productionLineWarehouseId) {
+      await ensureProductionWarehouse(created.id, created.code, created.name);
+    }
+    const finalWc = await db.workCenter.findUnique({
+      where: { id: created.id },
+      include: {
+        machines: { orderBy: { code: "asc" } },
+        productionLineWarehouse: { select: { id: true, code: true, name: true, kind: true } },
+      },
+    });
+    await recordChange("WorkCenter", created.id, "insert", finalWc, req.user.sub);
+    return finalWc;
   });
 
   app.patch(
@@ -421,9 +483,22 @@ export const mfgRoutes = async (app: FastifyInstance) => {
           return reply.code(409).send({ error: { code: "duplicate_code" } });
         }
       }
-      const updated = await db.workCenter.update({ where: { id }, data: body });
-      await recordChange("WorkCenter", id, "update", updated, req.user.sub);
-      return updated;
+      const { autoCreateProductionWarehouse, ...rest } = body;
+      const updated = await db.workCenter.update({ where: { id }, data: rest });
+
+      if (autoCreateProductionWarehouse && !updated.productionLineWarehouseId) {
+        await ensureProductionWarehouse(updated.id, updated.code, updated.name);
+      }
+
+      const finalWc = await db.workCenter.findUnique({
+        where: { id },
+        include: {
+          machines: { orderBy: { code: "asc" } },
+          productionLineWarehouse: { select: { id: true, code: true, name: true, kind: true } },
+        },
+      });
+      await recordChange("WorkCenter", id, "update", finalWc, req.user.sub);
+      return finalWc;
     }
   );
 
@@ -1264,6 +1339,186 @@ export const mfgRoutes = async (app: FastifyInstance) => {
     return created;
   });
 
+  // POST /production-orders/:id/release
+  // Checks whether the production-line warehouse has enough material
+  // for the MO and auto-creates replenishment TransferOrders for any
+  // shortages. If the WC has no production-line warehouse, falls back
+  // to a plain requirements check (no TOs created).
+  app.post(
+    "/production-orders/:id/release",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      if (!requireWriter(req, reply)) return;
+      const id = (req.params as { id: string }).id;
+      const po = await db.productionOrder.findUnique({
+        where: { id },
+        include: {
+          bom: {
+            include: {
+              defaultWorkCenter: {
+                include: {
+                  productionLineWarehouse: { select: { id: true, code: true } },
+                },
+              },
+            },
+          },
+        },
+      });
+      if (!po) return reply.code(404).send({ error: { code: "not_found" } });
+      if (po.status === "completed") {
+        return reply.code(409).send({ error: { code: "already_completed" } });
+      }
+
+      const productionLineWhId =
+        po.bom.defaultWorkCenter?.productionLineWarehouse?.id ?? null;
+
+      const remaining = Math.max(0, po.plannedQty - po.actualQty);
+      const planQty = remaining > 0 ? remaining : po.plannedQty;
+      const leaves = await explodeBom(po.bom.productId, planQty, {
+        variantId: po.bom.variantId,
+      });
+
+      // Calculate on-hand at the production-line warehouse (if set),
+      // else fall back to all bins (same as requirements check).
+      const productIds = leaves.map((l) => l.productId);
+      const stockWhere = productionLineWhId
+        ? { productId: { in: productIds }, warehouseId: productionLineWhId }
+        : { productId: { in: productIds } };
+
+      const stock = await db.bin.groupBy({
+        by: ["productId"],
+        where: stockWhere,
+        _sum: { qty: true, reservedQty: true },
+      });
+      const stockMap = new Map(
+        stock.map((s) => [
+          s.productId,
+          {
+            onHand: s._sum.qty ?? 0,
+            reserved: s._sum.reservedQty ?? 0,
+          },
+        ])
+      );
+
+      const shortages: Array<{
+        productId: string;
+        sku: string;
+        required: number;
+        available: number;
+        shortage: number;
+      }> = [];
+
+      for (const leaf of leaves) {
+        const s = stockMap.get(leaf.productId) ?? { onHand: 0, reserved: 0 };
+        const free = s.onHand - s.reserved;
+        const shortage = Math.max(0, Math.ceil(leaf.qty) - free);
+        if (shortage > 0) {
+          shortages.push({
+            productId: leaf.productId,
+            sku: leaf.sku,
+            required: Math.ceil(leaf.qty),
+            available: free,
+            shortage,
+          });
+        }
+      }
+
+      const transferOrderIds: string[] = [];
+
+      // Create replenishment TOs for each shortage when a production-line
+      // warehouse is configured. Group all shortages into a single TO
+      // pulling from any storage warehouse that has stock.
+      if (productionLineWhId && shortages.length > 0) {
+        // Find source bins for each shortage from any storage warehouse.
+        const toItems: Array<{
+          productId: string;
+          qtyRequested: number;
+          fromBinId: string | null;
+        }> = [];
+
+        for (const sh of shortages) {
+          const srcBin = await db.bin.findFirst({
+            where: {
+              productId: sh.productId,
+              qty: { gt: 0 },
+              warehouse: { kind: "storage", active: true },
+            },
+            orderBy: { qty: "desc" },
+          });
+          toItems.push({
+            productId: sh.productId,
+            qtyRequested: sh.shortage,
+            fromBinId: srcBin?.id ?? null,
+          });
+        }
+
+        // Pick the source warehouse from the first item that has a bin.
+        const srcBinWithWh = await (async () => {
+          for (const it of toItems) {
+            if (it.fromBinId) {
+              return db.bin.findUnique({
+                where: { id: it.fromBinId },
+                select: { warehouseId: true },
+              });
+            }
+          }
+          return null;
+        })();
+
+        // Use first active storage warehouse as source if no bin found.
+        const fromWhId =
+          srcBinWithWh?.warehouseId ??
+          (
+            await db.warehouse.findFirst({
+              where: { kind: "storage", active: true },
+              select: { id: true },
+            })
+          )?.id;
+
+        if (fromWhId) {
+          const transferNo = await nextTransferNo();
+          const toOrder = await db.transferOrder.create({
+            data: {
+              transferNo,
+              kind: "replenishment",
+              status: "ready",
+              fromWarehouseId: fromWhId,
+              toWarehouseId: productionLineWhId,
+              productionOrderId: id,
+              notes: `Replenishment for MO ${po.orderNo}`,
+              items: {
+                create: toItems.map((it) => ({
+                  productId: it.productId,
+                  qtyRequested: it.qtyRequested,
+                  fromBinId: it.fromBinId ?? null,
+                })),
+              },
+            },
+          });
+          transferOrderIds.push(toOrder.id);
+          await recordChange("TransferOrder", toOrder.id, "insert", toOrder, req.user.sub);
+        }
+      }
+
+      // Transition status to in-progress so we know release was triggered.
+      if (po.status === "planned") {
+        await db.productionOrder.update({
+          where: { id },
+          data: { status: shortages.length > 0 ? "planned" : "in-progress" },
+        });
+      }
+
+      return {
+        shortages,
+        transferOrderIds,
+        allMet: shortages.length === 0,
+        productionLineWarehouse: productionLineWhId
+          ? po.bom.defaultWorkCenter?.productionLineWarehouse
+          : null,
+      };
+    }
+  );
+
   // POST /production-orders/:id/issue-materials
   // Consumes raw materials from inventory based on the multi-level
   // explosion. Writes one StockLedger row per (component, bin) and
@@ -1278,7 +1533,17 @@ export const mfgRoutes = async (app: FastifyInstance) => {
       const body = issueMaterials.parse(req.body ?? {});
       const po = await db.productionOrder.findUnique({
         where: { id },
-        include: { bom: true },
+        include: {
+          bom: {
+            include: {
+              defaultWorkCenter: {
+                include: {
+                  productionLineWarehouse: { select: { id: true } },
+                },
+              },
+            },
+          },
+        },
       });
       if (!po) return reply.code(404).send({ error: { code: "not_found" } });
       if (po.status === "completed") {
@@ -1292,13 +1557,45 @@ export const mfgRoutes = async (app: FastifyInstance) => {
         variantId: po.bom.variantId,
       });
 
-      // Operator-specified warehouse is a *preference* - if it has
-      // no stock for a given component we fall back to any active
-      // warehouse so dev/demo data with stock spread across
-      // WH-RAW/WH-MAIN still issues cleanly.
-      const preferredWhId = body.warehouseId ?? null;
-      if (preferredWhId) {
-        const wh = await db.warehouse.findUnique({ where: { id: preferredWhId } });
+      // When the BOM's work center has a production-line warehouse, issue
+      // ONLY from that warehouse. If it doesn't have one, fall back to
+      // the operator-specified warehouse (or any warehouse).
+      const productionLineWhId =
+        po.bom.defaultWorkCenter?.productionLineWarehouse?.id ?? null;
+
+      // Check requireMoReleaseBeforeIssue setting.
+      const settings = await db.companyProfile.findFirst({
+        where: { key: "default" },
+        select: { requireMoReleaseBeforeIssue: true },
+      });
+      if (settings?.requireMoReleaseBeforeIssue && productionLineWhId) {
+        // Verify stock availability at the production-line warehouse.
+        const productIds = leaves.map((l) => l.productId);
+        const stock = await db.bin.groupBy({
+          by: ["productId"],
+          where: { productId: { in: productIds }, warehouseId: productionLineWhId },
+          _sum: { qty: true, reservedQty: true },
+        });
+        const stockMap = new Map(
+          stock.map((s) => [s.productId, (s._sum.qty ?? 0) - (s._sum.reservedQty ?? 0)])
+        );
+        const shortages = leaves.filter(
+          (l) => (stockMap.get(l.productId) ?? 0) < Math.ceil(l.qty)
+        );
+        if (shortages.length > 0 && !body.allowShort) {
+          return reply.code(409).send({
+            error: {
+              code: "short_at_production_line",
+              message: `${shortages.length} component(s) are short at the production-line warehouse. Run POST /release to create replenishment transfers first.`,
+              shortages: shortages.map((l) => ({ sku: l.sku, required: Math.ceil(l.qty), available: stockMap.get(l.productId) ?? 0 })),
+            },
+          });
+        }
+      }
+
+      const preferredWhId = productionLineWhId ?? body.warehouseId ?? null;
+      if (!productionLineWhId && body.warehouseId) {
+        const wh = await db.warehouse.findUnique({ where: { id: body.warehouseId } });
         if (!wh) {
           return reply
             .code(404)
@@ -1329,7 +1626,7 @@ export const mfgRoutes = async (app: FastifyInstance) => {
         // accurate even when the operator-specified warehouse is
         // empty for this component.
         while (remainingForLeaf > 0) {
-          const bin = await pickBinForIssue(preferredWhId, leaf.productId);
+          const bin = await pickBinForIssue(preferredWhId, leaf.productId, productionLineWhId !== null);
           if (!bin) break;
           const take = Math.min(bin.qty, remainingForLeaf);
           if (take <= 0) break;
@@ -1341,7 +1638,7 @@ export const mfgRoutes = async (app: FastifyInstance) => {
             data: {
               productId: leaf.productId,
               warehouseId: bin.warehouseId,
-              bin: `${bin.zone}/${bin.rack}/${bin.shelf}/${bin.bin}`,
+              bin: `${bin.zone}/${bin.shelf}/${bin.bin}`,
               txnType: "out",
               ref: po.orderNo,
               qty: -take,
@@ -1470,7 +1767,17 @@ export const mfgRoutes = async (app: FastifyInstance) => {
       const body = completeMo.parse(req.body ?? {});
       const po = await db.productionOrder.findUnique({
         where: { id },
-        include: { bom: true },
+        include: {
+          bom: {
+            include: {
+              defaultWorkCenter: {
+                include: {
+                  productionLineWarehouse: { select: { id: true, code: true, kind: true } },
+                },
+              },
+            },
+          },
+        },
       });
       if (!po) return reply.code(404).send({ error: { code: "not_found" } });
       if (po.status === "completed") {
@@ -1485,19 +1792,25 @@ export const mfgRoutes = async (app: FastifyInstance) => {
           },
         });
       }
-      const preferredWhId = body.warehouseId ?? null;
-      if (preferredWhId) {
-        const wh = await db.warehouse.findUnique({ where: { id: preferredWhId } });
+
+      // Determine where to land the FG:
+      //   1. The work center's production-line warehouse (preferred).
+      //   2. The caller-supplied warehouseId override.
+      //   3. Any active storage warehouse (legacy fallback).
+      const productionLineWhId =
+        po.bom.defaultWorkCenter?.productionLineWarehouse?.id ?? null;
+      const landingWhId = productionLineWhId ?? body.warehouseId ?? null;
+
+      if (landingWhId) {
+        const wh = await db.warehouse.findUnique({ where: { id: landingWhId } });
         if (!wh) {
           return reply.code(404).send({ error: { code: "warehouse_not_found" } });
         }
       }
-      // Try to put away the FG. If no bin can be auto-assigned (e.g.
-      // empty warehouse with no bin layout), we still mark completed
-      // and emit a "no_putaway" warning so the operator can transfer
-      // it manually.
+
+      // Try to put away the FG into the landing warehouse.
       let putaway: { binId: string; bin: string; qty: number } | null = null;
-      const bin = await pickBinForReceive(preferredWhId, po.bom.productId);
+      const bin = await pickBinForReceive(landingWhId, po.bom.productId);
       if (bin) {
         await db.bin.update({
           where: { id: bin.id },
@@ -1510,7 +1823,7 @@ export const mfgRoutes = async (app: FastifyInstance) => {
           data: {
             productId: po.bom.productId,
             warehouseId: bin.warehouseId,
-            bin: `${bin.zone}/${bin.rack}/${bin.shelf}/${bin.bin}`,
+            bin: `${bin.zone}/${bin.shelf}/${bin.bin}`,
             txnType: "in",
             ref: po.orderNo,
             qty: finalQty,
@@ -1520,14 +1833,12 @@ export const mfgRoutes = async (app: FastifyInstance) => {
         });
         putaway = {
           binId: bin.id,
-          bin: `${bin.zone}/${bin.rack}/${bin.shelf}/${bin.bin}`,
+          bin: `${bin.zone}/${bin.shelf}/${bin.bin}`,
           qty: finalQty,
         };
       }
-      // Keep parent and variant stockOnHand counters in sync with the
-      // bin. If the BOM is variant-scoped, the FG belongs to that
-      // variant - increment its counter too. We always increment the
-      // parent (it represents bulk on-hand across all variants).
+
+      // Keep parent and variant stockOnHand counters in sync.
       await db.product.update({
         where: { id: po.bom.productId },
         data: { stockOnHand: { increment: finalQty } },
@@ -1538,6 +1849,46 @@ export const mfgRoutes = async (app: FastifyInstance) => {
           data: { stockOnHand: { increment: finalQty } },
         });
       }
+
+      // Auto-create a putaway transfer order when the FG lands in a
+      // production-line warehouse and a putaway rule (or any storage
+      // warehouse) can provide a storage destination.
+      let putawayTransferOrderId: string | null = null;
+      if (productionLineWhId && bin) {
+        const dest = await resolvePutawayDestination(
+          po.bom.productId,
+          po.bom.variantId,
+          null
+        );
+        if (dest && dest.warehouseId !== productionLineWhId) {
+          const transferNo = await nextTransferNo();
+          const toOrder = await db.transferOrder.create({
+            data: {
+              transferNo,
+              kind: "putaway",
+              status: "ready",
+              fromWarehouseId: productionLineWhId,
+              toWarehouseId: dest.warehouseId,
+              productionOrderId: id,
+              notes: `Auto-created on MO ${po.orderNo} completion`,
+              items: {
+                create: [
+                  {
+                    productId: po.bom.productId,
+                    variantId: po.bom.variantId ?? null,
+                    qtyRequested: finalQty,
+                    fromBinId: bin.id,
+                    toBinId: dest.binId ?? null,
+                  },
+                ],
+              },
+            },
+          });
+          putawayTransferOrderId = toOrder.id;
+          await recordChange("TransferOrder", toOrder.id, "insert", toOrder, req.user.sub);
+        }
+      }
+
       // Close all work orders.
       await db.workOrder.updateMany({
         where: { productionOrderId: id, status: { not: "complete" } },
@@ -1554,11 +1905,7 @@ export const mfgRoutes = async (app: FastifyInstance) => {
               : 0,
         },
       });
-      // Release the machines this MO was running on. We don't release
-      // machines that are still busy with another active WO; the
-      // status flip checks for that elsewhere via setMachineStatusByName
-      // (it only flips if no other running/queued WO is using the
-      // machine right now).
+      // Release the machines this MO was running on.
       const finishedWos = await db.workOrder.findMany({
         where: { productionOrderId: id },
         select: { machine: true },
@@ -1578,7 +1925,7 @@ export const mfgRoutes = async (app: FastifyInstance) => {
         }
       }
       await recordChange("ProductionOrder", id, "update", updated, req.user.sub);
-      return { productionOrder: updated, putaway };
+      return { productionOrder: updated, putaway, putawayTransferOrderId };
     }
   );
 
@@ -1605,3 +1952,4 @@ export const mfgRoutes = async (app: FastifyInstance) => {
     }
   );
 };
+

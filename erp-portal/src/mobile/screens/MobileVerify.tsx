@@ -25,7 +25,6 @@ interface BinCountRow {
     id: string;
     code?: string | null;
     zone: string;
-    rack: string;
     shelf: string;
     bin: string;
     warehouse?: { code: string };
@@ -123,7 +122,7 @@ export const MobileVerify = () => {
             <div className="flex items-baseline justify-between">
               <span className="font-mono text-xs text-slate-500">
                 {r.bin?.code ??
-                  `${r.bin?.warehouse?.code ?? ""} ${r.bin?.zone}/${r.bin?.rack}/${r.bin?.shelf}/${r.bin?.bin}`}
+                  `${r.bin?.warehouse?.code ?? ""} ${r.bin?.zone}/${r.bin?.shelf}/${r.bin?.bin}`}
               </span>
               <span className="text-[10px] uppercase tracking-wider text-slate-500">
                 {new Date(r.createdAt).toLocaleString()}

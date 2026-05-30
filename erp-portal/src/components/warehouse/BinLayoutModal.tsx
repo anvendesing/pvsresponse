@@ -1,18 +1,18 @@
-// One modal that handles both single-bin add and bulk-rack create.
+// One modal that handles both single-bin add and bulk shelf-set create.
 //
-// Tab "Single bin": warehouse + zone/rack/shelf/bin/capacity. Used to
+// Tab "Single bin": warehouse + zone/shelf/bin/capacity. Used to
 // add one extra bin to an existing shelf or to start a brand new
-// zone/rack/shelf hierarchy.
+// zone/shelf hierarchy.
 //
-// Tab "Whole rack": pick a warehouse + zone, name the rack, choose
-// shelf labels (or "auto N shelves") and bins-per-shelf. The backend
-// generates `${shelf}-01`, `${shelf}-02`, ... bin codes.
+// Tab "Bulk shelves": pick a warehouse + zone, choose shelf labels
+// (or "auto N shelves") and bins-per-shelf. The backend generates
+// `${shelf}-01`, `${shelf}-02`, ... bin codes.
 //
 // Existing labels are surfaced as datalist suggestions so operators
 // don't accidentally create "A1" and "A-1" side by side.
 
 import { useEffect, useMemo, useState } from "react";
-import { Boxes, Layers, X } from "lucide-react";
+import { Boxes, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Input } from "@/components/common/Input";
 import { Chip } from "@/components/common/Chip";
@@ -26,11 +26,10 @@ interface Props {
   allBins: Bin[];
   warehouses: WarehouseRow[];
   // Optional pre-fills - e.g. if the user clicked "+" on the Zone A
-  // node, prefill warehouse and zone so they only type the rack/shelf.
+  // node, prefill warehouse and zone so they only type the shelf/bin.
   prefill?: {
     warehouseId?: string;
     zone?: string;
-    rack?: string;
     shelf?: string;
   };
   initialMode?: "single" | "bulk";
@@ -63,28 +62,21 @@ export const BinLayoutModal = ({
 
   // Single-bin form
   const [zoneS, setZoneS] = useState(prefill?.zone ?? "A");
-  const [rackS, setRackS] = useState(prefill?.rack ?? "");
   const [shelfS, setShelfS] = useState(prefill?.shelf ?? "");
   const [binS, setBinS] = useState("");
   const [capacityS, setCapacityS] = useState(100);
 
   // Bulk form
   const [zoneB, setZoneB] = useState(prefill?.zone ?? "A");
-  const [rackB, setRackB] = useState(prefill?.rack ?? "");
   const [shelfCount, setShelfCount] = useState(4);
   const [binsPerShelf, setBinsPerShelf] = useState(5);
   const [capacityB, setCapacityB] = useState(100);
 
-  // Reset zoneS/zoneB if the user changes warehouse and the current
-  // zone string isn't sensible. (Keeping things simple - we don't
-  // force values, just refresh the suggestion list.)
   useEffect(() => {
     if (!warehouseId && warehouses[0]) setWarehouseId(warehouses[0].id);
   }, [warehouseId, warehouses]);
 
   // Existing labels for autocomplete, scoped to the chosen warehouse.
-  // We pull them from `allBins` (already loaded) instead of an extra
-  // API round-trip.
   const selectedWh = warehouses.find((w) => w.id === warehouseId);
   const scopedBins = useMemo(
     () => allBins.filter((b) => b.warehouse === selectedWh?.code),
@@ -94,23 +86,15 @@ export const BinLayoutModal = ({
     () => Array.from(new Set(scopedBins.map((b) => b.zone))).sort(),
     [scopedBins]
   );
-  const racksInZone = (zone: string) =>
+  const shelvesInZone = (zone: string) =>
     Array.from(
-      new Set(scopedBins.filter((b) => b.zone === zone).map((b) => b.rack))
-    ).sort();
-  const shelvesInRack = (zone: string, rack: string) =>
-    Array.from(
-      new Set(
-        scopedBins
-          .filter((b) => b.zone === zone && b.rack === rack)
-          .map((b) => b.shelf)
-      )
+      new Set(scopedBins.filter((b) => b.zone === zone).map((b) => b.shelf))
     ).sort();
 
   // -------- Submission ------------------------------------------
   const submitSingle = async () => {
     if (!warehouseId) return setError("Pick a warehouse first.");
-    for (const [k, v] of Object.entries({ zone: zoneS, rack: rackS, shelf: shelfS, bin: binS })) {
+    for (const [k, v] of Object.entries({ zone: zoneS, shelf: shelfS, bin: binS })) {
       if (!labelOk.test(v)) {
         return setError(`${k} must be 1-20 chars (letters / numbers / hyphen).`);
       }
@@ -120,12 +104,11 @@ export const BinLayoutModal = ({
     try {
       const created = await api.createBin(warehouseId, {
         zone: zoneS,
-        rack: rackS,
         shelf: shelfS,
         bin: binS,
         capacity: capacityS,
       });
-      onCreated(`Bin ${created.zone}/${created.rack}/${created.shelf}/${created.bin} created.`);
+      onCreated(`Bin ${created.zone}/${created.shelf}/${created.bin} created.`);
     } catch (e) {
       setError((e as Error).message);
       setBusy(false);
@@ -139,8 +122,8 @@ export const BinLayoutModal = ({
 
   const submitBulk = async () => {
     if (!warehouseId) return setError("Pick a warehouse first.");
-    if (!labelOk.test(zoneB) || !labelOk.test(rackB)) {
-      return setError("Zone and rack must be 1-20 chars (letters / numbers / hyphen).");
+    if (!labelOk.test(zoneB)) {
+      return setError("Zone must be 1-20 chars (letters / numbers / hyphen).");
     }
     if (shelfCount < 1 || shelfCount > 100 || binsPerShelf < 1 || binsPerShelf > 200) {
       return setError("Shelf count 1-100, bins per shelf 1-200.");
@@ -150,13 +133,12 @@ export const BinLayoutModal = ({
     try {
       const res = await api.bulkCreateBins(warehouseId, {
         zone: zoneB,
-        rack: rackB,
         shelfCount,
         binsPerShelf,
         capacity: capacityB,
       });
       onCreated(
-        `Created ${res.created} bins across ${res.shelves} shelves under ${selectedWh?.code} / ${res.zone} / ${res.rack}.`
+        `Created ${res.created} bins across ${res.shelves} shelves under ${selectedWh?.code} / ${res.zone}.`
       );
     } catch (e) {
       setError((e as Error).message);
@@ -180,7 +162,7 @@ export const BinLayoutModal = ({
                 Bin layout
               </div>
               <div className="text-body-sm">
-                Add bins, shelves and racks to your warehouse.
+                Add bins and shelves to your warehouse.
               </div>
             </div>
           </div>
@@ -196,7 +178,7 @@ export const BinLayoutModal = ({
           <ModeTab
             active={mode === "bulk"}
             onClick={() => setMode("bulk")}
-            label="Whole rack"
+            label="Bulk shelves"
             hint="N shelves × M bins"
           />
           <ModeTab
@@ -232,23 +214,14 @@ export const BinLayoutModal = ({
 
           {mode === "bulk" ? (
             <>
-              <div className="grid grid-cols-2 gap-3">
-                <Field label="Zone" hint="Group of racks (e.g. A, B, COLD).">
-                  <Input
-                    list="zones"
-                    placeholder="A"
-                    value={zoneB}
-                    onChange={(e) => setZoneB(e.target.value.toUpperCase())}
-                  />
-                </Field>
-                <Field label="Rack" hint="New rack label (e.g. R5).">
-                  <Input
-                    placeholder="R5"
-                    value={rackB}
-                    onChange={(e) => setRackB(e.target.value.toUpperCase())}
-                  />
-                </Field>
-              </div>
+              <Field label="Zone" hint="Zone label (e.g. A, B, COLD).">
+                <Input
+                  list="zones"
+                  placeholder="A"
+                  value={zoneB}
+                  onChange={(e) => setZoneB(e.target.value.toUpperCase())}
+                />
+              </Field>
               <div className="grid grid-cols-3 gap-3">
                 <Field label="Shelves">
                   <Input
@@ -281,10 +254,9 @@ export const BinLayoutModal = ({
                 <div className="text-caption text-ink-muted uppercase font-semibold mb-1">
                   Preview
                 </div>
-                {rackB && labelOk.test(rackB) ? (
+                {labelOk.test(zoneB) ? (
                   <div className="text-body-sm">
-                    Rack <strong>{rackB}</strong> on zone <strong>{zoneB}</strong>{" "}
-                    will get{" "}
+                    Zone <strong>{zoneB}</strong> will get{" "}
                     <strong>{bulkPreview}</strong>. Shelves auto-named{" "}
                     <span className="font-mono">
                       S1…S{shelfCount}
@@ -294,28 +266,20 @@ export const BinLayoutModal = ({
                   </div>
                 ) : (
                   <div className="text-body-sm text-ink-muted">
-                    Enter a rack label to see the preview.
+                    Enter a zone label to see the preview.
                   </div>
                 )}
               </div>
             </>
           ) : (
             <>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-3">
                 <Field label="Zone">
                   <Input
                     list="zones"
                     placeholder="A"
                     value={zoneS}
                     onChange={(e) => setZoneS(e.target.value.toUpperCase())}
-                  />
-                </Field>
-                <Field label="Rack">
-                  <Input
-                    list="racks"
-                    placeholder="R1"
-                    value={rackS}
-                    onChange={(e) => setRackS(e.target.value.toUpperCase())}
                   />
                 </Field>
                 <Field label="Shelf">
@@ -354,10 +318,10 @@ export const BinLayoutModal = ({
               <div className="flex flex-wrap gap-1">
                 {zones.map((z) => (
                   <Chip key={z} size="sm" tone="neutral">
-                    <Layers size={10} className="mr-1" /> {z}{" "}
+                    Zone {z}{" "}
                     <span className="text-ink-muted ml-1">
-                      · {racksInZone(z).length} rack
-                      {racksInZone(z).length === 1 ? "" : "s"}
+                      · {shelvesInZone(z).length} shelf
+                      {shelvesInZone(z).length === 1 ? "" : "s"}
                     </span>
                   </Chip>
                 ))}
@@ -372,15 +336,8 @@ export const BinLayoutModal = ({
             ))}
           </datalist>
           {mode === "single" && zoneS && (
-            <datalist id="racks">
-              {racksInZone(zoneS).map((r) => (
-                <option key={r} value={r} />
-              ))}
-            </datalist>
-          )}
-          {mode === "single" && zoneS && rackS && (
             <datalist id="shelves">
-              {shelvesInRack(zoneS, rackS).map((s) => (
+              {shelvesInZone(zoneS).map((s) => (
                 <option key={s} value={s} />
               ))}
             </datalist>
@@ -396,7 +353,7 @@ export const BinLayoutModal = ({
             onClick={mode === "bulk" ? submitBulk : submitSingle}
             disabled={busy}
           >
-            {busy ? "Saving…" : mode === "bulk" ? "Create rack" : "Create bin"}
+            {busy ? "Saving…" : mode === "bulk" ? "Create shelves" : "Create bin"}
           </Button>
         </div>
       </div>

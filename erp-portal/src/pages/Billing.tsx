@@ -266,7 +266,7 @@ export const Billing = () => {
         p.name.toLowerCase().includes(term) ||
         p.sku.toLowerCase().includes(term) ||
         p.barcode.includes(term) ||
-        p.category.toLowerCase().includes(term);
+        (p.category?.name ?? "").toLowerCase().includes(term);
       if (baseHit) {
         out.push({ product: p, variant: null, label: "default", price: p.sellingPrice });
       }

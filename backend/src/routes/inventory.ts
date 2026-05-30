@@ -165,7 +165,7 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
         data: {
           productId: body.productId,
           warehouseId: body.warehouseId,
-          bin: `${bin.zone}/${bin.rack}/${bin.shelf}/${bin.bin}`,
+          bin: `${bin.zone}/${bin.shelf}/${bin.bin}`,
           txnType: "Adjust",
           qty: body.qty,
           balance: Math.round(after),
@@ -379,7 +379,7 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
           data: {
             productId: bin.productId!,
             warehouseId: bin.warehouseId,
-            bin: `${bin.zone}/${bin.rack}/${bin.shelf}/${bin.bin}`,
+            bin: `${bin.zone}/${bin.shelf}/${bin.bin}`,
             txnType: "CycleCount",
             qty: delta,
             balance: after,
@@ -494,7 +494,7 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
             data: {
               productId: oldProductId,
               warehouseId: bin.warehouseId,
-              bin: `${bin.zone}/${bin.rack}/${bin.shelf}/${bin.bin}`,
+              bin: `${bin.zone}/${bin.shelf}/${bin.bin}`,
               txnType: "Adjust",
               qty: -before,
               balance: 0,
@@ -514,7 +514,7 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
           data: {
             productId: newProductId,
             warehouseId: bin.warehouseId,
-            bin: `${bin.zone}/${bin.rack}/${bin.shelf}/${bin.bin}`,
+            bin: `${bin.zone}/${bin.shelf}/${bin.bin}`,
             txnType: "Adjust",
             qty: after,
             balance: after,

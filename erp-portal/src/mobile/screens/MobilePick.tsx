@@ -17,7 +17,7 @@ interface PickItem {
   notes?: string | null;
   product?: { sku?: string; name?: string; uom?: string };
   variant?: { sku?: string; uom?: string; size?: string; color?: string } | null;
-  bin?: { id?: string; code?: string; zone?: string; rack?: string; shelf?: string; bin?: string; qty?: number };
+  bin?: { id?: string; code?: string; zone?: string; shelf?: string; bin?: string; qty?: number };
 }
 
 interface PickList {
@@ -286,7 +286,7 @@ export const MobilePick = () => {
           const sku = it.variant?.sku ?? it.product?.sku ?? "?";
           const uom = it.variant?.uom ?? it.product?.uom ?? "pcs";
           const binLabel = it.bin
-            ? `${it.bin.zone}/${it.bin.rack}/${it.bin.shelf}/${it.bin.bin}`
+            ? `${it.bin.zone}/${it.bin.shelf}/${it.bin.bin}`
             : "no bin";
           const done = it.qtyPicked > 0;
           const stale = staleItemIds.includes(it.id);

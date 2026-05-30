@@ -1,4 +1,15 @@
-import { Bell, Building2, Clock, PanelLeft, ScanLine, Search, Sparkles, User } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import {
+  Bell,
+  Building2,
+  Clock,
+  LogOut,
+  PanelLeft,
+  ScanLine,
+  Search,
+  Sparkles,
+  User,
+} from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Chip } from "@/components/common/Chip";
 import { useBrand } from "@/hooks/useBrand";
@@ -7,9 +18,10 @@ interface Props {
   onToggleSidebar: () => void;
   onOpenPalette: () => void;
   onOpenScanner: () => void;
+  onSignOut: () => void;
   warehouse: string;
   shift: string;
-  user: { name: string; role: string };
+  user: { name: string; role: string; username?: string };
   notifications: number;
 }
 
@@ -17,12 +29,26 @@ export const TopCommandBar = ({
   onToggleSidebar,
   onOpenPalette,
   onOpenScanner,
+  onSignOut,
   warehouse,
   shift,
   user,
   notifications,
 }: Props) => {
   const { brandName, logoUrl } = useBrand();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [menuOpen]);
   // First letter of the brand drives the monogram tile when no logo
   // has been uploaded - keeps the chrome looking branded immediately
   // after a name change without forcing the user to upload a logo.
@@ -106,14 +132,49 @@ export const TopCommandBar = ({
             </span>
           )}
         </button>
-        <div className="ml-1 flex items-center gap-2 pl-2 border-l border-border h-9">
-          <div className="h-8 w-8 rounded-full bg-primary-50 text-primary grid place-items-center">
-            <User size={16} />
-          </div>
-          <div className="hidden md:flex flex-col leading-tight pr-1">
-            <span className="text-caption font-semibold text-ink">{user.name}</span>
-            <span className="text-[10px] text-ink-muted">{user.role}</span>
-          </div>
+        <div className="relative ml-1 pl-2 border-l border-border" ref={menuRef}>
+          <button
+            type="button"
+            onClick={() => setMenuOpen((v) => !v)}
+            className="flex h-9 items-center gap-2 rounded-md px-1 hover:bg-canvas transition-colors"
+            title="Account · sign out"
+            aria-expanded={menuOpen}
+            aria-haspopup="menu"
+          >
+            <div className="h-8 w-8 rounded-full bg-primary-50 text-primary grid place-items-center">
+              <User size={16} />
+            </div>
+            <div className="hidden md:flex flex-col leading-tight pr-1 text-left">
+              <span className="text-caption font-semibold text-ink">{user.name}</span>
+              <span className="text-[10px] text-ink-muted capitalize">{user.role}</span>
+            </div>
+          </button>
+          {menuOpen && (
+            <div
+              role="menu"
+              className="absolute right-0 top-full z-50 mt-1 w-56 rounded-lg border border-border bg-surface py-1 shadow-lg"
+            >
+              <div className="border-b border-border px-3 py-2">
+                <div className="text-caption font-semibold text-ink">{user.name}</div>
+                {user.username && (
+                  <div className="text-[10px] text-ink-muted">{user.username}</div>
+                )}
+                <div className="text-[10px] capitalize text-ink-muted">{user.role}</div>
+              </div>
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setMenuOpen(false);
+                  onSignOut();
+                }}
+                className="flex w-full items-center gap-2 px-3 py-2.5 text-body-sm text-ink hover:bg-canvas"
+              >
+                <LogOut size={16} className="text-ink-muted" />
+                Sign out · Switch user
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </header>

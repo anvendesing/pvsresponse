@@ -1,6 +1,6 @@
 import { Link } from "react-router-dom";
 import { CloseIcon } from "@/assets/icons";
-import { CATEGORIES } from "@/data/categories";
+import { useCategories } from "@/state/CategoriesContext";
 
 interface Props {
   open: boolean;
@@ -8,6 +8,7 @@ interface Props {
 }
 
 export const MobileDrawer = ({ open, onClose }: Props) => {
+  const { categories } = useCategories();
   return (
     <>
       <div
@@ -45,11 +46,11 @@ export const MobileDrawer = ({ open, onClose }: Props) => {
         <Link className="nav-link" to="/" onClick={onClose}>
           All Products
         </Link>
-        {CATEGORIES.map((c) => (
+        {categories.map((c) => (
           <Link
             key={c.id}
             className="nav-link"
-            to={`/category/${c.id}`}
+            to={`/category/${c.slug}`}
             onClick={onClose}
           >
             {c.name}

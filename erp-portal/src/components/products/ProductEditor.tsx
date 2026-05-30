@@ -1,11 +1,13 @@
-import { useEffect, useMemo, useState } from "react";
-import { Plus, Trash2, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ImagePlus, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Chip } from "@/components/common/Chip";
 import { Input } from "@/components/common/Input";
 import { UomPicker } from "@/components/common/UomPicker";
 import type { Product, ProductState, ProductType, ProductVariant } from "@/data/types";
 import { api } from "@/lib/api";
+import { useApi } from "@/hooks/useApi";
+import type { ProductCategory } from "@/data/types";
 
 type Mode = "create" | "edit";
 
@@ -32,15 +34,21 @@ const emptyForm = (): Product => ({
   reorderLevel: 0,
   costPrice: 0,
   sellingPrice: 0,
-  category: "",
+  categoryId: "",
   hsn: "",
+  gstRate: 18,
   batchTracked: false,
+  imageUrl: null,
   variants: [],
 });
 
-const emptyVariant = (parent: { sku: string; barcode: string }): ProductVariant => ({
-  sku: parent.sku ? `${parent.sku}-V${Date.now().toString().slice(-3)}` : "",
+const emptyVariant = (_parent: { sku: string; barcode: string }): ProductVariant => ({
+  // SKU and barcode intentionally left blank — the backend auto-generates
+  // unique codes when submitted empty.
+  sku: "",
   barcode: null,
+  hsn: null,
+  gstRate: null,
   size: null,
   color: null,
   grade: null,
@@ -50,19 +58,35 @@ const emptyVariant = (parent: { sku: string; barcode: string }): ProductVariant 
   sellingPriceOverride: null,
   stockOnHand: 0,
   active: true,
+  imageUrl: null,
 });
 
 export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) => {
+  const categoriesQuery = useApi(() => api.productCategories({ active: true }), []);
+  const categories = categoriesQuery.data ?? [];
+
   const [form, setForm] = useState<Product>(() => emptyForm());
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Image upload state
+  const [imgUploading, setImgUploading] = useState(false);
+  const [varImgUploading, setVarImgUploading] = useState<string | null>(null); // variantId being uploaded
+  const productImgRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!open) return;
     if (mode === "edit" && product) {
-      setForm({ ...product, variants: product.variants ?? [] });
+      setForm({
+        ...product,
+        categoryId: product.categoryId ?? product.category?.id ?? "",
+        variants: product.variants ?? [],
+      });
     } else {
-      setForm(emptyForm());
+      const f = emptyForm();
+      if (categories.length > 0 && !f.categoryId) {
+        f.categoryId = categories[0].id;
+      }
+      setForm(f);
     }
     setError(null);
   }, [open, mode, product]);
@@ -88,6 +112,39 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
       variants: (f.variants ?? []).filter((_, i) => i !== idx),
     }));
 
+  const handleProductImageUpload = async (file: File) => {
+    if (!form.id) return; // can only upload after product is saved
+    setImgUploading(true);
+    setError(null);
+    try {
+      const r = await api.uploadProductImage(form.id, file);
+      setForm((f) => ({ ...f, imageUrl: r.imageUrl }));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setImgUploading(false);
+    }
+  };
+
+  const handleVariantImageUpload = async (variantId: string, file: File) => {
+    if (!form.id || !variantId) return;
+    setVarImgUploading(variantId);
+    setError(null);
+    try {
+      const r = await api.uploadVariantImage(form.id, variantId, file);
+      setForm((f) => ({
+        ...f,
+        variants: (f.variants ?? []).map((v) =>
+          v.id === variantId ? { ...v, imageUrl: r.imageUrl } : v
+        ),
+      }));
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setVarImgUploading(null);
+    }
+  };
+
   const submit = async () => {
     setSubmitting(true);
     setError(null);
@@ -99,8 +156,9 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
         uom: form.uom.trim(),
         barcode: form.barcode.trim(),
         state: form.state,
-        category: form.category.trim(),
+        categoryId: form.categoryId?.trim() || undefined,
         hsn: form.hsn.trim(),
+        gstRate: Number(form.gstRate) || 18,
         costPrice: Number(form.costPrice) || 0,
         sellingPrice: Number(form.sellingPrice) || 0,
         reorderLevel: Number(form.reorderLevel) || 0,
@@ -108,8 +166,12 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
         batchTracked: !!form.batchTracked,
         variants: (form.variants ?? []).map((v) => ({
           id: v.id,
-          sku: v.sku.trim(),
-          barcode: v.barcode?.trim() || null,
+          // Empty string = let backend auto-generate
+          sku: v.sku?.trim() || undefined,
+          barcode: v.barcode?.trim() || undefined,
+          hsn: v.hsn?.trim() || null,
+          gstRate:
+            v.gstRate === null || v.gstRate === undefined ? null : Number(v.gstRate),
           size: v.size?.trim() || null,
           color: v.color?.trim() || null,
           grade: v.grade?.trim() || null,
@@ -130,10 +192,11 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
           active: v.active !== false,
         })),
       };
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const saved =
         mode === "create"
-          ? await api.createProduct(payload)
-          : await api.updateProduct(form.id, payload);
+          ? await api.createProduct(payload as any)
+          : await api.updateProduct(form.id, payload as any);
       onSaved(saved);
       onClose();
     } catch (e) {
@@ -150,6 +213,7 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
       form.name.trim().length > 0 &&
       form.barcode.trim().length > 0 &&
       form.uom.trim().length > 0 &&
+      !!(form.categoryId?.trim()) &&
       !submitting
     );
   }, [form, submitting]);
@@ -184,9 +248,56 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
             </div>
           )}
 
+          {/* Product image */}
+          <section className="flex gap-4 items-start">
+            <div
+              className="relative w-32 h-32 rounded-lg border-2 border-dashed border-border bg-canvas overflow-hidden flex items-center justify-center cursor-pointer hover:border-primary transition-colors group flex-shrink-0"
+              onClick={() => {
+                if (mode === "edit" && form.id) productImgRef.current?.click();
+              }}
+              title={mode === "create" ? "Save product first, then upload image" : "Click to upload product image"}
+            >
+              {form.imageUrl ? (
+                <img
+                  src={form.imageUrl.startsWith("/uploads") ? `${import.meta.env.VITE_API_URL ?? "http://localhost:4000"}${form.imageUrl}` : form.imageUrl}
+                  alt={form.name}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <div className="flex flex-col items-center gap-1 text-ink-muted group-hover:text-primary">
+                  <ImagePlus size={24} />
+                  <span className="text-caption text-center px-1">
+                    {mode === "create" ? "Save first" : "Add photo"}
+                  </span>
+                </div>
+              )}
+              {imgUploading && (
+                <div className="absolute inset-0 bg-ink/40 flex items-center justify-center">
+                  <span className="text-white text-caption">Uploading…</span>
+                </div>
+              )}
+              <input
+                ref={productImgRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) handleProductImageUpload(file);
+                  e.target.value = "";
+                }}
+              />
+            </div>
+            <div className="flex-1 text-body-sm text-ink-muted space-y-1 pt-1">
+              <div className="font-semibold text-ink">Product image</div>
+              <div>Upload a photo for this product. Accepted: JPG, PNG, WebP (max 50 MB).</div>
+              {mode === "create" && <div className="text-warning">Create the product first, then come back to edit and upload the image.</div>}
+              {form.imageUrl && <div className="font-mono text-caption truncate">{form.imageUrl}</div>}
+            </div>
+          </section>
+
           <section className="grid grid-cols-2 gap-3">
-            <Field label="SKU *">
-              <Input value={form.sku} onChange={(e) => update("sku", e.target.value)} />
+            <Field label="SKU *">              <Input value={form.sku} onChange={(e) => update("sku", e.target.value)} />
             </Field>
             <Field label="Barcode *">
               <Input value={form.barcode} onChange={(e) => update("barcode", e.target.value)} />
@@ -228,11 +339,34 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
                 className="w-full"
               />
             </Field>
-            <Field label="Category">
-              <Input value={form.category} onChange={(e) => update("category", e.target.value)} />
+            <Field label="Category *">
+              <select
+                className="h-9 w-full bg-surface border border-border rounded-md px-2 text-body-sm"
+                value={form.categoryId ?? ""}
+                onChange={(e) => update("categoryId", e.target.value)}
+                disabled={categoriesQuery.loading}
+              >
+                <option value="">Select category…</option>
+                {categories.map((c: ProductCategory) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
             </Field>
             <Field label="HSN">
               <Input value={form.hsn} onChange={(e) => update("hsn", e.target.value)} />
+            </Field>
+            <Field label="GST Rate (%)">
+              <Input
+                type="number"
+                min="0"
+                max="100"
+                step="0.5"
+                value={String(form.gstRate ?? 18)}
+                onChange={(e) => update("gstRate", Number(e.target.value))}
+                placeholder="18"
+              />
             </Field>
             <Field label="Reorder Level">
               <Input
@@ -311,10 +445,11 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
                       className="border border-border rounded-md p-3 grid grid-cols-12 gap-2 items-end"
                     >
                       <div className="col-span-3">
-                        <Label>Variant SKU *</Label>
+                        <Label>Variant SKU</Label>
                         <Input
-                          value={v.sku}
+                          value={v.sku ?? ""}
                           onChange={(e) => updateVariant(i, { sku: e.target.value })}
+                          placeholder="auto-generate if blank"
                         />
                       </div>
                       <div className="col-span-3">
@@ -322,6 +457,31 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
                         <Input
                           value={v.barcode ?? ""}
                           onChange={(e) => updateVariant(i, { barcode: e.target.value })}
+                          placeholder="auto-generate if blank"
+                        />
+                      </div>
+                      <div className="col-span-2">
+                        <Label>GST % (override)</Label>
+                        <Input
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="0.5"
+                          value={v.gstRate ?? ""}
+                          onChange={(e) =>
+                            updateVariant(i, {
+                              gstRate: e.target.value === "" ? null : Number(e.target.value),
+                            })
+                          }
+                          placeholder={`inherit (${form.gstRate ?? 18}%)`}
+                        />
+                      </div>
+                      <div className="col-span-2">
+                        <Label>HSN (override)</Label>
+                        <Input
+                          value={v.hsn ?? ""}
+                          onChange={(e) => updateVariant(i, { hsn: e.target.value || null })}
+                          placeholder={`inherit (${form.hsn || "—"})`}
                         />
                       </div>
                       <div className="col-span-2">
@@ -429,6 +589,19 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
                           active
                         </label>
                       </div>
+                      {/* Variant image — only available when editing a saved variant */}
+                      <div className="col-span-5 flex items-center gap-3 pb-1.5">
+                        <VariantImagePicker
+                          imageUrl={v.imageUrl ?? null}
+                          variantId={v.id ?? null}
+                          productId={form.id}
+                          mode={mode}
+                          busy={varImgUploading === v.id}
+                          onUpload={(file) => {
+                            if (v.id) handleVariantImageUpload(v.id, file);
+                          }}
+                        />
+                      </div>
                       <div className="col-span-1 flex justify-end">
                         <button
                           className="h-8 w-8 grid place-items-center rounded text-danger hover:bg-danger-soft"
@@ -483,3 +656,60 @@ const Label = ({ children }: { children: React.ReactNode }) => (
     {children}
   </div>
 );
+
+const VariantImagePicker = ({
+  imageUrl,
+  variantId,
+  productId,
+  mode,
+  busy,
+  onUpload,
+}: {
+  imageUrl: string | null;
+  variantId: string | null;
+  productId: string;
+  mode: "create" | "edit";
+  busy: boolean;
+  onUpload: (file: File) => void;
+}) => {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const canUpload = mode === "edit" && !!productId && !!variantId;
+  const resolvedSrc = imageUrl?.startsWith("/uploads")
+    ? `${import.meta.env.VITE_API_URL ?? "http://localhost:4000"}${imageUrl}`
+    : imageUrl ?? undefined;
+
+  return (
+    <div className="flex items-center gap-2">
+      <div
+        className={`relative w-12 h-12 rounded border-2 border-dashed border-border bg-canvas overflow-hidden flex items-center justify-center ${canUpload ? "cursor-pointer hover:border-primary group" : "opacity-50"}`}
+        onClick={() => { if (canUpload) inputRef.current?.click(); }}
+        title={canUpload ? "Click to upload variant image" : "Save product first"}
+      >
+        {resolvedSrc ? (
+          <img src={resolvedSrc} alt="variant" className="w-full h-full object-cover" />
+        ) : (
+          <ImagePlus size={14} className="text-ink-muted group-hover:text-primary" />
+        )}
+        {busy && (
+          <div className="absolute inset-0 bg-ink/40 flex items-center justify-center">
+            <span className="text-white text-[10px]">…</span>
+          </div>
+        )}
+        <input
+          ref={inputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            if (file) onUpload(file);
+            e.target.value = "";
+          }}
+        />
+      </div>
+      <span className="text-caption text-ink-muted">
+        {imageUrl ? "variant image" : "no image"}
+      </span>
+    </div>
+  );
+};

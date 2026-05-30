@@ -267,6 +267,7 @@ export interface WarehouseRow {
   code: string;
   name: string;
   city: string;
+  kind: string; // "storage" | "production"
   active: boolean;
   binCount: number;
   ledgerCount: number;
@@ -278,7 +279,77 @@ export interface WarehouseInput {
   code?: string;
   name?: string;
   city?: string;
+  kind?: string;
   active?: boolean;
+}
+
+// =====================================================================
+// Putaway rules
+// =====================================================================
+
+export interface PutawayRuleRow {
+  id: string;
+  productId: string;
+  variantId: string | null;
+  toWarehouseId: string;
+  toBinId: string | null;
+  priority: number;
+  active: boolean;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+  product: { id: string; sku: string; name: string; uom: string };
+  variant: { id: string; sku: string; size: string | null } | null;
+  toWarehouse: { id: string; code: string; name: string; kind: string };
+  tobin: { id: string; code: string | null; zone: string; shelf: string; bin: string } | null;
+}
+
+// =====================================================================
+// Transfer orders
+// =====================================================================
+
+export interface TransferOrderItem {
+  id: string;
+  transferOrderId: string;
+  productId: string;
+  variantId: string | null;
+  qtyRequested: number;
+  qtyPicked: number;
+  qtyDropped: number;
+  fromBinId: string | null;
+  toBinId: string | null;
+  notes: string | null;
+  product: { id: string; sku: string; name: string; uom: string };
+  variant: { id: string; sku: string; size: string | null } | null;
+  fromBin: { id: string; code: string | null; zone: string; shelf: string; bin: string; qty: number } | null;
+  tobin: { id: string; code: string | null; zone: string; shelf: string; bin: string; qty: number } | null;
+}
+
+export interface TransferOrderRow {
+  id: string;
+  transferNo: string;
+  kind: "putaway" | "replenishment" | "manual";
+  status: "draft" | "ready" | "in_transit" | "done" | "cancelled";
+  fromWarehouseId: string;
+  toWarehouseId: string;
+  productionOrderId: string | null;
+  assignedToId: string | null;
+  claimedAt: string | null;
+  pickedById: string | null;
+  pickedAt: string | null;
+  droppedById: string | null;
+  droppedAt: string | null;
+  cancelledAt: string | null;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+  fromWarehouse: { id: string; code: string; name: string; kind: string };
+  toWarehouse: { id: string; code: string; name: string; kind: string };
+  productionOrder: { id: string; orderNo: string; status: string } | null;
+  assignedTo: { id: string; name: string; username: string } | null;
+  pickedBy: { id: string; name: string } | null;
+  droppedBy: { id: string; name: string } | null;
+  items: TransferOrderItem[];
 }
 
 // =====================================================================
@@ -364,7 +435,6 @@ const adaptBin = (r: Raw): Bin => ({
     (r.warehouseId as string),
   warehouseName: (r.warehouseName as string) ?? undefined,
   zone: r.zone as string,
-  rack: r.rack as string,
   shelf: r.shelf as string,
   bin: r.bin as string,
   capacity: r.capacity as number,
@@ -744,7 +814,9 @@ export interface InvoiceItemDetail {
   qty: number;
   rate: number;
   amount: number;
-  product: { id: string; sku: string; name: string; uom: string; hsn?: string | null };
+  gstRate?: number | null;
+  taxAmount?: number | null;
+  product: { id: string; sku: string; name: string; uom: string; hsn?: string | null; gstRate?: number | null };
   variant?: {
     id: string;
     sku: string;
@@ -1122,7 +1194,6 @@ export type PackingSlipStatus = "open" | "packed" | "invoiced" | "cancelled";
 export interface BinSummary {
   id: string;
   zone: string;
-  rack: string;
   shelf: string;
   bin: string;
   qty: number;
@@ -1377,6 +1448,82 @@ export const api = {
   ): Promise<Product> => fetcher<Product>(`/products/${id}`, { method: "PATCH", body }),
   deleteProduct: (id: string): Promise<{ ok: boolean }> =>
     fetcher<{ ok: boolean }>(`/products/${id}`, { method: "DELETE" }),
+  productCategories: (opts?: { active?: boolean }) =>
+    fetcher<import("@/data/types").ProductCategory[]>("/categories", {
+      query: opts?.active ? { active: "1" } : undefined,
+    }),
+  productCategory: (id: string) =>
+    fetcher<import("@/data/types").ProductCategory>(`/categories/${id}`),
+  createProductCategory: (body: {
+    slug: string;
+    name: string;
+    sortOrder?: number;
+    active?: boolean;
+  }) =>
+    fetcher<import("@/data/types").ProductCategory>("/categories", {
+      method: "POST",
+      body,
+    }),
+  updateProductCategory: (
+    id: string,
+    body: Partial<{
+      slug: string;
+      name: string;
+      sortOrder: number;
+      active: boolean;
+    }>
+  ) =>
+    fetcher<import("@/data/types").ProductCategory>(`/categories/${id}`, {
+      method: "PATCH",
+      body,
+    }),
+  deleteProductCategory: (id: string) =>
+    fetcher<{ deleted: true }>(`/categories/${id}`, { method: "DELETE" }),
+  uploadCategoryImage: async (categoryId: string, file: File): Promise<{ imageUrl: string }> => {
+    const token = auth.token();
+    const form = new FormData();
+    form.append("image", file);
+    const res = await fetch(buildUrl(`/categories/${categoryId}/image`), {
+      method: "POST",
+      headers: token ? { authorization: `Bearer ${token}` } : {},
+      body: form,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new ApiError(res.status, body?.error?.message ?? `${res.status}`, body?.error);
+    }
+    return res.json();
+  },
+  uploadProductImage: async (productId: string, file: File): Promise<{ imageUrl: string }> => {
+    const token = auth.token();
+    const form = new FormData();
+    form.append("image", file);
+    const res = await fetch(buildUrl(`/products/${productId}/image`), {
+      method: "POST",
+      headers: token ? { authorization: `Bearer ${token}` } : {},
+      body: form,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new ApiError(res.status, body?.error?.message ?? `${res.status}`, body?.error);
+    }
+    return res.json();
+  },
+  uploadVariantImage: async (productId: string, variantId: string, file: File): Promise<{ imageUrl: string }> => {
+    const token = auth.token();
+    const form = new FormData();
+    form.append("image", file);
+    const res = await fetch(buildUrl(`/products/${productId}/variants/${variantId}/image`), {
+      method: "POST",
+      headers: token ? { authorization: `Bearer ${token}` } : {},
+      body: form,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new ApiError(res.status, body?.error?.message ?? `${res.status}`, body?.error);
+    }
+    return res.json();
+  },
   customers: (opts?: { includeInactive?: boolean }): Promise<CustomerRow[]> =>
     fetcher<CustomerRow[]>("/customers", {
       query: opts?.includeInactive ? { includeInactive: "1" } : undefined,
@@ -1425,10 +1572,10 @@ export const api = {
     }>(`/warehouses/${id}`, { method: "DELETE" }),
   bins: async (warehouseId: string): Promise<Bin[]> =>
     (await fetcher<Raw[]>(`/warehouses/${warehouseId}/bins`)).map(adaptBin),
-  // Single bin create. Backend uppercases zone/rack/shelf/bin.
+  // Single bin create. Backend uppercases zone/shelf/bin.
   createBin: async (
     warehouseId: string,
-    body: { zone: string; rack: string; shelf: string; bin: string; capacity?: number }
+    body: { zone: string; shelf: string; bin: string; capacity?: number }
   ): Promise<Bin> =>
     adaptBin(
       await fetcher<Raw>(`/warehouses/${warehouseId}/bins`, {
@@ -1436,12 +1583,11 @@ export const api = {
         body,
       })
     ),
-  // Bulk-create a whole rack: N shelves x M bins each.
+  // Bulk-create a shelf-set: N shelves x M bins each.
   bulkCreateBins: (
     warehouseId: string,
     body: {
       zone: string;
-      rack: string;
       shelves?: string[];
       shelfCount?: number;
       binsPerShelf: number;
@@ -1451,7 +1597,6 @@ export const api = {
     fetcher<{
       created: number;
       zone: string;
-      rack: string;
       shelves: number;
       binsPerShelf: number;
     }>(`/warehouses/${warehouseId}/bins/bulk`, { method: "POST", body }),
@@ -1464,6 +1609,26 @@ export const api = {
     ),
   deleteBin: (binId: string) =>
     fetcher<{ deleted: true }>(`/bins/${binId}`, { method: "DELETE" }),
+  renameZone: (warehouseId: string, zone: string, newZone: string) =>
+    fetcher<{ updated: number; newZone: string }>(
+      `/warehouses/${warehouseId}/zones/${encodeURIComponent(zone)}`,
+      { method: "PATCH", body: { newZone } }
+    ),
+  deleteZone: (warehouseId: string, zone: string) =>
+    fetcher<{ deleted: number }>(
+      `/warehouses/${warehouseId}/zones/${encodeURIComponent(zone)}`,
+      { method: "DELETE" }
+    ),
+  renameShelf: (warehouseId: string, zone: string, shelf: string, newShelf: string) =>
+    fetcher<{ updated: number; newShelf: string }>(
+      `/warehouses/${warehouseId}/zones/${encodeURIComponent(zone)}/shelves/${encodeURIComponent(shelf)}`,
+      { method: "PATCH", body: { newShelf } }
+    ),
+  deleteShelf: (warehouseId: string, zone: string, shelf: string) =>
+    fetcher<{ deleted: number }>(
+      `/warehouses/${warehouseId}/zones/${encodeURIComponent(zone)}/shelves/${encodeURIComponent(shelf)}`,
+      { method: "DELETE" }
+    ),
   warehousesAndBins: async (): Promise<Bin[]> => {
     const whs = await fetcher<Raw[]>("/warehouses");
     const all: Bin[] = [];
@@ -1635,6 +1800,7 @@ export const api = {
       name: string;
       description: string | null;
       capacityPerHour: number | null;
+      productionLineWarehouseId: string | null;
       active: boolean;
     }>
   ) => fetcher<Raw>(`/work-centers/${id}`, { method: "PATCH", body }),
@@ -1728,11 +1894,99 @@ export const api = {
     fetcher<{
       productionOrder: Raw;
       putaway: { binId: string; bin: string; qty: number } | null;
+      putawayTransferOrderId: string | null;
     }>(`/production-orders/${id}/complete`, { method: "POST", body: body ?? {} }),
+  releaseMo: (id: string) =>
+    fetcher<{
+      shortages: Array<{ productId: string; sku: string; required: number; available: number; shortage: number }>;
+      transferOrderIds: string[];
+      allMet: boolean;
+    }>(`/production-orders/${id}/release`, { method: "POST", body: {} }),
   updateWorkOrder: (
     id: string,
     body: { status?: "queued" | "running" | "paused" | "complete"; output?: number }
   ) => fetcher<Raw>(`/work-orders/${id}`, { method: "PATCH", body }),
+
+  // ---- Putaway rules ----
+  putawayRules: (q?: { productId?: string; active?: boolean }) =>
+    fetcher<PutawayRuleRow[]>("/putaway-rules", {
+      query: {
+        ...(q?.productId ? { productId: q.productId } : {}),
+        ...(q?.active !== undefined ? { active: q.active ? "1" : "0" } : {}),
+      },
+    }),
+  createPutawayRule: (body: {
+    productId: string;
+    variantId?: string | null;
+    toWarehouseId: string;
+    toBinId?: string | null;
+    priority?: number;
+    active?: boolean;
+    notes?: string | null;
+  }) => fetcher<PutawayRuleRow>("/putaway-rules", { method: "POST", body }),
+  updatePutawayRule: (
+    id: string,
+    body: Partial<{
+      toWarehouseId: string;
+      toBinId: string | null;
+      priority: number;
+      active: boolean;
+      notes: string | null;
+    }>
+  ) => fetcher<PutawayRuleRow>(`/putaway-rules/${id}`, { method: "PATCH", body }),
+  deletePutawayRule: (id: string) =>
+    fetcher<{ deleted: boolean }>(`/putaway-rules/${id}`, { method: "DELETE" }),
+
+  // ---- Transfer orders ----
+  transferOrders: (q?: {
+    status?: string;
+    kind?: string;
+    productionOrderId?: string;
+    fromWarehouseId?: string;
+    toWarehouseId?: string;
+    limit?: number;
+  }) =>
+    fetcher<TransferOrderRow[]>("/transfer-orders", {
+      query: {
+        ...(q?.status ? { status: q.status } : {}),
+        ...(q?.kind ? { kind: q.kind } : {}),
+        ...(q?.productionOrderId ? { productionOrderId: q.productionOrderId } : {}),
+        ...(q?.fromWarehouseId ? { fromWarehouseId: q.fromWarehouseId } : {}),
+        ...(q?.toWarehouseId ? { toWarehouseId: q.toWarehouseId } : {}),
+        ...(q?.limit ? { limit: String(q.limit) } : {}),
+      },
+    }),
+  transferOrder: (id: string) =>
+    fetcher<TransferOrderRow>(`/transfer-orders/${id}`),
+  createTransferOrder: (body: {
+    kind?: "putaway" | "replenishment" | "manual";
+    fromWarehouseId: string;
+    toWarehouseId: string;
+    productionOrderId?: string | null;
+    notes?: string | null;
+    items: Array<{
+      productId: string;
+      variantId?: string | null;
+      qtyRequested: number;
+      fromBinId?: string | null;
+      toBinId?: string | null;
+      notes?: string | null;
+    }>;
+  }) => fetcher<TransferOrderRow>("/transfer-orders", { method: "POST", body }),
+  cancelTransferOrder: (id: string) =>
+    fetcher<TransferOrderRow>(`/transfer-orders/${id}/cancel`, { method: "POST", body: {} }),
+  claimTransferOrder: (id: string) =>
+    fetcher<TransferOrderRow>(`/transfer-orders/${id}/claim`, { method: "POST", body: {} }),
+  pickTransferOrder: (id: string, lines: Array<{ itemId: string; qtyPicked: number; fromBinId: string }>) =>
+    fetcher<TransferOrderRow>(`/transfer-orders/${id}/pick`, {
+      method: "POST",
+      body: { lines },
+    }),
+  dropTransferOrder: (id: string, lines: Array<{ itemId: string; qtyDropped: number; toBinId: string }>) =>
+    fetcher<TransferOrderRow>(`/transfer-orders/${id}/drop`, {
+      method: "POST",
+      body: { lines },
+    }),
 
   // Procurement: vendors, POs, GRNs.
   // Vendor CRUD - listing decorates each row with rolled-up
@@ -2510,7 +2764,6 @@ export const api = {
           all.push({
             id: b.id as string,
             zone: b.zone as string,
-            rack: b.rack as string,
             shelf: b.shelf as string,
             bin: b.bin as string,
             qty: b.qty as number,
@@ -2632,7 +2885,7 @@ export const api = {
     }
   ) => fetcher<Raw>(`/bins/${binId}/reassign`, { method: "POST", body }),
   logScanEvent: (body: {
-    kind: "bin" | "rack" | "shelf" | "zone" | "product" | "unknown";
+    kind: "bin" | "shelf" | "zone" | "product" | "unknown";
     code: string;
     context?: string | null;
     outcome: "ok" | "mismatch" | "not_found";

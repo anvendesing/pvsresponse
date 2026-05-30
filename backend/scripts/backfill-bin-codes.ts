@@ -20,7 +20,6 @@ const db = new PrismaClient();
       id: true,
       warehouseId: true,
       zone: true,
-      rack: true,
       shelf: true,
       bin: true,
       code: true,

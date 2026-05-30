@@ -1,18 +1,16 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useNavigate } from "react-router-dom";
 import {
-  ArrowRight,
+  ArrowRightLeft,
   CheckCircle2,
   ChevronDown,
   ChevronRight,
-  Layers,
   Map as MapIcon,
   Pencil,
   Plus,
-  ScanLine,
   Search,
   Trash2,
   Warehouse as WHIcon,
-  Zap,
 } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Card } from "@/components/common/Card";
@@ -28,6 +26,8 @@ import { num } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { BinLayoutModal } from "@/components/warehouse/BinLayoutModal";
 
+import type { WarehouseRow } from "@/lib/api";
+
 interface TreeNode {
   id: string;
   label: string;
@@ -36,8 +36,11 @@ interface TreeNode {
   bin?: Bin;
 }
 
+type ZoneCtx = { warehouseCode: string; zone: string };
+type ShelfCtx = { warehouseCode: string; zone: string; shelf: string };
+
 const buildTree = (allBins: Bin[]): TreeNode[] => {
-  const wMap = new Map<string, Map<string, Map<string, Map<string, Bin[]>>>>();
+  const wMap = new Map<string, Map<string, Map<string, Bin[]>>>();
   // Track friendly name per warehouse code so the tree shows
   // "Main Warehouse · WH-MAIN" instead of a raw cuid.
   const whNames = new Map<string, string>();
@@ -45,11 +48,9 @@ const buildTree = (allBins: Bin[]): TreeNode[] => {
     if (b.warehouseName) whNames.set(b.warehouse, b.warehouseName);
     const w = wMap.get(b.warehouse) ?? new Map();
     const z = w.get(b.zone) ?? new Map();
-    const r = z.get(b.rack) ?? new Map();
-    const list = r.get(b.shelf) ?? [];
+    const list = z.get(b.shelf) ?? [];
     list.push(b);
-    r.set(b.shelf, list);
-    z.set(b.rack, r);
+    z.set(b.shelf, list);
     w.set(b.zone, z);
     wMap.set(b.warehouse, w);
   }
@@ -58,32 +59,22 @@ const buildTree = (allBins: Bin[]): TreeNode[] => {
     const friendly = whNames.get(wh);
     const label = friendly ? `${friendly} · ${wh}` : wh;
     const wNode: TreeNode = { id: wh, label, count: 0, children: [] };
-    for (const [z, racks] of zones) {
+    for (const [z, shelves] of zones) {
       const zNode: TreeNode = { id: `${wh}-${z}`, label: `Zone ${z}`, count: 0, children: [] };
-      for (const [r, shelves] of racks) {
-        const rNode: TreeNode = {
-          id: `${wh}-${z}-${r}`,
-          label: r,
-          count: 0,
-          children: [],
+      for (const [s, ls] of shelves) {
+        const sNode: TreeNode = {
+          id: `${wh}-${z}-${s}`,
+          label: s,
+          count: ls.length,
+          children: ls.map((b) => ({
+            id: b.id,
+            label: b.bin,
+            count: b.qty ?? 0,
+            bin: b,
+          })),
         };
-        for (const [s, ls] of shelves) {
-          const sNode: TreeNode = {
-            id: `${wh}-${z}-${r}-${s}`,
-            label: s,
-            count: ls.length,
-            children: ls.map((b) => ({
-              id: b.id,
-              label: b.bin,
-              count: b.qty ?? 0,
-              bin: b,
-            })),
-          };
-          rNode.children!.push(sNode);
-          rNode.count += ls.length;
-        }
-        zNode.children!.push(rNode);
-        zNode.count += rNode.count;
+        zNode.children!.push(sNode);
+        zNode.count += ls.length;
       }
       wNode.children!.push(zNode);
       wNode.count += zNode.count;
@@ -101,11 +92,17 @@ interface NodeRowProps {
   onPick: (b: Bin) => void;
   selectedBin?: Bin;
   filter: string;
+  onZoneAction?: (warehouseCode: string, zone: string, action: "rename" | "delete") => void;
+  onShelfAction?: (warehouseCode: string, zone: string, shelf: string, action: "rename" | "delete") => void;
 }
 
-const NodeRow = ({ node, depth, expanded, toggle, onPick, selectedBin, filter }: NodeRowProps) => {
+const NodeRow = ({
+  node, depth, expanded, toggle, onPick, selectedBin, filter,
+  onZoneAction, onShelfAction,
+}: NodeRowProps) => {
   const isLeaf = !!node.bin;
   const isOpen = expanded.has(node.id);
+  const [hover, setHover] = useState(false);
   const visible =
     !filter ||
     node.label.toLowerCase().includes(filter.toLowerCase()) ||
@@ -136,17 +133,76 @@ const NodeRow = ({ node, depth, expanded, toggle, onPick, selectedBin, filter }:
     );
   }
 
+  // Parse the node id to understand what level this is.
+  // id format: "WH-MAIN" | "WH-MAIN-A" | "WH-MAIN-A-S1"
+  const parts = node.id.split("-");
+  // Zones have depth=1 (one child level under warehouse), shelves depth=2.
+  const isZoneNode = depth === 1;
+  const isShelfNode = depth === 2;
+
   return (
-    <div>
-      <button
-        onClick={() => toggle(node.id)}
-        className="w-full flex items-center gap-1 px-2 h-8 hover:bg-canvas text-body-sm font-medium text-ink transition-colors"
+    <div onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)}>
+      <div
+        className="flex items-center h-8 hover:bg-canvas transition-colors"
         style={{ paddingLeft: `${depth * 14 + 6}px` }}
       >
-        {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-        <span className="flex-1 text-left">{node.label}</span>
-        <span className="text-caption text-ink-muted tnum">{node.count}</span>
-      </button>
+        <button
+          onClick={() => toggle(node.id)}
+          className="flex items-center gap-1 text-body-sm font-medium text-ink flex-1 min-w-0 h-full"
+        >
+          {isOpen ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+          <span className="flex-1 text-left truncate">{node.label}</span>
+          <span className="text-caption text-ink-muted tnum pr-1">{node.count}</span>
+        </button>
+        {hover && (isZoneNode || isShelfNode) && (
+          <div className="flex items-center gap-0.5 pr-1">
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                // Extract wh + zone from id: "WH-MAIN-A" → zone="A", wh="WH-MAIN"
+                if (isZoneNode && onZoneAction) {
+                  const zone = node.label.replace("Zone ", "");
+                  // warehouse node id is the first segment of this node's id minus the zone suffix
+                  const whCode = node.id.slice(0, node.id.lastIndexOf("-" + zone));
+                  onZoneAction(whCode, zone, "rename");
+                } else if (isShelfNode && onShelfAction) {
+                  // shelf node id: "WH-MAIN-A-S1" → zone="A", shelf="S1"
+                  const shelf = node.label;
+                  // parent is zone node at depth-1: id = "WH-MAIN-A"
+                  const zoneNodeId = node.id.slice(0, node.id.lastIndexOf("-" + shelf));
+                  const zone = zoneNodeId.slice(zoneNodeId.lastIndexOf("-") + 1);
+                  const whCode = zoneNodeId.slice(0, zoneNodeId.lastIndexOf("-" + zone));
+                  onShelfAction(whCode, zone, shelf, "rename");
+                }
+              }}
+              title="Rename"
+              className="h-5 w-5 grid place-items-center rounded text-ink-muted hover:text-primary hover:bg-primary/10"
+            >
+              <Pencil size={10} />
+            </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                if (isZoneNode && onZoneAction) {
+                  const zone = node.label.replace("Zone ", "");
+                  const whCode = node.id.slice(0, node.id.lastIndexOf("-" + zone));
+                  onZoneAction(whCode, zone, "delete");
+                } else if (isShelfNode && onShelfAction) {
+                  const shelf = node.label;
+                  const zoneNodeId = node.id.slice(0, node.id.lastIndexOf("-" + shelf));
+                  const zone = zoneNodeId.slice(zoneNodeId.lastIndexOf("-") + 1);
+                  const whCode = zoneNodeId.slice(0, zoneNodeId.lastIndexOf("-" + zone));
+                  onShelfAction(whCode, zone, shelf, "delete");
+                }
+              }}
+              title="Delete"
+              className="h-5 w-5 grid place-items-center rounded text-ink-muted hover:text-danger hover:bg-danger/10"
+            >
+              <Trash2 size={10} />
+            </button>
+          </div>
+        )}
+      </div>
       {isOpen &&
         node.children?.map((c) => (
           <NodeRow
@@ -158,6 +214,8 @@ const NodeRow = ({ node, depth, expanded, toggle, onPick, selectedBin, filter }:
             onPick={onPick}
             selectedBin={selectedBin}
             filter={filter}
+            onZoneAction={onZoneAction}
+            onShelfAction={onShelfAction}
           />
         ))}
     </div>
@@ -171,6 +229,7 @@ const deepMatches = (n: TreeNode, q: string): boolean => {
 };
 
 export const Warehouse = () => {
+  const nav = useNavigate();
   const liveBins = useApi(() => api.warehousesAndBins(), []);
   const liveWarehouses = useApi(() => api.warehouses(), []);
   const bins = liveBins.data ?? [];
@@ -189,13 +248,17 @@ export const Warehouse = () => {
   const [errBanner, setErrBanner] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // Zone / shelf rename + delete state.
+  const [zoneAction, setZoneAction] = useState<{ ctx: ZoneCtx; action: "rename" | "delete" } | null>(null);
+  const [shelfAction, setShelfAction] = useState<{ ctx: ShelfCtx; action: "rename" | "delete" } | null>(null);
+
   const refreshBins = async () => {
     await liveBins.refetch();
     await liveWarehouses.refetch();
   };
 
   const onDeleteBin = async (b: Bin) => {
-    if (!confirm(`Delete bin ${b.zone}/${b.rack}/${b.shelf}/${b.bin}? This cannot be undone.`)) return;
+    if (!confirm(`Delete bin ${b.zone}/${b.shelf}/${b.bin}? This cannot be undone.`)) return;
     setBusy(true);
     setErrBanner(null);
     try {
@@ -231,7 +294,6 @@ export const Warehouse = () => {
       selected &&
       b.warehouse === selected.warehouse &&
       b.zone === selected.zone &&
-      b.rack === selected.rack &&
       b.shelf === selected.shelf &&
       b.qty
   );
@@ -310,7 +372,7 @@ export const Warehouse = () => {
               icon={<Plus size={14} />}
               onClick={() => setLayoutMode("bulk")}
             >
-              Add rack
+              Add shelves
             </Button>
             <Button
               variant="outline"
@@ -323,11 +385,12 @@ export const Warehouse = () => {
             <Button variant="outline" size="sm" icon={<MapIcon size={14} />}>
               3D Map
             </Button>
-            <Button variant="outline" size="sm" icon={<Layers size={14} />}>
-              Putaway · F3
-            </Button>
-            <Button size="sm" icon={<Zap size={14} />}>
-              Fast Transfer · F2
+            <Button
+              size="sm"
+              icon={<ArrowRightLeft size={14} />}
+              onClick={() => nav("/transfers")}
+            >
+              Transfers
             </Button>
           </>
         }
@@ -386,12 +449,18 @@ export const Warehouse = () => {
                 onPick={setSelected}
                 selectedBin={selected}
                 filter={filter}
+                onZoneAction={(whCode, zone, action) => {
+                  setZoneAction({ ctx: { warehouseCode: whCode, zone }, action });
+                }}
+                onShelfAction={(whCode, zone, shelf, action) => {
+                  setShelfAction({ ctx: { warehouseCode: whCode, zone, shelf }, action });
+                }}
               />
             ))}
           </div>
         </aside>
 
-        {/* Right: bin contents + fast transfer */}
+        {/* Bin contents */}
         <div className="flex-1 flex min-w-0">
           <div className="flex-1 flex flex-col min-w-0 border-r border-border">
             <div className="px-4 py-3 bg-surface border-b border-border flex items-center justify-between">
@@ -399,7 +468,7 @@ export const Warehouse = () => {
                 <div className="text-caption text-ink-muted uppercase">Selected location</div>
                 <div className="font-mono text-h3 font-bold text-primary">
                   {selected
-                    ? `${selected.warehouse} / Zone ${selected.zone} / ${selected.rack} / ${selected.shelf} / ${selected.bin}`
+                    ? `${selected.warehouse} / Zone ${selected.zone} / ${selected.shelf} / ${selected.bin}`
                     : "—"}
                 </div>
               </div>
@@ -444,53 +513,6 @@ export const Warehouse = () => {
             </div>
           </div>
 
-          {/* Fast transfer panel */}
-          <aside className="w-[360px] bg-surface flex flex-col">
-            <div className="px-4 py-3 border-b border-border">
-              <div className="flex items-center gap-2">
-                <Zap size={16} className="text-primary" />
-                <span className="text-h3 font-bold">Fast Transfer</span>
-              </div>
-              <div className="text-caption text-ink-muted mt-0.5">
-                Scan → Source → Destination → Qty
-              </div>
-            </div>
-            <div className="flex-1 overflow-y-auto p-4 space-y-3">
-              <ScanField label="1. Scan Product" value="FG-0031 — Finished Pump A2" done />
-              <div className="grid grid-cols-2 gap-3 items-center">
-                <ScanField label="2. Source Bin" value="WH-MAIN/A-1-2-B3" done compact />
-                <div className="grid place-items-center text-primary">
-                  <ArrowRight size={20} />
-                </div>
-              </div>
-              <ScanField label="3. Destination Bin" value="WH-FG/B-1-3" done compact />
-              <div>
-                <div className="text-caption font-medium text-ink mb-1">4. Quantity</div>
-                <div className="flex items-center gap-2">
-                  <Input
-                    size="md"
-                    defaultValue="48"
-                    className="!text-h3 !font-bold !tnum"
-                  />
-                  <Chip tone="neutral">PCS</Chip>
-                </div>
-              </div>
-              <div className="bg-canvas border border-border rounded-md p-3 text-caption">
-                <div className="font-semibold text-ink mb-1.5">Transfer summary</div>
-                <Row k="Product" v="Finished Pump A2" />
-                <Row k="From" v="WH-MAIN/A-1-2-B3" mono />
-                <Row k="To" v="WH-FG/B-1-3" mono />
-                <Row k="Quantity" v="48 PCS" />
-                <Row k="Source available" v="92 PCS" />
-              </div>
-            </div>
-            <div className="border-t border-border p-3 grid grid-cols-2 gap-2">
-              <Button variant="outline" size="md" icon={<ScanLine size={14} />}>
-                Re-scan
-              </Button>
-              <Button size="md">Complete · F8</Button>
-            </div>
-          </aside>
         </div>
       </div>
 
@@ -504,7 +526,6 @@ export const Warehouse = () => {
               ? {
                   warehouseId: warehouses.find((w) => w.code === selected.warehouse)?.id,
                   zone: selected.zone,
-                  rack: layoutMode === "single" ? selected.rack : undefined,
                   shelf: layoutMode === "single" ? selected.shelf : undefined,
                 }
               : undefined
@@ -529,12 +550,68 @@ export const Warehouse = () => {
           }}
         />
       )}
+
+      {zoneAction && (
+        zoneAction.action === "rename" ? (
+          <RenameZoneModal
+            ctx={zoneAction.ctx}
+            warehouses={warehouses}
+            onClose={() => setZoneAction(null)}
+            onDone={async (msg) => {
+              setZoneAction(null);
+              setOkBanner(msg);
+              await refreshBins();
+            }}
+          />
+        ) : (
+          <DeleteZoneModal
+            ctx={zoneAction.ctx}
+            warehouses={warehouses}
+            bins={bins}
+            onClose={() => setZoneAction(null)}
+            onDone={async (msg) => {
+              setZoneAction(null);
+              setSelected(undefined);
+              setOkBanner(msg);
+              await refreshBins();
+            }}
+          />
+        )
+      )}
+
+      {shelfAction && (
+        shelfAction.action === "rename" ? (
+          <RenameShelfModal
+            ctx={shelfAction.ctx}
+            warehouses={warehouses}
+            onClose={() => setShelfAction(null)}
+            onDone={async (msg) => {
+              setShelfAction(null);
+              setOkBanner(msg);
+              await refreshBins();
+            }}
+          />
+        ) : (
+          <DeleteShelfModal
+            ctx={shelfAction.ctx}
+            warehouses={warehouses}
+            bins={bins}
+            onClose={() => setShelfAction(null)}
+            onDone={async (msg) => {
+              setShelfAction(null);
+              setSelected(undefined);
+              setOkBanner(msg);
+              await refreshBins();
+            }}
+          />
+        )
+      )}
     </div>
   );
 };
 
 // Lightweight inline editor for a single bin: rename + capacity.
-// Warehouse / zone / rack / shelf are immutable to keep stock-ledger
+// Warehouse / zone / shelf are immutable to keep stock-ledger
 // addressing stable; users delete + recreate to restructure.
 const EditBinModal = ({
   bin,
@@ -581,7 +658,7 @@ const EditBinModal = ({
             Edit bin
           </div>
           <div className="font-mono text-body-sm">
-            {bin.warehouse} / {bin.zone} / {bin.rack} / {bin.shelf} / {bin.bin}
+            {bin.warehouse} / {bin.zone} / {bin.shelf} / {bin.bin}
           </div>
         </div>
         {error && (
@@ -628,37 +705,273 @@ const EditBinModal = ({
   );
 };
 
-const ScanField = ({
-  label,
-  value,
-  done,
-  compact,
+// ---------------------------------------------------------------
+// Zone / shelf bulk-action modals
+// ---------------------------------------------------------------
+
+function resolveWhId(warehouses: WarehouseRow[], code: string): string | undefined {
+  return warehouses.find((w) => w.code === code)?.id;
+}
+
+const ModalShell = ({
+  title,
+  subtitle,
+  children,
+  onClose,
 }: {
-  label: string;
-  value: string;
-  done?: boolean;
-  compact?: boolean;
+  title: string;
+  subtitle: string;
+  children: ReactNode;
+  onClose: () => void;
 }) => (
-  <div>
-    <div className="text-caption font-medium text-ink mb-1">{label}</div>
+  <div className="fixed inset-0 z-[60] bg-ink/40 grid place-items-center" onClick={onClose}>
     <div
-      className={cn(
-        "border-2 rounded-md flex items-center gap-2 px-3",
-        compact ? "h-9" : "h-11",
-        done ? "border-success bg-success-soft" : "border-dashed border-border bg-canvas"
-      )}
+      className="bg-surface w-full max-w-sm rounded-lg elevation-3 overflow-hidden"
+      onClick={(e) => e.stopPropagation()}
     >
-      <ScanLine size={14} className={done ? "text-success" : "text-primary"} />
-      <span className={cn("font-mono text-body-sm truncate", done ? "text-success font-semibold" : "text-ink-muted")}>
-        {value}
-      </span>
+      <div className="px-5 py-3 border-b border-border">
+        <div className="text-caption text-ink-muted uppercase font-semibold">{title}</div>
+        <div className="font-mono text-body-sm">{subtitle}</div>
+      </div>
+      {children}
     </div>
   </div>
 );
 
-const Row = ({ k, v, mono }: { k: string; v: string; mono?: boolean }) => (
-  <div className="flex items-center justify-between py-0.5">
-    <span className="text-ink-muted">{k}</span>
-    <span className={mono ? "font-mono font-semibold text-ink" : "font-semibold text-ink"}>{v}</span>
-  </div>
-);
+const RenameZoneModal = ({
+  ctx,
+  warehouses,
+  onClose,
+  onDone,
+}: {
+  ctx: ZoneCtx;
+  warehouses: WarehouseRow[];
+  onClose: () => void;
+  onDone: (msg: string) => void;
+}) => {
+  const [value, setValue] = useState(ctx.zone);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const whId = resolveWhId(warehouses, ctx.warehouseCode);
+
+  const submit = async () => {
+    if (!whId) { setError("Warehouse not found."); return; }
+    if (!/^[A-Za-z0-9-]{1,20}$/.test(value)) {
+      setError("Zone label must be 1-20 chars (letters / numbers / hyphen).");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api.renameZone(whId, ctx.zone, value);
+      onDone(`Zone ${ctx.zone} renamed to ${r.newZone} (${r.updated} bins updated).`);
+    } catch (e) {
+      setError((e as Error).message);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <ModalShell title="Rename zone" subtitle={`${ctx.warehouseCode} / Zone ${ctx.zone}`} onClose={onClose}>
+      {error && <div className="px-4 py-2 bg-danger-soft border-b border-danger text-danger text-body-sm">{error}</div>}
+      <div className="p-4 space-y-3">
+        <div className="text-caption text-ink-muted uppercase font-semibold mb-1">New zone label</div>
+        <Input value={value} onChange={(e) => setValue(e.target.value.toUpperCase())} placeholder="A" autoFocus />
+        <div className="text-caption text-ink-muted">All bins in this zone will be updated to the new label.</div>
+      </div>
+      <div className="border-t border-border px-4 py-3 flex justify-end gap-2 bg-canvas">
+        <Button variant="ghost" size="sm" onClick={onClose} disabled={busy}>Cancel</Button>
+        <Button size="sm" onClick={submit} disabled={busy}>{busy ? "Saving…" : "Rename"}</Button>
+      </div>
+    </ModalShell>
+  );
+};
+
+const DeleteZoneModal = ({
+  ctx,
+  warehouses,
+  bins,
+  onClose,
+  onDone,
+}: {
+  ctx: ZoneCtx;
+  warehouses: WarehouseRow[];
+  bins: Bin[];
+  onClose: () => void;
+  onDone: (msg: string) => void;
+}) => {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const whId = resolveWhId(warehouses, ctx.warehouseCode);
+  const zoneBins = bins.filter((b) => b.warehouse === ctx.warehouseCode && b.zone === ctx.zone);
+  const occupiedCount = zoneBins.filter((b) => (b.qty ?? 0) > 0).length;
+
+  const submit = async () => {
+    if (!whId) { setError("Warehouse not found."); return; }
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api.deleteZone(whId, ctx.zone);
+      onDone(`Zone ${ctx.zone} deleted (${r.deleted} bins removed).`);
+    } catch (e) {
+      setError((e as Error).message);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <ModalShell title="Delete zone" subtitle={`${ctx.warehouseCode} / Zone ${ctx.zone}`} onClose={onClose}>
+      {error && <div className="px-4 py-2 bg-danger-soft border-b border-danger text-danger text-body-sm">{error}</div>}
+      <div className="p-4 space-y-2">
+        <p className="text-body-sm">
+          This will permanently delete all <strong>{zoneBins.length}</strong> bins in zone <strong>{ctx.zone}</strong>.
+        </p>
+        {occupiedCount > 0 ? (
+          <div className="rounded border border-danger bg-danger-soft p-3 text-body-sm text-danger">
+            <strong>{occupiedCount} bin(s) still hold stock.</strong> Transfer all stock out before deleting this zone.
+          </div>
+        ) : (
+          <div className="rounded border border-warning bg-warning-soft p-3 text-body-sm text-warning">
+            All bins are empty. This action cannot be undone.
+          </div>
+        )}
+      </div>
+      <div className="border-t border-border px-4 py-3 flex justify-end gap-2 bg-canvas">
+        <Button variant="ghost" size="sm" onClick={onClose} disabled={busy}>Cancel</Button>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={submit}
+          disabled={busy || occupiedCount > 0}
+          className="border-danger text-danger hover:bg-danger hover:text-white"
+        >
+          {busy ? "Deleting…" : `Delete ${zoneBins.length} bins`}
+        </Button>
+      </div>
+    </ModalShell>
+  );
+};
+
+const RenameShelfModal = ({
+  ctx,
+  warehouses,
+  onClose,
+  onDone,
+}: {
+  ctx: ShelfCtx;
+  warehouses: WarehouseRow[];
+  onClose: () => void;
+  onDone: (msg: string) => void;
+}) => {
+  const [value, setValue] = useState(ctx.shelf);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const whId = resolveWhId(warehouses, ctx.warehouseCode);
+
+  const submit = async () => {
+    if (!whId) { setError("Warehouse not found."); return; }
+    if (!/^[A-Za-z0-9-]{1,20}$/.test(value)) {
+      setError("Shelf label must be 1-20 chars (letters / numbers / hyphen).");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api.renameShelf(whId, ctx.zone, ctx.shelf, value);
+      onDone(`Shelf ${ctx.shelf} renamed to ${r.newShelf} (${r.updated} bins updated).`);
+    } catch (e) {
+      setError((e as Error).message);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <ModalShell
+      title="Rename shelf"
+      subtitle={`${ctx.warehouseCode} / Zone ${ctx.zone} / ${ctx.shelf}`}
+      onClose={onClose}
+    >
+      {error && <div className="px-4 py-2 bg-danger-soft border-b border-danger text-danger text-body-sm">{error}</div>}
+      <div className="p-4 space-y-3">
+        <div className="text-caption text-ink-muted uppercase font-semibold mb-1">New shelf label</div>
+        <Input value={value} onChange={(e) => setValue(e.target.value.toUpperCase())} placeholder="S1" autoFocus />
+        <div className="text-caption text-ink-muted">All bins on this shelf will be updated to the new label.</div>
+      </div>
+      <div className="border-t border-border px-4 py-3 flex justify-end gap-2 bg-canvas">
+        <Button variant="ghost" size="sm" onClick={onClose} disabled={busy}>Cancel</Button>
+        <Button size="sm" onClick={submit} disabled={busy}>{busy ? "Saving…" : "Rename"}</Button>
+      </div>
+    </ModalShell>
+  );
+};
+
+const DeleteShelfModal = ({
+  ctx,
+  warehouses,
+  bins,
+  onClose,
+  onDone,
+}: {
+  ctx: ShelfCtx;
+  warehouses: WarehouseRow[];
+  bins: Bin[];
+  onClose: () => void;
+  onDone: (msg: string) => void;
+}) => {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const whId = resolveWhId(warehouses, ctx.warehouseCode);
+  const shelfBins = bins.filter(
+    (b) => b.warehouse === ctx.warehouseCode && b.zone === ctx.zone && b.shelf === ctx.shelf
+  );
+  const occupiedCount = shelfBins.filter((b) => (b.qty ?? 0) > 0).length;
+
+  const submit = async () => {
+    if (!whId) { setError("Warehouse not found."); return; }
+    setBusy(true);
+    setError(null);
+    try {
+      const r = await api.deleteShelf(whId, ctx.zone, ctx.shelf);
+      onDone(`Shelf ${ctx.shelf} deleted (${r.deleted} bins removed).`);
+    } catch (e) {
+      setError((e as Error).message);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <ModalShell
+      title="Delete shelf"
+      subtitle={`${ctx.warehouseCode} / Zone ${ctx.zone} / ${ctx.shelf}`}
+      onClose={onClose}
+    >
+      {error && <div className="px-4 py-2 bg-danger-soft border-b border-danger text-danger text-body-sm">{error}</div>}
+      <div className="p-4 space-y-2">
+        <p className="text-body-sm">
+          This will permanently delete all <strong>{shelfBins.length}</strong> bins on shelf <strong>{ctx.shelf}</strong>.
+        </p>
+        {occupiedCount > 0 ? (
+          <div className="rounded border border-danger bg-danger-soft p-3 text-body-sm text-danger">
+            <strong>{occupiedCount} bin(s) still hold stock.</strong> Transfer all stock out before deleting this shelf.
+          </div>
+        ) : (
+          <div className="rounded border border-warning bg-warning-soft p-3 text-body-sm text-warning">
+            All bins are empty. This action cannot be undone.
+          </div>
+        )}
+      </div>
+      <div className="border-t border-border px-4 py-3 flex justify-end gap-2 bg-canvas">
+        <Button variant="ghost" size="sm" onClick={onClose} disabled={busy}>Cancel</Button>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={submit}
+          disabled={busy || occupiedCount > 0}
+          className="border-danger text-danger hover:bg-danger hover:text-white"
+        >
+          {busy ? "Deleting…" : `Delete ${shelfBins.length} bins`}
+        </Button>
+      </div>
+    </ModalShell>
+  );
+};
