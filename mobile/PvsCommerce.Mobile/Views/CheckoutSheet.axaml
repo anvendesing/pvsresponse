@@ -1,0 +1,241 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:PvsCommerce.Mobile.ViewModels"
+             xmlns:conv="using:PvsCommerce.Mobile.Converters"
+             x:Class="PvsCommerce.Mobile.Views.CheckoutSheet"
+             x:DataType="vm:CheckoutViewModel">
+
+  <Grid>
+    <!-- Backdrop -->
+    <Border Background="#80000000" />
+
+    <!-- Sheet container -->
+    <Border Background="{StaticResource NeutralWhite}"
+            CornerRadius="24,24,0,0"
+            VerticalAlignment="Bottom"
+            BoxShadow="{StaticResource ShadowLg}"
+            MaxHeight="700"
+            Padding="0">
+      <Grid RowDefinitions="Auto,*">
+
+        <!-- Header -->
+        <Border Grid.Row="0" BorderBrush="{StaticResource NeutralBorder}"
+                BorderThickness="0,0,0,1" Padding="16,14">
+          <Grid ColumnDefinitions="*,Auto">
+            <TextBlock Grid.Column="0" Text="🛡 Secure Checkout"
+                       FontWeight="Bold" FontSize="15"
+                       Foreground="{StaticResource ForestGreenDark}"
+                       VerticalAlignment="Center" />
+            <Button Grid.Column="1" Classes="icon" Padding="6"
+                    Command="{Binding CloseCommand}">
+              <TextBlock Text="✕" FontSize="16" />
+            </Button>
+          </Grid>
+        </Border>
+
+        <!-- Body -->
+        <ScrollViewer Grid.Row="1" Padding="16">
+          <StackPanel Spacing="12">
+
+            <!-- Step 1: Shipping -->
+            <Border Classes="card" Padding="0">
+              <StackPanel>
+                <Button Classes="icon" Padding="14,12"
+                        Command="{Binding Step1Command}"
+                        HorizontalContentAlignment="Stretch">
+                  <Grid ColumnDefinitions="Auto,*,Auto">
+                    <Border Grid.Column="0" Width="24" Height="24" CornerRadius="9999"
+                            Background="{StaticResource ForestGreen}">
+                      <TextBlock Text="1" FontWeight="Bold" FontSize="12"
+                                 Foreground="{StaticResource NeutralWhite}"
+                                 HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <TextBlock Grid.Column="1" Text="Shipping Information" Margin="10,0"
+                               FontWeight="Bold" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="2" Text="▼" FontSize="10" VerticalAlignment="Center" />
+                  </Grid>
+                </Button>
+                <StackPanel Margin="14,0,14,14" Spacing="10"
+                            IsVisible="{Binding ActiveStep, Converter={x:Static conv:EqualsParamConverter.Instance}, ConverterParameter=1}">
+                  <TextBox Classes="app" Watermark="Full Name" Text="{Binding Name, Mode=TwoWay}" />
+                  <TextBox Classes="app" Watermark="Mobile Number" Text="{Binding Phone, Mode=TwoWay}" />
+                  <TextBox Classes="app" Watermark="Email Address" Text="{Binding Email, Mode=TwoWay}" />
+                  <TextBox Classes="app" Watermark="Flat / House Address" Text="{Binding Address, Mode=TwoWay}" />
+                  <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
+                    <TextBox Grid.Column="0" Classes="app" Watermark="Pincode" Text="{Binding Pincode, Mode=TwoWay}" />
+                    <TextBox Grid.Column="1" Classes="app" Watermark="City" Text="{Binding City, Mode=TwoWay}" />
+                  </Grid>
+                  <TextBox Classes="app" Watermark="State" Text="{Binding State, Mode=TwoWay}" />
+                  <Button Classes="primary" Content="Continue to Delivery"
+                          Command="{Binding Step2Command}" />
+                </StackPanel>
+              </StackPanel>
+            </Border>
+
+            <!-- Step 2: Delivery -->
+            <Border Classes="card" Padding="0">
+              <StackPanel>
+                <Button Classes="icon" Padding="14,12"
+                        Command="{Binding Step2Command}"
+                        HorizontalContentAlignment="Stretch">
+                  <Grid ColumnDefinitions="Auto,*,Auto">
+                    <Border Grid.Column="0" Width="24" Height="24" CornerRadius="9999"
+                            Background="{StaticResource ForestGreen}">
+                      <TextBlock Text="2" FontWeight="Bold" FontSize="12"
+                                 Foreground="{StaticResource NeutralWhite}"
+                                 HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <TextBlock Grid.Column="1" Text="Delivery Method" Margin="10,0"
+                               FontWeight="Bold" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="2" Text="▼" FontSize="10" VerticalAlignment="Center" />
+                  </Grid>
+                </Button>
+                <StackPanel Margin="14,0,14,14" Spacing="10"
+                            IsVisible="{Binding ActiveStep, Converter={x:Static conv:EqualsParamConverter.Instance}, ConverterParameter=2}">
+                  <Border BorderBrush="{StaticResource NeutralBorder}" BorderThickness="1.5"
+                          CornerRadius="{StaticResource RadiusSm}" Padding="14"
+                          Classes.activeRow="{Binding DeliveryMethod, Converter={x:Static conv:EqualsParamConverter.Instance}, ConverterParameter=eco}">
+                    <Border.Styles>
+                      <Style Selector="Border.activeRow">
+                        <Setter Property="BorderBrush" Value="{StaticResource ForestGreen}" />
+                        <Setter Property="Background" Value="{StaticResource ForestGreenSoft}" />
+                      </Style>
+                    </Border.Styles>
+                    <Button Classes="icon" Padding="0" Command="{Binding DeliveryEcoCommand}"
+                            HorizontalContentAlignment="Stretch">
+                      <Grid ColumnDefinitions="*,Auto">
+                        <StackPanel Grid.Column="0" Spacing="2">
+                          <TextBlock Text="Standard Insulated Eco Delivery" FontWeight="Bold"
+                                     Foreground="{StaticResource ForestGreenDark}" FontSize="13" />
+                          <TextBlock Text="Arrives in 3-5 working days." FontSize="11"
+                                     Foreground="{StaticResource NeutralGray}" />
+                        </StackPanel>
+                        <TextBlock Grid.Column="1" Text="FREE" FontWeight="Bold"
+                                   Foreground="{StaticResource ForestGreen}"
+                                   VerticalAlignment="Center" />
+                      </Grid>
+                    </Button>
+                  </Border>
+                  <Border BorderBrush="{StaticResource NeutralBorder}" BorderThickness="1.5"
+                          CornerRadius="{StaticResource RadiusSm}" Padding="14"
+                          Classes.activeRow="{Binding DeliveryMethod, Converter={x:Static conv:EqualsParamConverter.Instance}, ConverterParameter=exp}">
+                    <Border.Styles>
+                      <Style Selector="Border.activeRow">
+                        <Setter Property="BorderBrush" Value="{StaticResource ForestGreen}" />
+                        <Setter Property="Background" Value="{StaticResource ForestGreenSoft}" />
+                      </Style>
+                    </Border.Styles>
+                    <Button Classes="icon" Padding="0" Command="{Binding DeliveryExpCommand}"
+                            HorizontalContentAlignment="Stretch">
+                      <Grid ColumnDefinitions="*,Auto">
+                        <StackPanel Grid.Column="0" Spacing="2">
+                          <TextBlock Text="Express Kitchen Organic Delivery" FontWeight="Bold"
+                                     Foreground="{StaticResource ForestGreenDark}" FontSize="13" />
+                          <TextBlock Text="Arrives in 24 hours. Eco insulated packing." FontSize="11"
+                                     Foreground="{StaticResource NeutralGray}" />
+                        </StackPanel>
+                        <TextBlock Grid.Column="1" Text="₹150/-" FontWeight="Bold"
+                                   VerticalAlignment="Center" />
+                      </Grid>
+                    </Button>
+                  </Border>
+                  <Button Classes="primary" Content="Continue to Payment"
+                          Command="{Binding Step3Command}" />
+                </StackPanel>
+              </StackPanel>
+            </Border>
+
+            <!-- Step 3: Payment -->
+            <Border Classes="card" Padding="0">
+              <StackPanel>
+                <Button Classes="icon" Padding="14,12"
+                        Command="{Binding Step3Command}"
+                        HorizontalContentAlignment="Stretch">
+                  <Grid ColumnDefinitions="Auto,*,Auto">
+                    <Border Grid.Column="0" Width="24" Height="24" CornerRadius="9999"
+                            Background="{StaticResource ForestGreen}">
+                      <TextBlock Text="3" FontWeight="Bold" FontSize="12"
+                                 Foreground="{StaticResource NeutralWhite}"
+                                 HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <TextBlock Grid.Column="1" Text="Secure Payment" Margin="10,0"
+                               FontWeight="Bold" VerticalAlignment="Center" />
+                    <TextBlock Grid.Column="2" Text="▼" FontSize="10" VerticalAlignment="Center" />
+                  </Grid>
+                </Button>
+                <StackPanel Margin="14,0,14,14" Spacing="12"
+                            IsVisible="{Binding ActiveStep, Converter={x:Static conv:EqualsParamConverter.Instance}, ConverterParameter=3}">
+
+                  <Border Background="{StaticResource NeutralLight}" CornerRadius="9999" Padding="4">
+                    <Grid ColumnDefinitions="*,*,*">
+                      <Button Grid.Column="0" Classes="icon" Padding="0" Command="{Binding PayCardCommand}">
+                        <Border Classes="subTab" HorizontalAlignment="Stretch"
+                                Classes.active="{Binding PayMethod, Converter={x:Static conv:EqualsParamConverter.Instance}, ConverterParameter=card}">
+                          <TextBlock Text="Card Pay" />
+                        </Border>
+                      </Button>
+                      <Button Grid.Column="1" Classes="icon" Padding="0" Command="{Binding PayUpiCommand}">
+                        <Border Classes="subTab" HorizontalAlignment="Stretch"
+                                Classes.active="{Binding PayMethod, Converter={x:Static conv:EqualsParamConverter.Instance}, ConverterParameter=upi}">
+                          <TextBlock Text="UPI" />
+                        </Border>
+                      </Button>
+                      <Button Grid.Column="2" Classes="icon" Padding="0" Command="{Binding PayCodCommand}">
+                        <Border Classes="subTab" HorizontalAlignment="Stretch"
+                                Classes.active="{Binding PayMethod, Converter={x:Static conv:EqualsParamConverter.Instance}, ConverterParameter=cod}">
+                          <TextBlock Text="COD" />
+                        </Border>
+                      </Button>
+                    </Grid>
+                  </Border>
+
+                  <!-- Card form -->
+                  <StackPanel Spacing="10"
+                              IsVisible="{Binding PayMethod, Converter={x:Static conv:EqualsParamConverter.Instance}, ConverterParameter=card}">
+                    <TextBox Classes="app" Watermark="16-digit card number"
+                             Text="{Binding CardNumber, Mode=TwoWay}" />
+                    <TextBox Classes="app" Watermark="Cardholder Name"
+                             Text="{Binding CardName, Mode=TwoWay}" />
+                    <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
+                      <TextBox Grid.Column="0" Classes="app" Watermark="MM/YY"
+                               Text="{Binding CardExpiry, Mode=TwoWay}" />
+                      <TextBox Grid.Column="1" Classes="app" Watermark="CVV" PasswordChar="•"
+                               Text="{Binding CardCvv, Mode=TwoWay}" />
+                    </Grid>
+                  </StackPanel>
+
+                  <!-- UPI -->
+                  <StackPanel Spacing="8" HorizontalAlignment="Center"
+                              IsVisible="{Binding PayMethod, Converter={x:Static conv:EqualsParamConverter.Instance}, ConverterParameter=upi}">
+                    <Border Width="140" Height="140" Background="{StaticResource NeutralLight}"
+                            CornerRadius="{StaticResource RadiusSm}">
+                      <TextBlock Text="📱 QR" FontSize="40"
+                                 HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <TextBlock Text="Scan via PayTM, GooglePay or PhonePe."
+                               Classes="muted" HorizontalAlignment="Center" />
+                  </StackPanel>
+
+                  <!-- COD -->
+                  <Border Padding="12"
+                          Background="{StaticResource PrimaryGoldCream}"
+                          CornerRadius="{StaticResource RadiusSm}"
+                          IsVisible="{Binding PayMethod, Converter={x:Static conv:EqualsParamConverter.Instance}, ConverterParameter=cod}">
+                    <TextBlock Text="📦 Cash on Delivery enabled — pay our delivery rep upon doorstep dropoff."
+                               FontSize="12" TextWrapping="Wrap" />
+                  </Border>
+
+                  <Button Classes="primary" Content="Pay &amp; Confirm Order 🌾"
+                          Command="{Binding PlaceOrderCommand}"
+                          IsEnabled="{Binding !IsSubmitting}" />
+                  <TextBlock Text="{Binding StatusMessage}" Classes="muted"
+                             IsVisible="{Binding StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                </StackPanel>
+              </StackPanel>
+            </Border>
+          </StackPanel>
+        </ScrollViewer>
+      </Grid>
+    </Border>
+  </Grid>
+</UserControl>

@@ -571,6 +571,18 @@ export const catalogRoutes = async (app: FastifyInstance) => {
     return true;
   };
 
+  const requireWriter = (
+    req: { user: { role: string } },
+    reply: { code: (n: number) => { send: (b: unknown) => void } }
+  ) => {
+    const r = req.user.role;
+    if (r !== "admin" && r !== "supervisor" && r !== "warehouse") {
+      reply.code(403).send({ error: { code: "forbidden", message: "Admin/supervisor/warehouse only" } });
+      return false;
+    }
+    return true;
+  };
+
   // POST /warehouses/:id/bins - single bin create.
   app.post(
     "/warehouses/:id/bins",
@@ -787,10 +799,135 @@ export const catalogRoutes = async (app: FastifyInstance) => {
   );
 
   // ================================================================
+  // POST /products/:id/sync-stock
+  // Recalculates Product.stockOnHand from actual bin totals and
+  // writes an Adjust ledger entry for any drift.
+  // ================================================================
+  app.post(
+    "/products/:id/sync-stock",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      if (!requireWriter(req, reply)) return;
+      const id = (req.params as { id: string }).id;
+      const product = await db.product.findUnique({
+        where: { id },
+        select: { id: true, stockOnHand: true, sku: true },
+      });
+      if (!product) return reply.code(404).send({ error: { code: "not_found" } });
+
+      const agg = await db.bin.aggregate({
+        where: { productId: id },
+        _sum: { qty: true },
+      });
+      const binTotal = agg._sum.qty ?? 0;
+      const before = product.stockOnHand;
+      const delta = binTotal - before;
+
+      if (delta !== 0) {
+        const wh = await db.warehouse.findFirst({ orderBy: { code: "asc" }, select: { id: true } });
+        if (!wh) return reply.code(409).send({ error: { code: "no_warehouse", message: "No warehouse found." } });
+        const year = new Date().getUTCFullYear();
+        const ref = `SYNC-${year}-${Date.now().toString().slice(-6)}`;
+        await db.$transaction([
+          db.product.update({ where: { id }, data: { stockOnHand: binTotal } }),
+          db.stockLedger.create({
+            data: {
+              productId: id,
+              warehouseId: wh.id,
+              txnType: "Adjust",
+              ref,
+              qty: delta,
+              balance: binTotal,
+            },
+          }),
+        ]);
+      }
+
+      return { before, after: binTotal, delta, binTotal };
+    }
+  );
+
+  // ================================================================
+  // POST /products/:id/variants/:vid/adjust-stock
+  // Corrects a variant's stockOnHand counter to newQty, creating an
+  // Adjust ledger entry for the delta.  Does NOT touch bin quantities.
+  // ================================================================
+  app.post(
+    "/products/:id/variants/:vid/adjust-stock",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      if (!requireWriter(req, reply)) return;
+      const { id, vid } = req.params as { id: string; vid: string };
+      const { newQty } = z.object({ newQty: z.number().int().min(0) }).parse(req.body);
+
+      const variant = await db.productVariant.findUnique({
+        where: { id: vid, productId: id },
+        select: { id: true, stockOnHand: true, sku: true },
+      });
+      if (!variant) return reply.code(404).send({ error: { code: "not_found" } });
+
+      const before = variant.stockOnHand;
+      const delta = newQty - before;
+
+      if (delta !== 0) {
+        const wh = await db.warehouse.findFirst({ orderBy: { code: "asc" }, select: { id: true } });
+        if (!wh) return reply.code(409).send({ error: { code: "no_warehouse", message: "No warehouse found." } });
+        const year = new Date().getUTCFullYear();
+        const ref = `ADJ-V-${year}-${Date.now().toString().slice(-6)}`;
+        await db.$transaction([
+          db.productVariant.update({ where: { id: vid }, data: { stockOnHand: newQty } }),
+          db.product.update({ where: { id }, data: { stockOnHand: { increment: delta } } }),
+          db.stockLedger.create({
+            data: {
+              productId: id,
+              warehouseId: wh.id,
+              txnType: "Adjust",
+              ref,
+              qty: delta,
+              balance: newQty,
+            },
+          }),
+        ]);
+      }
+
+      return { sku: variant.sku, before, after: newQty, delta };
+    }
+  );
+
+  // ================================================================
+  // GET /products/:id/bin-stock
+  // Returns the sum of all bin qty for a product, plus per-warehouse
+  // breakdown, so the UI can show "bin total" vs "counter".
+  // ================================================================
+  app.get(
+    "/products/:id/bin-stock",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      const id = (req.params as { id: string }).id;
+      const bins = await db.bin.findMany({
+        where: { productId: id },
+        select: { qty: true, reservedQty: true, zone: true, shelf: true, bin: true, warehouse: { select: { code: true } } },
+      });
+      const total = bins.reduce((s, b) => s + b.qty, 0);
+      const free  = bins.reduce((s, b) => s + (b.qty - b.reservedQty), 0);
+      return {
+        total,
+        free,
+        bins: bins.map((b) => ({
+          warehouse: b.warehouse.code,
+          location: `${b.zone}/${b.shelf}/${b.bin}`,
+          qty: b.qty,
+          reserved: b.reservedQty,
+          free: b.qty - b.reservedQty,
+        })),
+      };
+    }
+  );
+
+  // ================================================================
   // Product + Variant image upload
   // POST /products/:id/image          — upload / replace product photo
   // POST /products/:id/variants/:vid/image — upload / replace variant photo
-  //
   // Storage:
   //   product  images → uploads/products/<productId>.jpg
   //   variant  images → uploads/products/variants/<variantId>.jpg

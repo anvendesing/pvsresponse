@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { db } from "../db.js";
 import { recordChange } from "../sync/log.js";
+import { checkStockRules } from "../lib/stock-rules.js";
 
 const transferSchema = z.object({
   productId: z.string(),
@@ -16,6 +17,8 @@ const transferSchema = z.object({
 const adjustSchema = z.object({
   productId: z.string(),
   warehouseId: z.string(),
+  /** When set, the delta is applied to this bin (Manufacturing reads bin qty). */
+  binId: z.string().optional(),
   qty: z.number(),
   reason: z.string().min(2),
 });
@@ -128,24 +131,50 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
 
     const result = await db.$transaction(async (tx) => {
       const adjNo = await nextAdjustNo(tx as unknown as typeof db);
-      let bin = await tx.bin.findFirst({
-        where: { warehouseId: body.warehouseId, productId: body.productId },
-        orderBy: { qty: "desc" },
-      });
-      if (!bin && body.qty > 0) {
-        // Create a "RECEIVING" bin if none holds this product yet, so
-        // a positive adjustment has somewhere to land.
-        bin = await tx.bin.findFirst({
-          where: { warehouseId: body.warehouseId, productId: null, reservedQty: 0 },
-          orderBy: { createdAt: "asc" },
+      let bin: { id: string; zone: string; shelf: string; bin: string; qty: number; productId: string | null } | null =
+        null;
+
+      if (body.binId) {
+        const picked = await tx.bin.findFirst({
+          where: { id: body.binId, warehouseId: body.warehouseId },
         });
-        if (bin) {
-          await tx.bin.update({
-            where: { id: bin.id },
-            data: { productId: body.productId },
+        if (!picked) throw new Error("bin_not_found");
+        if (body.qty < 0 && picked.productId !== body.productId) {
+          throw new Error("bin_product_mismatch");
+        }
+        if (body.qty > 0) {
+          if (picked.productId && picked.productId !== body.productId) {
+            throw new Error("bin_product_mismatch");
+          }
+          if (!picked.productId) {
+            await tx.bin.update({
+              where: { id: picked.id },
+              data: { productId: body.productId },
+            });
+          }
+        }
+        bin = { ...picked, productId: picked.productId ?? body.productId };
+      } else {
+        bin = await tx.bin.findFirst({
+          where: { warehouseId: body.warehouseId, productId: body.productId },
+          orderBy: { qty: "desc" },
+        });
+        if (!bin && body.qty > 0) {
+          // Land positive stock in the first empty bin in this warehouse.
+          const empty = await tx.bin.findFirst({
+            where: { warehouseId: body.warehouseId, productId: null, reservedQty: 0 },
+            orderBy: { createdAt: "asc" },
           });
+          if (empty) {
+            await tx.bin.update({
+              where: { id: empty.id },
+              data: { productId: body.productId },
+            });
+            bin = { ...empty, productId: body.productId };
+          }
         }
       }
+
       if (!bin) {
         throw new Error("no_bin_available");
       }
@@ -209,11 +238,29 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
         });
         return null;
       }
+      if (code === "bin_not_found") {
+        reply.code(404).send({
+          error: { code: "bin_not_found", message: "Bin not found in this warehouse." },
+        });
+        return null;
+      }
+      if (code === "bin_product_mismatch") {
+        reply.code(409).send({
+          error: {
+            code: "bin_product_mismatch",
+            message: "That bin holds a different product. Pick another bin or use an empty slot.",
+          },
+        });
+        return null;
+      }
       throw e;
     });
     if (!result) return;
 
     await recordChange("StockLedger", result.ledger.id, "insert", result.ledger, req.user.sub);
+    if (body.qty < 0 && body.binId) {
+      await checkStockRules(body.binId, req.user.sub);
+    }
     return { ...result.ledger, newSoh: result.newSoh };
   });
 

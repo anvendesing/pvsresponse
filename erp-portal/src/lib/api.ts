@@ -160,6 +160,10 @@ import type {
   Bin,
   Bom,
   DispatchOrder,
+  Enquiry,
+  EnquiryInput,
+  EnquiryItemInput,
+  EnquiryStats,
   Invoice,
   Product,
   ProductVariant,
@@ -313,6 +317,54 @@ export interface PutawayRuleRow {
 }
 
 // =====================================================================
+// Stock rules (min-qty triggers)
+// =====================================================================
+
+export interface StockRuleRow {
+  id: string;
+  productId: string;
+  variantId: string | null;
+  monitorBinId: string;
+  minQty: number;
+  triggerType: "mo" | "transfer";
+  bomId: string | null;
+  sourceBinId: string | null;
+  toWarehouseId: string | null;
+  toBinId: string | null;
+  tags: string | null;
+  active: boolean;
+  notes: string | null;
+  createdAt: string;
+  updatedAt: string;
+  product: { id: string; sku: string; name: string };
+  variant: { id: string; sku: string; size: string | null; color: string | null } | null;
+  monitorBin: {
+    id: string;
+    zone: string;
+    shelf: string;
+    bin: string;
+    qty: number;
+    warehouse: { id: string; code: string };
+  };
+  bom: { id: string; revision: string; outputQty: number } | null;
+  sourceBin: {
+    id: string;
+    zone: string;
+    shelf: string;
+    bin: string;
+    warehouse: { code: string };
+  } | null;
+  toBin: {
+    id: string;
+    zone: string;
+    shelf: string;
+    bin: string;
+    warehouse: { code: string };
+  } | null;
+  toWarehouse: { id: string; code: string; name: string } | null;
+}
+
+// =====================================================================
 // Transfer orders
 // =====================================================================
 
@@ -349,6 +401,7 @@ export interface TransferOrderRow {
   droppedAt: string | null;
   cancelledAt: string | null;
   notes: string | null;
+  tags: string | null;
   createdAt: string;
   updatedAt: string;
   fromWarehouse: { id: string; code: string; name: string; kind: string };
@@ -630,10 +683,76 @@ export interface WhereUsedRow {
 
 // Requirements for a production order: explosion + on-hand totals so
 // the UI can render a shortage badge.
+/** Bin/warehouse trail for an MO (issue, receipt, transfers). */
+export interface MoInventoryTrail {
+  productionOrderId: string;
+  orderNo: string;
+  status: string;
+  finishedGood: {
+    productId: string;
+    sku: string;
+    name: string;
+    uom: string;
+  };
+  productionLineWarehouse: {
+    code: string;
+    name: string;
+    kind: string;
+  } | null;
+  materialsConsumed: Array<{
+    productId: string;
+    sku: string;
+    name: string;
+    warehouseCode: string;
+    warehouseName: string;
+    warehouseKind: string;
+    binPath: string;
+    qty: number;
+    txnTypes: string[];
+    lastDate: string;
+  }>;
+  finishedGoodsPosted: Array<{
+    productId: string;
+    sku: string;
+    name: string;
+    warehouseCode: string;
+    warehouseName: string;
+    warehouseKind: string;
+    binPath: string;
+    qty: number;
+    txnTypes: string[];
+    lastDate: string;
+  }>;
+  transfers: Array<{
+    id: string;
+    transferNo: string;
+    kind: string;
+    status: string;
+    fromWarehouseCode: string;
+    fromWarehouseName: string;
+    toWarehouseCode: string;
+    toWarehouseName: string;
+    items: Array<{
+      sku: string;
+      name: string;
+      qtyRequested: number;
+      qtyPicked: number;
+      qtyDropped: number;
+      fromBinPath: string | null;
+      toBinPath: string | null;
+    }>;
+  }>;
+  hasActivity: boolean;
+}
+
 export interface MoRequirements {
   productionOrderId: string;
   plannedFor: number;
+  orderNo: string;
+  status: string;
   anyShortage: boolean;
+  allFullyIssued: boolean;
+  materialsIssued: boolean;
   lines: Array<{
     productId: string;
     sku: string;
@@ -641,6 +760,8 @@ export interface MoRequirements {
     uom: string;
     path: string[];
     required: number;
+    issued: number;
+    stillNeeded: number;
     onHand: number;
     free: number;
     shortage: number;
@@ -1532,6 +1653,70 @@ export const api = {
     }
     return res.json();
   },
+  // Stock reconciliation
+  productBinStock: (productId: string): Promise<{ total: number; free: number; bins: { warehouse: string; location: string; qty: number; reserved: number; free: number }[] }> =>
+    fetcher(`/products/${productId}/bin-stock`),
+  syncProductStock: (productId: string): Promise<{ before: number; after: number; delta: number; binTotal: number }> =>
+    fetcher(`/products/${productId}/sync-stock`, { method: "POST" }),
+  adjustVariantStock: (productId: string, variantId: string, newQty: number): Promise<{ sku: string; before: number; after: number; delta: number }> =>
+    fetcher(`/products/${productId}/variants/${variantId}/adjust-stock`, { method: "POST", body: { newQty } }),
+  adjustStock: (body: {
+    productId: string;
+    warehouseId: string;
+    qty: number;
+    reason: string;
+    binId?: string;
+  }): Promise<{ ledger: StockLedgerEntry; newSoh: number }> =>
+    fetcher(`/inventory/adjust`, { method: "POST", body }),
+  // ── Enquiries / CRM ────────────────────────────────────────────────
+  enquiryStats: (): Promise<EnquiryStats> => fetcher<EnquiryStats>("/enquiries/stats"),
+  enquiries: (q?: {
+    stage?: string;
+    type?: string;
+    assignedToId?: string;
+    q?: string;
+    followUpsDue?: string;
+    limit?: string;
+  }): Promise<Enquiry[]> => fetcher<Enquiry[]>("/enquiries", { query: q }),
+  enquiry: (id: string): Promise<Enquiry> => fetcher<Enquiry>(`/enquiries/${id}`),
+  createEnquiry: (body: EnquiryInput): Promise<Enquiry> =>
+    fetcher<Enquiry>("/enquiries", { method: "POST", body }),
+  updateEnquiry: (id: string, body: Partial<EnquiryInput>): Promise<Enquiry> =>
+    fetcher<Enquiry>(`/enquiries/${id}`, { method: "PATCH", body }),
+  setEnquiryItems: (id: string, items: EnquiryItemInput[]): Promise<Enquiry> =>
+    fetcher<Enquiry>(`/enquiries/${id}/items`, { method: "PUT", body: { items } }),
+  setEnquiryStage: (
+    id: string,
+    stage: string,
+    lostReason?: string
+  ): Promise<Enquiry> =>
+    fetcher<Enquiry>(`/enquiries/${id}/stage`, {
+      method: "PATCH",
+      body: { stage, ...(lostReason ? { lostReason } : {}) },
+    }),
+  addEnquiryActivity: (
+    id: string,
+    body: { type?: string; body: string; outcome?: string | null; dueAt?: string | null }
+  ): Promise<unknown> =>
+    fetcher(`/enquiries/${id}/activities`, { method: "POST", body }),
+  completeEnquiryTask: (id: string, actId: string): Promise<unknown> =>
+    fetcher(`/enquiries/${id}/activities/${actId}/complete`, { method: "PATCH" }),
+  convertEnquiry: (
+    id: string,
+    body?: {
+      customerId?: string | null;
+      name?: string | null;
+      gst?: string | null;
+      city?: string | null;
+      contact?: string | null;
+      priceListId?: string | null;
+      creditLimit?: number | null;
+      markWon?: boolean;
+    }
+  ): Promise<{ enquiry: Enquiry; customerId: string }> =>
+    fetcher(`/enquiries/${id}/convert`, { method: "POST", body: body ?? {} }),
+  deleteEnquiry: (id: string): Promise<{ ok: boolean }> =>
+    fetcher(`/enquiries/${id}`, { method: "DELETE" }),
   customers: (opts?: { includeInactive?: boolean }): Promise<CustomerRow[]> =>
     fetcher<CustomerRow[]>("/customers", {
       query: opts?.includeInactive ? { includeInactive: "1" } : undefined,
@@ -1878,6 +2063,8 @@ export const api = {
   }) => fetcher<Raw>("/production-orders", { method: "POST", body }),
   productionOrderRequirements: (id: string) =>
     fetcher<MoRequirements>(`/production-orders/${id}/requirements`),
+  productionOrderInventoryTrail: (id: string) =>
+    fetcher<MoInventoryTrail>(`/production-orders/${id}/inventory-trail`),
   issueMaterials: (id: string, body?: { warehouseId?: string; allowShort?: boolean }) =>
     fetcher<{
       issued: Array<{ productId: string; sku: string; requested: number; issued: number }>;
@@ -1944,6 +2131,58 @@ export const api = {
   ) => fetcher<PutawayRuleRow>(`/putaway-rules/${id}`, { method: "PATCH", body }),
   deletePutawayRule: (id: string) =>
     fetcher<{ deleted: boolean }>(`/putaway-rules/${id}`, { method: "DELETE" }),
+
+  // ---- Stock rules ----
+  stockRules: (q?: { productId?: string; variantId?: string; active?: boolean }) =>
+    fetcher<StockRuleRow[]>("/stock-rules", {
+      query: {
+        ...(q?.productId ? { productId: q.productId } : {}),
+        ...(q?.variantId ? { variantId: q.variantId } : {}),
+        ...(q?.active !== undefined ? { active: q.active ? "1" : "0" } : {}),
+      },
+    }),
+  createStockRule: (body: {
+    productId: string;
+    variantId?: string | null;
+    monitorBinId: string;
+    minQty: number;
+    triggerType: "mo" | "transfer";
+    bomId?: string | null;
+    sourceBinId?: string | null;
+    toWarehouseId?: string | null;
+    toBinId?: string | null;
+    tags?: string | null;
+    active?: boolean;
+    notes?: string | null;
+  }) => fetcher<StockRuleRow>("/stock-rules", { method: "POST", body }),
+  updateStockRule: (
+    id: string,
+    body: Partial<{
+      monitorBinId: string;
+      minQty: number;
+      triggerType: "mo" | "transfer";
+      bomId: string | null;
+      sourceBinId: string | null;
+      toWarehouseId: string | null;
+      toBinId: string | null;
+      tags: string | null;
+      active: boolean;
+      notes: string | null;
+    }>
+  ) => fetcher<StockRuleRow>(`/stock-rules/${id}`, { method: "PATCH", body }),
+  deleteStockRule: (id: string) =>
+    fetcher<{ deleted: boolean }>(`/stock-rules/${id}`, { method: "DELETE" }),
+  checkAllStockRules: () =>
+    fetcher<{
+      checked: number;
+      triggered: number;
+      results: Array<{
+        ruleId: string;
+        triggerType: string;
+        created: { type: string; id: string; documentNo: string } | null;
+        skippedReason?: string;
+      }>;
+    }>("/stock-rules/check-all", { method: "POST", body: {} }),
 
   // ---- Transfer orders ----
   transferOrders: (q?: {

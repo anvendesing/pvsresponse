@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   ArrowDownToLine,
   ArrowUpFromLine,
@@ -9,7 +10,9 @@ import {
   RefreshCw,
   Search,
   ShieldAlert,
+  SlidersHorizontal,
   Truck,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Card } from "@/components/common/Card";
@@ -18,10 +21,11 @@ import { DataTable, type Column } from "@/components/common/DataTable";
 import { Input } from "@/components/common/Input";
 import { Kpi } from "@/components/common/Kpi";
 import { Toolbar } from "@/components/common/Toolbar";
-import type { StockLedgerEntry } from "@/data/types";
+import type { Bin, StockLedgerEntry } from "@/data/types";
 import { dt, inr, num } from "@/lib/format";
 import { api } from "@/lib/api";
 import { useApi } from "@/hooks/useApi";
+import { cn } from "@/lib/cn";
 import { EmptyState } from "@/components/common/EmptyState";
 import { BulkOrderExportModal } from "@/components/sales/BulkOrderExportModal";
 
@@ -43,12 +47,42 @@ const txTone = (t: StockLedgerEntry["txnType"]) => {
 };
 
 export const Inventory = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [tab, setTab] = useState<"ledger" | "valuation" | "batches">("ledger");
   const [q, setQ] = useState("");
   const [exportOpen, setExportOpen] = useState(false);
+  const [adjustOpen, setAdjustOpen] = useState(false);
+  const [adjustPrefill, setAdjustPrefill] = useState<{
+    productId?: string;
+    warehouseId?: string;
+    delta?: number;
+    fromManufacturing?: boolean;
+  } | null>(null);
+
+  // Deep-link from Manufacturing shortage rows: /inventory?adjust=1&productId=…&delta=…
+  useEffect(() => {
+    if (searchParams.get("adjust") !== "1") return;
+    setAdjustPrefill({
+      productId: searchParams.get("productId") ?? undefined,
+      warehouseId: searchParams.get("warehouseId") ?? undefined,
+      delta: searchParams.get("delta")
+        ? Number(searchParams.get("delta"))
+        : undefined,
+      fromManufacturing: searchParams.get("from") === "mfg",
+    });
+    setAdjustOpen(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete("adjust");
+    next.delete("productId");
+    next.delete("warehouseId");
+    next.delete("delta");
+    next.delete("from");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   const liveLedger = useApi(() => api.ledger({ limit: 200 }), []);
   const liveProducts = useApi(() => api.products({ limit: 500 }), []);
+  const liveWarehouses = useApi(() => api.warehouses(), []);
   const stockLedger = liveLedger.data ?? [];
   const products = liveProducts.data ?? [];
   const loading = liveLedger.loading || liveProducts.loading;
@@ -234,6 +268,15 @@ export const Inventory = () => {
             >
               Bulk Order Excel
             </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              icon={<SlidersHorizontal size={14} />}
+              onClick={() => setAdjustOpen(true)}
+              title="Adjust stock on hand (recount / damage / found)"
+            >
+              Adjust Stock
+            </Button>
             <Button size="sm" icon={<ArrowDownToLine size={14} />}>
               GRN · F2
             </Button>
@@ -355,6 +398,348 @@ export const Inventory = () => {
       {exportOpen && (
         <BulkOrderExportModal onClose={() => setExportOpen(false)} />
       )}
+
+      {adjustOpen && (
+        <AdjustStockModal
+          products={products}
+          warehouses={liveWarehouses.data ?? []}
+          prefill={adjustPrefill}
+          onClose={() => {
+            setAdjustOpen(false);
+            setAdjustPrefill(null);
+          }}
+          onSaved={() => {
+            setAdjustOpen(false);
+            setAdjustPrefill(null);
+            void liveLedger.refetch();
+            void liveProducts.refetch();
+          }}
+        />
+      )}
+    </div>
+  );
+};
+
+// ─── Adjust Stock modal ────────────────────────────────────────────────────
+// Manufacturing "In bins" uses Bin.qty (summed). This form adjusts a specific
+// bin (or auto-picks one) so Refresh on the MO requirements panel updates.
+const ADJUST_REASONS = [
+  "Physical recount",
+  "Damaged / spoilage",
+  "Found stock",
+  "Opening balance",
+  "Mfg replenishment",
+  "Theft / loss",
+  "Other",
+];
+
+type BinRow = Bin & { productId?: string | null };
+
+const AdjustStockModal = ({
+  products,
+  warehouses,
+  prefill,
+  onClose,
+  onSaved,
+}: {
+  products: { id: string; sku: string; name: string; stockOnHand: number }[];
+  warehouses: { id: string; code: string; name: string }[];
+  prefill: {
+    productId?: string;
+    warehouseId?: string;
+    delta?: number;
+    fromManufacturing?: boolean;
+  } | null;
+  onClose: () => void;
+  onSaved: () => void;
+}) => {
+  const defaultWh =
+    prefill?.warehouseId ??
+    warehouses.find((w) => w.code === "WH-MAIN")?.id ??
+    warehouses[0]?.id ??
+    "";
+
+  const [productId, setProductId] = useState(prefill?.productId ?? "");
+  const [warehouseId, setWarehouseId] = useState(defaultWh);
+  const [binId, setBinId] = useState("");
+  const [mode, setMode] = useState<"delta" | "count">("delta");
+  const [amount, setAmount] = useState(
+    prefill?.delta != null && prefill.delta > 0 ? String(prefill.delta) : ""
+  );
+  const [reason, setReason] = useState(
+    prefill?.fromManufacturing ? "Mfg replenishment" : ADJUST_REASONS[0]
+  );
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [bins, setBins] = useState<BinRow[]>([]);
+  const [binsLoading, setBinsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!warehouseId) {
+      setBins([]);
+      setBinId("");
+      return;
+    }
+    setBinsLoading(true);
+    api
+      .bins(warehouseId)
+      .then((rows) => {
+        setBins(rows as BinRow[]);
+        setBinsLoading(false);
+      })
+      .catch(() => {
+        setBins([]);
+        setBinsLoading(false);
+      });
+  }, [warehouseId]);
+
+  const selected = products.find((p) => p.id === productId);
+  const productBins = useMemo(() => {
+    if (!productId) return { holding: [] as BinRow[], empty: [] as BinRow[] };
+    const holding = bins.filter((b) => b.productSku === selected?.sku || (b as BinRow & { productId?: string }).productId === productId);
+    const empty = bins.filter((b) => !b.productSku && (b.qty ?? 0) === 0);
+    return { holding, empty };
+  }, [bins, productId, selected?.sku]);
+
+  const selectedBin = bins.find((b) => b.id === binId);
+  const binQty = selectedBin?.qty ?? 0;
+  const whTotalInBins = useMemo(
+    () =>
+      productId
+        ? bins
+            .filter((b) => b.productSku === selected?.sku)
+            .reduce((s, b) => s + (b.qty ?? 0), 0)
+        : 0,
+    [bins, productId, selected?.sku]
+  );
+
+  const parsed = Number(amount);
+  const countBase = binId ? binQty : whTotalInBins;
+  const delta =
+    mode === "count"
+      ? Number.isFinite(parsed)
+        ? parsed - countBase
+        : 0
+      : parsed;
+  const previewBin = binId ? binQty + (Number.isFinite(delta) ? delta : 0) : null;
+  const previewWh = whTotalInBins + (Number.isFinite(delta) ? delta : 0);
+
+  const submit = async () => {
+    setError(null);
+    if (!productId) return setError("Pick a product.");
+    if (!warehouseId) return setError("Pick a warehouse.");
+    if (!binId && productBins.holding.length === 0 && productBins.empty.length === 0 && bins.length > 0) {
+      return setError("Pick a bin (empty slot) or create bins in Warehouse first.");
+    }
+    if (!Number.isFinite(parsed) || amount.trim() === "") return setError("Enter a quantity.");
+    if (delta === 0) return setError("No change — quantity already matches.");
+    if (binId && previewBin != null && previewBin < 0) {
+      return setError(`Bin would go negative (${previewBin}).`);
+    }
+    if (!binId && delta < 0 && previewWh < 0) {
+      return setError(`Not enough stock in this warehouse (${whTotalInBins} in bins).`);
+    }
+    setBusy(true);
+    try {
+      const fullReason = note.trim() ? `${reason} — ${note.trim()}` : reason;
+      await api.adjustStock({
+        productId,
+        warehouseId,
+        qty: delta,
+        reason: fullReason,
+        ...(binId ? { binId } : {}),
+      });
+      onSaved();
+    } catch (e) {
+      setError((e as Error).message);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[60] bg-ink/40 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-surface w-full max-w-xl rounded-lg elevation-3 flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
+        <div className="px-5 py-3 border-b border-border flex items-start justify-between gap-3">
+          <div>
+            <div className="text-h3 font-bold">Adjust bin stock</div>
+            <div className="text-caption text-ink-muted">
+              Manufacturing reads <strong>In bins</strong> (physical bin qty), not the product counter.
+            </div>
+          </div>
+          <button onClick={onClose} className="h-9 w-9 grid place-items-center rounded-md text-ink-muted hover:bg-canvas shrink-0">
+            <X size={18} />
+          </button>
+        </div>
+
+        {prefill?.fromManufacturing && (
+          <div className="mx-5 mt-3 rounded-md bg-warning-soft border border-warning/30 px-3 py-2 text-body-sm text-[#8a6300]">
+            Opened from Manufacturing. After posting, go back and click <strong>Refresh</strong> on material requirements.
+          </div>
+        )}
+
+        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
+          <label className="flex flex-col gap-1.5">
+            <span className="text-caption font-medium">Product</span>
+            <select
+              value={productId}
+              onChange={(e) => {
+                setProductId(e.target.value);
+                setBinId("");
+              }}
+              className="h-10 px-2 rounded-md border border-border bg-surface text-body"
+            >
+              <option value="">Select a product…</option>
+              {products.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.sku} · {p.name} (counter {p.stockOnHand})
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="flex flex-col gap-1.5">
+            <span className="text-caption font-medium">Warehouse</span>
+            <select
+              value={warehouseId}
+              onChange={(e) => {
+                setWarehouseId(e.target.value);
+                setBinId("");
+              }}
+              className="h-10 px-2 rounded-md border border-border bg-surface text-body"
+            >
+              {warehouses.map((w) => (
+                <option key={w.id} value={w.id}>
+                  {w.code} · {w.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {productId && warehouseId && (
+            <div className="rounded-md border border-border bg-canvas px-3 py-2 text-body-sm space-y-1">
+              <div className="flex justify-between">
+                <span className="text-ink-muted">In bins (this warehouse)</span>
+                <span className="tnum font-semibold">{num(whTotalInBins)}</span>
+              </div>
+              <div className="flex justify-between text-caption">
+                <span className="text-ink-muted">Product counter (all warehouses)</span>
+                <span className="tnum">{selected?.stockOnHand ?? 0}</span>
+              </div>
+            </div>
+          )}
+
+          {productId && warehouseId && (
+            <label className="flex flex-col gap-1.5">
+              <span className="text-caption font-medium">Target bin</span>
+              {binsLoading ? (
+                <div className="text-caption text-ink-muted py-2">Loading bins…</div>
+              ) : (
+                <select
+                  value={binId}
+                  onChange={(e) => setBinId(e.target.value)}
+                  className="h-10 px-2 rounded-md border border-border bg-surface text-body"
+                >
+                  <option value="">Auto (largest bin or first empty)</option>
+                  {productBins.holding.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.zone}/{b.shelf}/{b.bin} — qty {b.qty ?? 0}
+                    </option>
+                  ))}
+                  {productBins.empty.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.zone}/{b.shelf}/{b.bin} — empty (assign product here)
+                    </option>
+                  ))}
+                </select>
+              )}
+              {!binsLoading && productBins.holding.length === 0 && productBins.empty.length === 0 && (
+                <div className="text-caption text-danger">
+                  No bins in this warehouse. Create bins under <strong>Warehouse</strong> first.
+                </div>
+              )}
+            </label>
+          )}
+
+          <div className="flex rounded-md border border-border overflow-hidden w-max">
+            <button
+              type="button"
+              onClick={() => setMode("delta")}
+              className={cn("px-3 h-8 text-body-sm", mode === "delta" ? "bg-primary text-white" : "bg-surface text-ink-muted")}
+            >
+              Add / remove (±)
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode("count")}
+              className={cn("px-3 h-8 text-body-sm", mode === "count" ? "bg-primary text-white" : "bg-surface text-ink-muted")}
+            >
+              Set {binId ? "bin" : "warehouse"} total
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <Input
+              label={
+                mode === "delta"
+                  ? "Change (+ add / − remove)"
+                  : binId
+                    ? `New qty in ${selectedBin?.zone}/${selectedBin?.shelf}/${selectedBin?.bin}`
+                    : "New total in this warehouse"
+              }
+              type="number"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder={mode === "delta" ? "e.g. 25" : String(countBase)}
+            />
+            <label className="flex flex-col gap-1.5">
+              <span className="text-caption font-medium">Reason</span>
+              <select value={reason} onChange={(e) => setReason(e.target.value)} className="h-10 px-2 rounded-md border border-border bg-surface text-body">
+                {ADJUST_REASONS.map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <Input label="Note (optional)" value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. MO-2026-0042 shortage" />
+
+          {productId && Number.isFinite(delta) && delta !== 0 && (
+            <div className="rounded-md bg-canvas border border-border px-3 py-2 text-body-sm">
+              {binId ? (
+                <span className="tnum">
+                  Bin qty: {binQty}{" "}
+                  <span className={cn("font-semibold", delta > 0 ? "text-success" : "text-danger")}>
+                    {delta > 0 ? `+${delta}` : delta}
+                  </span>{" "}
+                  → <strong>{previewBin}</strong>
+                </span>
+              ) : (
+                <span className="tnum">
+                  WH bins total: {whTotalInBins}{" "}
+                  <span className={cn("font-semibold", delta > 0 ? "text-success" : "text-danger")}>
+                    {delta > 0 ? `+${delta}` : delta}
+                  </span>{" "}
+                  → <strong>{previewWh}</strong>
+                </span>
+              )}
+            </div>
+          )}
+
+          {error && <div className="text-body-sm text-danger">{error}</div>}
+        </div>
+
+        <div className="border-t border-border px-5 py-3 flex justify-end gap-2">
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button loading={busy} onClick={submit}>
+            Post to bin
+          </Button>
+        </div>
+      </div>
     </div>
   );
 };

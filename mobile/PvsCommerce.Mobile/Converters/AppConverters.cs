@@ -1,72 +1,74 @@
 using System;
 using System.Globalization;
-using Avalonia;
 using Avalonia.Data.Converters;
-using Avalonia.Media;
 
 namespace PvsCommerce.Mobile.Converters;
 
-// Tab border: bottom-border-only (0,0,0,2) when active, else 0
-public sealed class TabBorderConverter : IValueConverter
+// Returns true when bound int > 0 (used for cart count badge visibility,
+// order count, etc.).
+public sealed class GreaterThanZeroConverter : IValueConverter
 {
-    public static readonly TabBorderConverter Instance = new();
-    public object Convert(object? value, Type t, object? p, CultureInfo c)
-        => (string?)value == (string?)p ? new Thickness(0, 0, 0, 2) : new Thickness(0);
-    public object ConvertBack(object? value, Type t, object? p, CultureInfo c)
+    public static readonly GreaterThanZeroConverter Instance = new();
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => value switch
+        {
+            int i    => i > 0,
+            long l   => l > 0,
+            double d => d > 0,
+            _ => false,
+        };
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
         => throw new NotSupportedException();
 }
 
-// Tab visible: true when active tab == parameter
-public sealed class TabVisibleConverter : IValueConverter
+// Compares the bound value against ConverterParameter using string equality.
+// Used to drive "active" visual state on tab pills / nav buttons by binding
+// to the active tab/category/method id.
+public sealed class EqualsParamConverter : IValueConverter
 {
-    public static readonly TabVisibleConverter Instance = new();
-    public object Convert(object? value, Type t, object? p, CultureInfo c)
-        => (string?)value == (string?)p;
-    public object ConvertBack(object? value, Type t, object? p, CultureInfo c)
+    public static readonly EqualsParamConverter Instance = new();
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => string.Equals(value?.ToString(), parameter?.ToString(), StringComparison.Ordinal);
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
         => throw new NotSupportedException();
 }
 
-// Wishlist emoji: ❤️ when wished, 🤍 otherwise
-public sealed class WishlistEmojiConverter : IValueConverter
+// Format a double price as ₹1,234/-.
+public sealed class IndianRupeeConverter : IValueConverter
 {
-    public static readonly WishlistEmojiConverter Instance = new();
-    public object Convert(object? value, Type t, object? p, CultureInfo c)
-        => value is true ? "❤️" : "🤍";
-    public object ConvertBack(object? value, Type t, object? p, CultureInfo c)
+    public static readonly IndianRupeeConverter Instance = new();
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        if (value is null) return "";
+        var d = System.Convert.ToDouble(value, CultureInfo.InvariantCulture);
+        return "₹" + d.ToString("N0", CultureInfo.GetCultureInfo("en-IN")) + "/-";
+    }
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
         => throw new NotSupportedException();
 }
 
-// Chip background: forest-soft when selected, light when not
-public sealed class SelectedChipBgConverter : IValueConverter
+// Maps a category id ("oils", "grains", etc.) to its bundled PNG resource.
+public sealed class CategoryImageConverter : IValueConverter
 {
-    public static readonly SelectedChipBgConverter Instance = new();
-    public object? Convert(object? value, Type t, object? p, CultureInfo c)
-        => value is true
-            ? new SolidColorBrush(Color.Parse("#385F1C"))
-            : new SolidColorBrush(Color.Parse("#FAFAF9"));
-    public object ConvertBack(object? v, Type t, object? p, CultureInfo c)
+    public static readonly CategoryImageConverter Instance = new();
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+        => $"avares://PvsCommerce.Mobile/Assets/Categories/category_{value}.png";
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
         => throw new NotSupportedException();
 }
 
-// Chip foreground: white when selected, dark otherwise
-public sealed class SelectedChipFgConverter : IValueConverter
+// Convert a hex string like "#FCE7AD" into a SolidColorBrush. Used for the
+// per-product pouch tint where the colour is computed in the VM.
+public sealed class HexBrushConverter : IValueConverter
 {
-    public static readonly SelectedChipFgConverter Instance = new();
-    public object? Convert(object? value, Type t, object? p, CultureInfo c)
-        => value is true
-            ? new SolidColorBrush(Colors.White)
-            : new SolidColorBrush(Color.Parse("#22251F"));
-    public object ConvertBack(object? v, Type t, object? p, CultureInfo c)
-        => throw new NotSupportedException();
-}
-
-// InrConverter: double → "₹1,234"
-public sealed class InrConverter : IValueConverter
-{
-    public static readonly InrConverter Instance = new();
-    private static readonly CultureInfo En = CultureInfo.GetCultureInfo("en-IN");
-    public object? Convert(object? value, Type t, object? p, CultureInfo c)
-        => value is double d ? "₹" + d.ToString("N0", En) : "₹0";
-    public object ConvertBack(object? v, Type t, object? p, CultureInfo c)
+    public static readonly HexBrushConverter Instance = new();
+    public object? Convert(object? value, Type targetType, object? parameter, CultureInfo culture)
+    {
+        var s = value as string;
+        if (string.IsNullOrEmpty(s)) return Avalonia.Media.Brushes.Transparent;
+        try { return new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.Parse(s)); }
+        catch { return Avalonia.Media.Brushes.Transparent; }
+    }
+    public object? ConvertBack(object? value, Type targetType, object? parameter, CultureInfo culture)
         => throw new NotSupportedException();
 }

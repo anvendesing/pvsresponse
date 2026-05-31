@@ -1,57 +1,74 @@
-﻿using CommunityToolkit.Mvvm.ComponentModel;
+using System;
+using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using PvsCommerce.Mobile.Services;
 
 namespace PvsCommerce.Mobile.ViewModels;
 
-// Shell view-model. Owns CurrentPage (bound to a ContentControl in MainView)
-// and the bottom navigation bar. All routing flows through NavigationService.
+// Shell view-model. Owns the active tab (string id), the open/closed state
+// for the two modal sheets, and exposes the per-tab view-models so the
+// MainView can switch by visibility instead of a content swap. This mirrors
+// the HTML mock where every screen lives inside the single phone viewport
+// and active tabs simply toggle the .active class.
 public partial class MainViewModel : ViewModelBase
 {
-    private readonly NavigationService _nav;
-    private readonly HomeViewModel _home;
-
-    public MainViewModel(NavigationService nav, HomeViewModel home, CartService cart, AuthService auth)
-    {
-        _nav = nav;
-        _home = home;
-        Cart = cart;
-        Auth = auth;
-
-        // Start on the home page
-        _nav.NavigateTo(home);
-        _ = home.LoadAsync();
-    }
-
-    // Expose navigation state to the shell view
-    public NavigationService Navigation => _nav;
     public CartService Cart { get; }
     public AuthService Auth { get; }
 
-    [RelayCommand]
-    private void GoBack() => _nav.GoBack();
-
-    // ── Bottom nav ──────────────────────────────────────────────────────────
-    [RelayCommand]
-    private void GoHome()
+    public MainViewModel(CartService cart, AuthService auth)
     {
-        _nav.NavigateRoot(_home);
-        // Reload if catalog has already been fetched (no-op due to cache)
-        _ = _home.LoadAsync();
+        Cart = cart; Auth = auth;
+    }
+
+    // Wired up after construction via App.OnFrameworkInitializationCompleted
+    // because each per-tab VM also needs MainViewModel.
+    public ShopViewModel?     Shop     { get; set; }
+    public ExploreViewModel?  Explore  { get; set; }
+    public CartViewModel?     CartTab  { get; set; }
+    public ProfileViewModel?  Profile  { get; set; }
+    public AuthViewModel?     AuthTab  { get; set; }
+    public CheckoutViewModel? Checkout { get; set; }
+    public TrackerViewModel?  Tracker  { get; set; }
+
+    [ObservableProperty] private string _activeTab = "shop";
+
+    public bool IsShop    => ActiveTab == "shop";
+    public bool IsExplore => ActiveTab == "explore";
+    public bool IsCart    => ActiveTab == "cart";
+    public bool IsProfile => ActiveTab == "profile";
+    public bool IsAuth    => ActiveTab == "auth";
+
+    // Bottom-nav stays hidden when the user is on the auth screen, mirroring
+    // the HTML behaviour.
+    public bool BottomNavVisible => ActiveTab != "auth";
+
+    partial void OnActiveTabChanged(string value)
+    {
+        OnPropertyChanged(nameof(IsShop));
+        OnPropertyChanged(nameof(IsExplore));
+        OnPropertyChanged(nameof(IsCart));
+        OnPropertyChanged(nameof(IsProfile));
+        OnPropertyChanged(nameof(IsAuth));
+        OnPropertyChanged(nameof(BottomNavVisible));
     }
 
     [RelayCommand]
-    private void GoCart()
+    public void SwitchTab(string tab)
     {
-        var vm = App.Services.GetRequiredService<CartViewModel>();
-        _nav.NavigateRoot(vm);
+        if (string.IsNullOrEmpty(tab)) return;
+        ActiveTab = tab;
+        // Lazy refresh per-tab on switch
+        if (tab == "explore") _ = Explore?.LoadAsync();
+        if (tab == "shop")    _ = Shop?.LoadAsync();
     }
 
-    [RelayCommand]
-    private void GoAccount()
+    public void GoExploreWithCategory(string id)
     {
-        var vm = App.Services.GetRequiredService<AccountViewModel>();
-        _nav.NavigateRoot(vm);
-        _ = vm.LoadOrdersAsync();
+        Explore?.SetCategory(id);
+        SwitchTab("explore");
     }
+
+    public void OpenCheckout() => Checkout?.Open();
+
+    public void OpenTracker(string soNo, string invoice) => Tracker?.Open(invoice);
 }

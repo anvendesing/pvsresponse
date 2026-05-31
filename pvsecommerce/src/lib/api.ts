@@ -234,4 +234,20 @@ export const api = {
     fetchJson<CustomerOrderRow[]>(
       buildUrl("/storefront-mock/orders", { email })
     ),
+  submitEnquiry: (input: EnquiryFormInput) =>
+    fetchJson<{ ok: boolean; enquiryNo: string }>(
+      buildUrl("/storefront-mock/enquiries"),
+      { method: "POST", body: JSON.stringify(input) }
+    ),
 };
+
+export interface EnquiryFormInput {
+  type: "product" | "dealership" | "farm_visit" | "other";
+  contactName: string;
+  phone?: string;
+  email?: string;
+  company?: string;
+  city?: string;
+  subject: string;
+  requirement?: string;
+}

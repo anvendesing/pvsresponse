@@ -110,6 +110,12 @@ async function main() {
     "Finished Motor M3",
   ];
 
+  const defaultCat =
+    (await db.productCategory.findUnique({ where: { slug: "grains" } })) ??
+    (await db.productCategory.create({
+      data: { slug: "grains", name: "Grains, Pulses & Flours", sortOrder: 2 },
+    }));
+
   const products = await Promise.all(
     productNames.map((name, i) => {
       const t = i < 18 ? "raw" : i < 25 ? "consumable" : i < 30 ? "semi" : "finished";
@@ -127,7 +133,7 @@ async function main() {
           reorderLevel: Math.round(50 + seed(i + 1) * 200),
           costPrice: cost,
           sellingPrice: Math.round(cost * (1.25 + seed(i + 2) * 0.4)),
-          category: ["Metals", "Electrical", "Mechanical", "Polymers", "Assemblies"][i % 5],
+          categoryId: defaultCat.id,
           hsn: `7${String(2000 + i).slice(-4)}`,
           batchTracked: i % 3 === 0,
         },

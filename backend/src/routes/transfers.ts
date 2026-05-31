@@ -21,6 +21,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { db } from "../db.js";
 import { recordChange } from "../sync/log.js";
+import { checkStockRules } from "../lib/stock-rules.js";
 
 // ------------------------------------------------------------------ helpers
 
@@ -98,6 +99,7 @@ const transferOrderCreate = z.object({
   toWarehouseId: z.string().min(1),
   productionOrderId: z.string().min(1).nullable().optional(),
   notes: z.string().max(500).nullable().optional(),
+  tags: z.string().max(500).nullable().optional(),
   items: z.array(transferItemInput).min(1),
 });
 
@@ -275,6 +277,7 @@ export const transfersRoutes = async (app: FastifyInstance) => {
         toWarehouseId: body.toWarehouseId,
         productionOrderId: body.productionOrderId ?? null,
         notes: body.notes ?? null,
+        tags: body.tags ?? null,
         items: {
           create: body.items.map((it) => ({
             productId: it.productId,
@@ -481,6 +484,11 @@ export const transfersRoutes = async (app: FastifyInstance) => {
 
     if (!updated) return;
     await recordChange("TransferOrder" as never, id, "update", updated, req.user.sub);
+    for (const line of body.lines) {
+      if (line.fromBinId) {
+        await checkStockRules(line.fromBinId, req.user.sub);
+      }
+    }
     return updated;
   });
 
@@ -579,6 +587,9 @@ export const transfersRoutes = async (app: FastifyInstance) => {
 
     if (!updated) return;
     await recordChange("TransferOrder" as never, id, "update", updated, req.user.sub);
+    for (const line of body.lines) {
+      await checkStockRules(line.toBinId, req.user.sub);
+    }
     return updated;
   });
 };

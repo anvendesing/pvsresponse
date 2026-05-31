@@ -284,3 +284,103 @@ export interface StockLedgerEntry {
   bin?: string;
   balance: number;
 }
+
+// ─── CRM: Enquiries ──────────────────────────────────────────────────────
+export type EnquiryStage = "new" | "contacted" | "qualified" | "proposal" | "won" | "lost";
+export type EnquiryType = "product" | "dealership" | "farm_visit" | "other";
+export type EnquirySource =
+  | "walk_in" | "phone" | "website" | "whatsapp" | "referral" | "exhibition" | "social" | "other";
+export type EnquiryPriority = "low" | "medium" | "high";
+export type EnquiryActivityType =
+  | "note" | "call" | "email" | "meeting" | "whatsapp" | "visit" | "stage_change";
+
+export interface EnquiryItem {
+  id: string;
+  productId?: string | null;
+  variantId?: string | null;
+  description?: string | null;
+  qty: number;
+  notes?: string | null;
+  product?: { id: string; sku: string; name: string; uom: string } | null;
+  variant?: { id: string; sku: string; size?: string | null; color?: string | null } | null;
+}
+
+export interface EnquiryActivity {
+  id: string;
+  type: EnquiryActivityType;
+  body: string;
+  outcome?: string | null;
+  dueAt?: string | null;
+  completedAt?: string | null;
+  createdAt: string;
+  createdBy?: { id: string; name: string } | null;
+}
+
+export interface Enquiry {
+  id: string;
+  enquiryNo: string;
+  type: EnquiryType;
+  stage: EnquiryStage;
+  source: EnquirySource;
+  priority: EnquiryPriority;
+  contactName: string;
+  phone?: string | null;
+  email?: string | null;
+  company?: string | null;
+  city?: string | null;
+  subject: string;
+  requirement?: string | null;
+  estimatedValue: number;
+  expectedCloseDate?: string | null;
+  nextFollowUpAt?: string | null;
+  lostReason?: string | null;
+  wonAt?: string | null;
+  lostAt?: string | null;
+  customerId?: string | null;
+  assignedToId?: string | null;
+  convertedQuoteId?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  customer?: { id: string; code: string; name: string; city?: string | null } | null;
+  assignedTo?: { id: string; name: string } | null;
+  createdBy?: { id: string; name: string } | null;
+  items?: EnquiryItem[];
+  activities?: EnquiryActivity[];
+  _count?: { items: number; activities: number };
+}
+
+export interface EnquiryStats {
+  byStage: Record<string, number>;
+  open: number;
+  won: number;
+  lost: number;
+  pipelineValue: number;
+  followUpsDue: number;
+}
+
+export interface EnquiryItemInput {
+  productId?: string | null;
+  variantId?: string | null;
+  description?: string | null;
+  qty: number;
+  notes?: string | null;
+}
+
+export interface EnquiryInput {
+  type?: EnquiryType;
+  source?: EnquirySource;
+  priority?: EnquiryPriority;
+  contactName: string;
+  phone?: string | null;
+  email?: string | null;
+  company?: string | null;
+  city?: string | null;
+  subject: string;
+  requirement?: string | null;
+  estimatedValue?: number;
+  expectedCloseDate?: string | null;
+  nextFollowUpAt?: string | null;
+  customerId?: string | null;
+  assignedToId?: string | null;
+  items?: EnquiryItemInput[];
+}

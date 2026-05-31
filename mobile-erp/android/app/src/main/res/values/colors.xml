@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- NovaERP brand colours. The header in MobileShell uses #003087 too. -->
+    <color name="colorPrimary">#003087</color>
+    <color name="colorPrimaryDark">#001f5c</color>
+    <color name="colorAccent">#1e5fbf</color>
+</resources>

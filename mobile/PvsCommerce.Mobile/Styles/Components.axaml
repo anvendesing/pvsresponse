@@ -1,121 +1,203 @@
 <Styles xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
 
-  <!-- Section eyebrow caption used on hero / section headers.
-       Authors should write the text already upper-cased; AXAML has no
-       TextTransform property so we mimic CSS uppercase via convention. -->
+  <!-- ─── Typography ───────────────────────────────────────────────── -->
+
   <Style Selector="TextBlock.eyebrow">
-    <Setter Property="FontSize" Value="12" />
-    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="FontSize" Value="11" />
+    <Setter Property="FontWeight" Value="Bold" />
     <Setter Property="LetterSpacing" Value="2" />
-    <Setter Property="Foreground" Value="{StaticResource BrandForest}" />
+    <Setter Property="Foreground" Value="{StaticResource ForestGreen}" />
   </Style>
 
   <Style Selector="TextBlock.h1">
     <Setter Property="FontFamily" Value="{StaticResource DisplayFont}" />
-    <Setter Property="FontSize" Value="34" />
+    <Setter Property="FontSize" Value="28" />
     <Setter Property="FontWeight" Value="Bold" />
-    <Setter Property="LineHeight" Value="40" />
-    <Setter Property="Foreground" Value="{StaticResource NeutralDark}" />
+    <Setter Property="LineHeight" Value="34" />
+    <Setter Property="Foreground" Value="{StaticResource ForestGreenDark}" />
   </Style>
 
   <Style Selector="TextBlock.h2">
     <Setter Property="FontFamily" Value="{StaticResource DisplayFont}" />
-    <Setter Property="FontSize" Value="24" />
+    <Setter Property="FontSize" Value="20" />
     <Setter Property="FontWeight" Value="Bold" />
-    <Setter Property="Foreground" Value="{StaticResource NeutralDark}" />
+    <Setter Property="Foreground" Value="{StaticResource ForestGreenDark}" />
   </Style>
 
   <Style Selector="TextBlock.h3">
-    <Setter Property="FontSize" Value="18" />
+    <Setter Property="FontSize" Value="14" />
     <Setter Property="FontWeight" Value="Bold" />
     <Setter Property="Foreground" Value="{StaticResource NeutralDark}" />
   </Style>
 
   <Style Selector="TextBlock.body">
-    <Setter Property="FontSize" Value="14" />
+    <Setter Property="FontSize" Value="13" />
     <Setter Property="Foreground" Value="{StaticResource NeutralDark}" />
-    <Setter Property="LineHeight" Value="22" />
+    <Setter Property="LineHeight" Value="19" />
   </Style>
 
   <Style Selector="TextBlock.muted">
-    <Setter Property="FontSize" Value="13" />
+    <Setter Property="FontSize" Value="12" />
     <Setter Property="Foreground" Value="{StaticResource NeutralGray}" />
   </Style>
 
   <Style Selector="TextBlock.price">
     <Setter Property="FontFamily" Value="{StaticResource DisplayFont}" />
-    <Setter Property="FontSize" Value="20" />
+    <Setter Property="FontSize" Value="17" />
     <Setter Property="FontWeight" Value="Bold" />
-    <Setter Property="Foreground" Value="{StaticResource BrandForestDark}" />
+    <Setter Property="Foreground" Value="{StaticResource ForestGreenDark}" />
   </Style>
 
-  <!-- Primary (forest) button -->
+  <!-- ─── Buttons ──────────────────────────────────────────────────── -->
+
+  <!-- Primary forest-green pill button -->
   <Style Selector="Button.primary">
-    <Setter Property="Background" Value="{StaticResource BrandForest}" />
+    <Setter Property="Background" Value="{StaticResource ForestGreen}" />
     <Setter Property="Foreground" Value="{StaticResource NeutralWhite}" />
     <Setter Property="BorderThickness" Value="0" />
     <Setter Property="CornerRadius" Value="{StaticResource RadiusFull}" />
-    <Setter Property="Padding" Value="20,10" />
-    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="Padding" Value="20,12" />
+    <Setter Property="FontWeight" Value="Bold" />
+    <Setter Property="FontSize" Value="14" />
     <Setter Property="HorizontalContentAlignment" Value="Center" />
     <Setter Property="VerticalContentAlignment" Value="Center" />
+    <Setter Property="Cursor" Value="Hand" />
   </Style>
   <Style Selector="Button.primary:pointerover /template/ ContentPresenter">
-    <Setter Property="Background" Value="{StaticResource BrandForestLight}" />
+    <Setter Property="Background" Value="{StaticResource ForestGreenLight}" />
   </Style>
 
-  <!-- Gold accent button -->
+  <!-- Gold accent pill button -->
   <Style Selector="Button.gold">
-    <Setter Property="Background" Value="{StaticResource BrandGold}" />
-    <Setter Property="Foreground" Value="{StaticResource NeutralDark}" />
+    <Setter Property="Background" Value="{StaticResource PrimaryGold}" />
+    <Setter Property="Foreground" Value="{StaticResource ForestGreenDark}" />
     <Setter Property="BorderThickness" Value="0" />
     <Setter Property="CornerRadius" Value="{StaticResource RadiusFull}" />
-    <Setter Property="Padding" Value="20,10" />
-    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="Padding" Value="16,10" />
+    <Setter Property="FontWeight" Value="Bold" />
+    <Setter Property="FontSize" Value="13" />
+    <Setter Property="Cursor" Value="Hand" />
   </Style>
   <Style Selector="Button.gold:pointerover /template/ ContentPresenter">
-    <Setter Property="Background" Value="{StaticResource BrandGoldDark}" />
+    <Setter Property="Background" Value="{StaticResource PrimaryGoldDark}" />
   </Style>
 
-  <!-- Outline button -->
+  <!-- Outline ghost button -->
   <Style Selector="Button.outline">
     <Setter Property="Background" Value="Transparent" />
-    <Setter Property="Foreground" Value="{StaticResource BrandForest}" />
-    <Setter Property="BorderBrush" Value="{StaticResource BrandForest}" />
+    <Setter Property="Foreground" Value="{StaticResource ForestGreen}" />
+    <Setter Property="BorderBrush" Value="{StaticResource ForestGreen}" />
     <Setter Property="BorderThickness" Value="1.5" />
     <Setter Property="CornerRadius" Value="{StaticResource RadiusFull}" />
-    <Setter Property="Padding" Value="18,8" />
+    <Setter Property="Padding" Value="16,10" />
     <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="FontSize" Value="13" />
+    <Setter Property="Cursor" Value="Hand" />
+  </Style>
+  <Style Selector="Button.outline:pointerover /template/ ContentPresenter">
+    <Setter Property="Background" Value="{StaticResource ForestGreenSoft}" />
   </Style>
 
-  <!-- Card -->
+  <!-- Bare/icon button (header cart, heart, qty, etc.) -->
+  <Style Selector="Button.icon">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="Padding" Value="6" />
+    <Setter Property="CornerRadius" Value="9999" />
+    <Setter Property="Cursor" Value="Hand" />
+  </Style>
+  <Style Selector="Button.icon:pointerover /template/ ContentPresenter">
+    <Setter Property="Background" Value="#10000000" />
+  </Style>
+
+  <!-- ─── Cards ────────────────────────────────────────────────────── -->
+
   <Style Selector="Border.card">
     <Setter Property="Background" Value="{StaticResource NeutralWhite}" />
-    <Setter Property="CornerRadius" Value="{StaticResource RadiusMd}" />
-    <Setter Property="BorderBrush" Value="#0F22251F" />
+    <Setter Property="BorderBrush" Value="{StaticResource NeutralBorder}" />
     <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="{StaticResource RadiusMd}" />
     <Setter Property="BoxShadow" Value="{StaticResource ShadowSm}" />
-    <Setter Property="Padding" Value="12" />
   </Style>
 
-  <!-- Chip -->
   <Style Selector="Border.chip">
-    <Setter Property="Background" Value="{StaticResource BrandForestSoft}" />
+    <Setter Property="Background" Value="{StaticResource ForestGreenSoft}" />
     <Setter Property="CornerRadius" Value="{StaticResource RadiusFull}" />
-    <Setter Property="Padding" Value="10,4" />
+    <Setter Property="Padding" Value="10,5" />
   </Style>
 
-  <!-- Stock badge -->
-  <Style Selector="Border.stockBadge">
-    <Setter Property="Background" Value="{StaticResource BrandForestSoft}" />
+  <Style Selector="Border.chipGold">
+    <Setter Property="Background" Value="{StaticResource PrimaryGoldCream}" />
     <Setter Property="CornerRadius" Value="{StaticResource RadiusFull}" />
-    <Setter Property="Padding" Value="8,3" />
+    <Setter Property="Padding" Value="10,5" />
   </Style>
-  <Style Selector="Border.stockBadge.low">
-    <Setter Property="Background" Value="#FEF9C3" />
+
+  <!-- ─── Form inputs ──────────────────────────────────────────────── -->
+
+  <Style Selector="TextBox.app">
+    <Setter Property="Background" Value="{StaticResource NeutralLight}" />
+    <Setter Property="BorderBrush" Value="{StaticResource NeutralBorder}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="{StaticResource RadiusSm}" />
+    <Setter Property="Padding" Value="14,12" />
+    <Setter Property="FontSize" Value="14" />
+    <Setter Property="Foreground" Value="{StaticResource NeutralDark}" />
   </Style>
-  <Style Selector="Border.stockBadge.out">
-    <Setter Property="Background" Value="#FEE2E2" />
+  <Style Selector="TextBox.app:focus /template/ Border#PART_BorderElement">
+    <Setter Property="BorderBrush" Value="{StaticResource ForestGreen}" />
+    <Setter Property="BorderThickness" Value="1.5" />
+  </Style>
+
+  <!-- ─── Tab pills (sub-tabs, pay method, sign-in mode) ──────────── -->
+
+  <Style Selector="Border.subTab">
+    <Setter Property="CornerRadius" Value="{StaticResource RadiusFull}" />
+    <Setter Property="Padding" Value="14,8" />
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="Cursor" Value="Hand" />
+  </Style>
+
+  <Style Selector="Border.subTab.active">
+    <Setter Property="Background" Value="{StaticResource ForestGreen}" />
+  </Style>
+
+  <Style Selector="Border.subTab > TextBlock">
+    <Setter Property="FontSize" Value="12" />
+    <Setter Property="FontWeight" Value="Bold" />
+    <Setter Property="Foreground" Value="{StaticResource NeutralGray}" />
+    <Setter Property="HorizontalAlignment" Value="Center" />
+  </Style>
+
+  <Style Selector="Border.subTab.active > TextBlock">
+    <Setter Property="Foreground" Value="{StaticResource NeutralWhite}" />
+  </Style>
+
+  <!-- ─── Bottom-nav item ─────────────────────────────────────────── -->
+
+  <Style Selector="Button.navItem">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="Padding" Value="0,8" />
+    <Setter Property="HorizontalAlignment" Value="Stretch" />
+    <Setter Property="VerticalAlignment" Value="Stretch" />
+    <Setter Property="Cursor" Value="Hand" />
+  </Style>
+  <Style Selector="Button.navItem:pointerover /template/ ContentPresenter">
+    <Setter Property="Background" Value="#08000000" />
+  </Style>
+
+  <!-- ─── Stock / promo badges ─────────────────────────────────────── -->
+
+  <Style Selector="Border.badge">
+    <Setter Property="Background" Value="{StaticResource ForestGreenDark}" />
+    <Setter Property="CornerRadius" Value="6" />
+    <Setter Property="Padding" Value="6,2" />
+  </Style>
+  <Style Selector="Border.badge > TextBlock">
+    <Setter Property="FontSize" Value="9" />
+    <Setter Property="FontWeight" Value="Bold" />
+    <Setter Property="Foreground" Value="{StaticResource NeutralWhite}" />
+    <Setter Property="LetterSpacing" Value="1" />
   </Style>
 </Styles>

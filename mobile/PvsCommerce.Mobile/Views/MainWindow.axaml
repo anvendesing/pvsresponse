@@ -5,7 +5,7 @@
         x:Class="PvsCommerce.Mobile.Views.MainWindow"
         x:DataType="vm:MainViewModel"
         Title="Prakruthivanam"
-        Width="420" Height="800"
+        Width="410" Height="840"
         MinWidth="360" MinHeight="640"
         Background="{StaticResource NeutralCream}">
   <views:MainView DataContext="{Binding}" />

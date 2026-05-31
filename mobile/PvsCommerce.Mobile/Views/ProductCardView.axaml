@@ -1,78 +1,100 @@
 <UserControl xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="using:PvsCommerce.Mobile.ViewModels"
+             xmlns:conv="using:PvsCommerce.Mobile.Converters"
              xmlns:loader="clr-namespace:AsyncImageLoader;assembly=AsyncImageLoader.Avalonia"
              x:Class="PvsCommerce.Mobile.Views.ProductCardView"
              x:DataType="vm:ProductCardViewModel">
 
-  <Border Classes="card" Padding="0">
-    <StackPanel Spacing="0">
-      <!-- Artwork frame: cream background, optional remote image, fallback to packaging hint label -->
-      <Border Background="{StaticResource BrandGoldCream}"
-              CornerRadius="16,16,0,0"
-              Padding="0"
-              Height="140">
+  <Border Classes="card" Padding="0" Margin="6" ClipToBounds="True">
+    <Grid RowDefinitions="Auto,Auto">
+
+      <!-- Artwork frame -->
+      <Border Grid.Row="0" Height="130" CornerRadius="16,16,0,0">
+        <Border.Background>
+          <SolidColorBrush Color="#F5F0E2" />
+        </Border.Background>
         <Grid>
-          <Image Stretch="Uniform"
+          <!-- Remote image (when present) -->
+          <Image Stretch="UniformToFill"
                  loader:ImageLoader.Source="{Binding ImageUrl}"
                  IsVisible="{Binding ImageUrl, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
-          <!-- Vector-art fallback (Phase A): a simple iconographic placeholder
-               keyed off PackagingHint. Real art replaces this in phase 2. -->
+
+          <!-- Pouch fallback (HTML simulator pouch) -->
           <Border IsVisible="{Binding ImageUrl, Converter={x:Static StringConverters.IsNullOrEmpty}}"
                   HorizontalAlignment="Center" VerticalAlignment="Center"
-                  Background="{StaticResource BrandForestSoft}"
-                  CornerRadius="9999"
-                  Width="80" Height="80">
-            <TextBlock Text="🌿"
-                       FontSize="40"
-                       HorizontalAlignment="Center"
-                       VerticalAlignment="Center" />
+                  Width="60" Height="84"
+                  CornerRadius="6"
+                  Padding="6"
+                  Background="{Binding PouchColor, Converter={x:Static conv:HexBrushConverter.Instance}}">
+            <Grid RowDefinitions="*,Auto">
+              <TextBlock Grid.Row="0" Text="🌿" FontSize="22"
+                         HorizontalAlignment="Center" VerticalAlignment="Center" />
+              <Border Grid.Row="1" Background="{StaticResource ForestGreenDark}"
+                      CornerRadius="3" Padding="2,1">
+                <TextBlock Text="{Binding PouchTag}"
+                           FontSize="7" FontWeight="Bold"
+                           Foreground="{StaticResource NeutralWhite}"
+                           HorizontalAlignment="Center" />
+              </Border>
+            </Grid>
           </Border>
 
-          <!-- Stock badge. Three visual states by visibility-stacking; later
-               we will replace with a dedicated converter for cleanliness. -->
-          <Border Classes="stockBadge"
-                  IsVisible="{Binding !IsLowStock}"
+          <!-- Top-left badge -->
+          <Border Classes="badge"
                   HorizontalAlignment="Left" VerticalAlignment="Top"
-                  Margin="8,8,0,0">
-            <TextBlock Text="{Binding StockLabel}" FontSize="11" FontWeight="SemiBold" />
+                  Margin="8">
+            <TextBlock Text="{Binding Badge}" />
           </Border>
-          <Border Classes="stockBadge low"
-                  IsVisible="{Binding IsLowStock}"
-                  HorizontalAlignment="Left" VerticalAlignment="Top"
-                  Margin="8,8,0,0">
-            <TextBlock Text="{Binding StockLabel}" FontSize="11" FontWeight="SemiBold" />
-          </Border>
+
+          <!-- Top-right wishlist heart -->
+          <Button Classes="icon"
+                  Command="{Binding ToggleWishlistCommand}"
+                  HorizontalAlignment="Right" VerticalAlignment="Top"
+                  Margin="6"
+                  Width="30" Height="30"
+                  Background="#F5FFFFFF"
+                  CornerRadius="9999">
+            <TextBlock Text="♥" FontSize="14"
+                       HorizontalAlignment="Center" VerticalAlignment="Center"
+                       Foreground="{StaticResource StatusError}" />
+          </Button>
         </Grid>
       </Border>
 
-      <!-- Content -->
-      <StackPanel Spacing="6" Margin="12,12,12,12">
+      <!-- Info block -->
+      <StackPanel Grid.Row="1" Margin="12,10,12,12" Spacing="8">
         <TextBlock Text="{Binding Name}"
                    Classes="h3"
                    TextTrimming="CharacterEllipsis"
                    MaxLines="2" />
 
-        <TextBlock Text="{Binding Badge}"
-                   Foreground="{StaticResource BrandForest}"
-                   FontWeight="SemiBold"
-                   FontSize="12"
-                   IsVisible="{Binding Badge, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+        <StackPanel Orientation="Horizontal" Spacing="6">
+          <Border Background="{StaticResource NeutralLight}"
+                  CornerRadius="9999" Padding="6,2">
+            <TextBlock Text="{Binding WeightLabel}" FontSize="10" FontWeight="SemiBold"
+                       Foreground="{StaticResource NeutralGray}" />
+          </Border>
+          <Border Background="{StaticResource PrimaryGoldCream}"
+                  CornerRadius="9999" Padding="6,2">
+            <TextBlock Text="★ 4.8" FontSize="10" FontWeight="SemiBold"
+                       Foreground="{StaticResource PrimaryGoldDark}" />
+          </Border>
+        </StackPanel>
 
         <Grid ColumnDefinitions="*,Auto" VerticalAlignment="Center">
           <TextBlock Text="{Binding PriceFormatted}" Classes="price" />
-          <TextBlock Grid.Column="1"
-                     Text="{Binding Uom}"
-                     Classes="muted"
-                     VerticalAlignment="Bottom"
-                     Margin="6,0,0,2" />
+          <Button Grid.Column="1" Classes="gold"
+                  Command="{Binding AddToCartCommand}"
+                  IsEnabled="{Binding !IsOutOfStock}"
+                  Width="38" Height="38"
+                  Padding="0"
+                  CornerRadius="9999">
+            <TextBlock Text="+" FontSize="18" FontWeight="Bold"
+                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Button>
         </Grid>
-
-        <Button Classes="gold"
-                HorizontalAlignment="Stretch"
-                IsEnabled="{Binding !IsOutOfStock}"
-                Content="Add to Cart" />
       </StackPanel>
-    </StackPanel>
+    </Grid>
   </Border>
 </UserControl>

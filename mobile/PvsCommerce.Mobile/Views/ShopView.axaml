@@ -1,0 +1,137 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:PvsCommerce.Mobile.ViewModels"
+             xmlns:views="using:PvsCommerce.Mobile.Views"
+             xmlns:conv="using:PvsCommerce.Mobile.Converters"
+             x:Class="PvsCommerce.Mobile.Views.ShopView"
+             x:DataType="vm:ShopViewModel">
+
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+    <StackPanel Spacing="0" Margin="0,0,0,16">
+
+      <!-- ── Category circle scroller ────────────────────────────── -->
+      <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+        <ItemsControl ItemsSource="{Binding Categories}" Margin="16,16,16,4">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate>
+              <StackPanel Orientation="Horizontal" Spacing="14" />
+            </ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate>
+            <DataTemplate DataType="vm:CategoryTileViewModel">
+              <Button Classes="icon" Padding="0"
+                      Command="{Binding $parent[ItemsControl].((vm:ShopViewModel)DataContext).OpenCategoryCommand}"
+                      CommandParameter="{Binding Id}">
+                <StackPanel Width="74" Spacing="6" HorizontalAlignment="Center">
+                  <Border Width="68" Height="68" CornerRadius="9999"
+                          Background="{StaticResource NeutralWhite}"
+                          BorderBrush="{StaticResource NeutralBorder}"
+                          BorderThickness="1"
+                          BoxShadow="{StaticResource ShadowSm}"
+                          ClipToBounds="True"
+                          Padding="6">
+                    <Image Stretch="Uniform"
+                           Source="{Binding Id, Converter={x:Static conv:CategoryImageConverter.Instance}}" />
+                  </Border>
+                  <TextBlock Text="{Binding Name}" FontSize="9.5" FontWeight="SemiBold"
+                             Foreground="{StaticResource NeutralDark}"
+                             TextWrapping="Wrap" TextAlignment="Center" MaxLines="2" />
+                </StackPanel>
+              </Button>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </ScrollViewer>
+
+      <!-- ── Promo banner ────────────────────────────────────────── -->
+      <Border Margin="16,16,16,0" Padding="20"
+              Background="{StaticResource ForestGreenSoft}"
+              CornerRadius="{StaticResource RadiusLg}"
+              BoxShadow="{StaticResource ShadowSm}">
+        <StackPanel Spacing="8">
+          <Border Classes="chip" HorizontalAlignment="Left">
+            <TextBlock Text="Limited Harvest" FontSize="10" FontWeight="Bold"
+                       Foreground="{StaticResource ForestGreen}" />
+          </Border>
+          <TextBlock Text="Organic Millet Combos" Classes="h1" />
+          <TextBlock Text="Get Sprouted Ragi Malt + Foxtail Breakfast mixes at 15% discount!"
+                     Classes="body" Foreground="{StaticResource NeutralGray}"
+                     TextWrapping="Wrap" />
+          <Button Classes="primary" HorizontalAlignment="Left"
+                  Content="Browse Combos 🌾"
+                  Command="{Binding GoExploreCommand}" />
+        </StackPanel>
+      </Border>
+
+      <!-- ── Best Sellers ────────────────────────────────────────── -->
+      <StackPanel Margin="16,24,16,0" Spacing="10">
+        <Grid ColumnDefinitions="*,Auto">
+          <TextBlock Grid.Column="0" Text="Best Selling Products" Classes="h2" />
+          <Button Grid.Column="1" Classes="icon" Padding="4"
+                  Command="{Binding GoExploreCommand}">
+            <TextBlock Text="See All" FontSize="11" FontWeight="Bold"
+                       Foreground="{StaticResource ForestGreen}" />
+          </Button>
+        </Grid>
+
+        <TextBlock Text="Loading farm-fresh goods…" Classes="muted"
+                   IsVisible="{Binding IsLoading}" Margin="0,8" />
+
+        <ItemsControl ItemsSource="{Binding BestSellers}"
+                      IsVisible="{Binding !IsLoading}">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate>
+              <UniformGrid Columns="2" />
+            </ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate>
+            <DataTemplate DataType="vm:ProductCardViewModel">
+              <views:ProductCardView />
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </StackPanel>
+
+      <!-- ── Combo Packs ─────────────────────────────────────────── -->
+      <StackPanel Margin="16,24,16,0" Spacing="10">
+        <Grid ColumnDefinitions="*,Auto">
+          <TextBlock Grid.Column="0" Text="Combo Savings Packs" Classes="h2" />
+          <Button Grid.Column="1" Classes="icon" Padding="4"
+                  Command="{Binding GoExploreCommand}">
+            <TextBlock Text="See All" FontSize="11" FontWeight="Bold"
+                       Foreground="{StaticResource ForestGreen}" />
+          </Button>
+        </Grid>
+
+        <ItemsControl ItemsSource="{Binding Combos}"
+                      IsVisible="{Binding !IsLoading}">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate>
+              <UniformGrid Columns="2" />
+            </ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate>
+            <DataTemplate DataType="vm:ProductCardViewModel">
+              <views:ProductCardView />
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </StackPanel>
+
+      <!-- ── Diagnostic strip when backend unreachable ───────────── -->
+      <Border Margin="16,16,16,0" Padding="14"
+              Background="#FEF3C7"
+              CornerRadius="{StaticResource RadiusSm}"
+              IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+        <StackPanel Spacing="6">
+          <TextBlock Text="Backend not reachable" FontWeight="Bold"
+                     Foreground="{StaticResource StatusError}" />
+          <TextBlock Text="{Binding ErrorMessage}" Classes="muted" TextWrapping="Wrap" />
+          <Button Classes="outline" Content="Retry"
+                  Command="{Binding LoadCommand}"
+                  HorizontalAlignment="Left" />
+        </StackPanel>
+      </Border>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

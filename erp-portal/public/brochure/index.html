@@ -369,7 +369,7 @@
 
     <div class="cover-meta">
       <div>
-        <strong>Feature Brochure</strong> · v1.0.0<br/>
+        <strong>Feature Brochure</strong> · v2.0.0<br/>
         Prepared for evaluation
       </div>
       <div style="text-align:right">
@@ -401,10 +401,10 @@
   </p>
 
   <div class="stats">
-    <div class="stat"><div class="stat-val">15</div><div class="stat-lbl">Core modules</div></div>
+    <div class="stat"><div class="stat-val">20+</div><div class="stat-lbl">Core modules</div></div>
     <div class="stat"><div class="stat-val">3</div><div class="stat-lbl">Platforms (Web / Desktop / Mobile)</div></div>
     <div class="stat"><div class="stat-val">319+</div><div class="stat-lbl">Catalog SKUs imported</div></div>
-    <div class="stat"><div class="stat-val">3</div><div class="stat-lbl">Price-list tiers</div></div>
+    <div class="stat"><div class="stat-val">Bin</div><div class="stat-lbl">Level stock truth</div></div>
   </div>
 
   <div class="toc-grid">
@@ -421,8 +421,14 @@
     <div class="toc-row"><div class="toc-num">11</div><div class="toc-title">Live Inventory &amp; ATP</div><div class="toc-tag">Warehouse</div></div>
     <div class="toc-row"><div class="toc-num">12</div><div class="toc-title">Billing &amp; GST Invoicing</div><div class="toc-tag">Finance</div></div>
     <div class="toc-row"><div class="toc-num">13</div><div class="toc-title">Reports &amp; Analytics</div><div class="toc-tag">Insights</div></div>
-    <div class="toc-row"><div class="toc-num">14</div><div class="toc-title">Manufacturing &amp; Work Orders</div><div class="toc-tag">Production</div></div>
-    <div class="toc-row"><div class="toc-num">15</div><div class="toc-title">Why an ERP — Business Advantages</div><div class="toc-tag">Closing</div></div>
+    <div class="toc-row"><div class="toc-num">14</div><div class="toc-title">Manufacturing Orders Console</div><div class="toc-tag">Production</div></div>
+    <div class="toc-row"><div class="toc-num">15</div><div class="toc-title">Enquiries &amp; CRM Pipeline</div><div class="toc-tag">Sales</div></div>
+    <div class="toc-row"><div class="toc-num">16</div><div class="toc-title">Transfer Orders &amp; Replenishment</div><div class="toc-tag">Warehouse</div></div>
+    <div class="toc-row"><div class="toc-num">17</div><div class="toc-title">Warehouse Layout &amp; Bins</div><div class="toc-tag">Warehouse</div></div>
+    <div class="toc-row"><div class="toc-num">18</div><div class="toc-title">MO Detail — Materials &amp; Inventory Trail</div><div class="toc-tag">Production</div></div>
+    <div class="toc-row"><div class="toc-num">19</div><div class="toc-title">Putaway Rules (Fixed FG Bins)</div><div class="toc-tag">Settings</div></div>
+    <div class="toc-row"><div class="toc-num">20</div><div class="toc-title">Stock Rules — Auto MO &amp; Transfers</div><div class="toc-tag">Settings</div></div>
+    <div class="toc-row"><div class="toc-num">21</div><div class="toc-title">Why an ERP — Business Advantages</div><div class="toc-tag">Closing</div></div>
   </div>
 
   <div class="pfoot">
@@ -805,7 +811,7 @@
   <div class="cards">
     <div class="card">
       <div class="card-title">Bin / shelf precision</div>
-      <div class="card-body">Each line shows the exact rack-row-bin where the requested qty is stored.</div>
+      <div class="card-body">Each line shows the exact zone/shelf/bin where the requested qty is stored.</div>
     </div>
     <div class="card">
       <div class="card-title">Soft-reservation</div>
@@ -1003,47 +1009,303 @@
       <div class="ph-num">14</div>
       <div>
         <div class="ph-kicker">Production</div>
-        <h2 class="ph-title">Manufacturing &amp; work orders</h2>
+        <h2 class="ph-title">Manufacturing orders console</h2>
       </div>
     </div>
     <span class="ph-mod">MANUFACTURING</span>
   </div>
 
   <p class="lead">
-    Convert demand into <strong>work orders</strong> with one click. Each WO carries BOM, target qty,
-    routing, and a live output counter so supervisors see throughput against target in real time.
-    Bottlenecks surface visually on the station-load chart.
+    Plan and run <strong>production orders (MOs)</strong> from a split console: active orders on the left,
+    BOM-driven actions on the right. The flow is <strong>Release → Issue materials → Log output → Complete</strong>,
+    with smart button states so operators cannot double-issue or complete without output.
   </p>
 
   <img src="screenshots/14-manufacturing.png" class="shot" alt="Manufacturing" />
 
   <div class="cards">
     <div class="card">
-      <div class="card-title">BOM-driven</div>
-      <div class="card-body">Raw materials auto-allocated against work orders; shortages flagged before start.</div>
+      <div class="card-title">Release &amp; replenishment</div>
+      <div class="card-body">Release creates transfer orders from storage to the production-line warehouse when line stock is short.</div>
     </div>
     <div class="card">
-      <div class="card-title">Live output</div>
-      <div class="card-body">Operators tap "+1" or scan finished goods — supervisors see real-time WO progress.</div>
+      <div class="card-title">Issue-aware requirements</div>
+      <div class="card-body">Shortage is computed against <em>still needed</em> after issue — not full BOM vs bins post-issue.</div>
     </div>
     <div class="card">
-      <div class="card-title">Station load</div>
-      <div class="card-body">Heatmap shows which stations are overloaded so balancing decisions happen on the spot.</div>
+      <div class="card-title">Putaway on complete</div>
+      <div class="card-body">Finished goods post to configured putaway bins; optional putaway TO when line WH ≠ storage WH.</div>
     </div>
     <div class="card">
-      <div class="card-title">Worker productivity</div>
-      <div class="card-body">Per-operator output rolls up into the daily productivity report and payroll incentive data.</div>
+      <div class="card-title">Productivity tab</div>
+      <div class="card-body">Station throughput and worker output in the same module for shift supervisors.</div>
     </div>
   </div>
 
   <div class="pfoot"><span class="pfoot-brand">NovaERP</span><span>14 · Manufacturing</span></div>
 </section>
 
-<!-- =================== 15 ADVANTAGES =================== -->
+<!-- =================== 15 ENQUIRIES =================== -->
 <section class="page">
   <div class="ph">
     <div class="ph-left">
       <div class="ph-num">15</div>
+      <div>
+        <div class="ph-kicker">Sales · CRM</div>
+        <h2 class="ph-title">Enquiries pipeline</h2>
+      </div>
+    </div>
+    <span class="ph-mod">ENQUIRIES</span>
+  </div>
+
+  <p class="lead">
+    Capture inbound interest before it becomes a quote. Enquiries track source, contact, product interest,
+    and stage — so inside sales can qualify leads and convert winners into formal quotes without re-keying data.
+  </p>
+
+  <img src="screenshots/15-enquiries.png" class="shot" alt="Enquiries" />
+
+  <div class="cards">
+    <div class="card">
+      <div class="card-title">Kanban-style stages</div>
+      <div class="card-body">Move enquiries from new → contacted → qualified → won/lost with full history.</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Quote conversion</div>
+      <div class="card-body">One-click path from a qualified enquiry into the quote editor with customer context carried over.</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Assignment &amp; ownership</div>
+      <div class="card-body">Each row shows the responsible rep so pipeline reviews stay accountable.</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Search &amp; filters</div>
+      <div class="card-body">Find open enquiries by customer, product family, or date range in seconds.</div>
+    </div>
+  </div>
+
+  <div class="pfoot"><span class="pfoot-brand">NovaERP</span><span>15 · Enquiries</span></div>
+</section>
+
+<!-- =================== 16 TRANSFERS =================== -->
+<section class="page">
+  <div class="ph">
+    <div class="ph-left">
+      <div class="ph-num">16</div>
+      <div>
+        <div class="ph-kicker">Warehouse</div>
+        <h2 class="ph-title">Transfer orders</h2>
+      </div>
+    </div>
+    <span class="ph-mod">TRANSFERS</span>
+  </div>
+
+  <p class="lead">
+    Move stock between bins and warehouses with auditable <strong>transfer orders</strong>.
+    Kinds include <em>replenishment</em> (storage → line), <em>putaway</em> (line → storage), and <em>manual</em> moves.
+    Team <strong>tags</strong> route tasks to the right crew on mobile.
+  </p>
+
+  <img src="screenshots/16-transfers.png" class="shot" alt="Transfers" />
+
+  <div class="cards">
+    <div class="card">
+      <div class="card-title">MO-linked TOs</div>
+      <div class="card-body">Release and Complete on manufacturing orders auto-create the right transfer documents.</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Pick / drop lifecycle</div>
+      <div class="card-body">Mobile pick decrements source bins; drop increments destination — both write ledger rows.</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Team tags</div>
+      <div class="card-body">Comma-separated tags on auto-replenishment TOs for cold-storage, night shift, etc.</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Stock-rule triggers</div>
+      <div class="card-body">Min-qty rules can spawn ready-to-run replenishment TOs when monitor bins run low.</div>
+    </div>
+  </div>
+
+  <div class="pfoot"><span class="pfoot-brand">NovaERP</span><span>16 · Transfers</span></div>
+</section>
+
+<!-- =================== 17 WAREHOUSE =================== -->
+<section class="page">
+  <div class="ph">
+    <div class="ph-left">
+      <div class="ph-num">17</div>
+      <div>
+        <div class="ph-kicker">Warehouse</div>
+        <h2 class="ph-title">Warehouse layout &amp; bins</h2>
+      </div>
+    </div>
+    <span class="ph-mod">WAREHOUSE</span>
+  </div>
+
+  <p class="lead">
+    Model every site as <strong>warehouse → zone → shelf → bin</strong> with scan codes
+    (<code>B.WH-MAIN.A.S1.01</code>). The tree view shows occupancy, capacity, and product assignment —
+    the foundation for picking, putaway, and cycle counting.
+  </p>
+
+  <img src="screenshots/17-warehouse.png" class="shot" alt="Warehouse" />
+
+  <div class="cards">
+    <div class="card">
+      <div class="card-title">3-level hierarchy</div>
+      <div class="card-body">Simplified zone/shelf/bin model — no redundant rack layer — faster scans and labels.</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Production-line WH</div>
+      <div class="card-body">Each work center can own a dedicated production warehouse for line-side stock.</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Bin labels PDF</div>
+      <div class="card-body">Bulk-print location labels with embedded scan codes for floor rollout.</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Capacity hints</div>
+      <div class="card-body">Capacity per bin guides receive and putaway without overfilling a slot.</div>
+    </div>
+  </div>
+
+  <div class="pfoot"><span class="pfoot-brand">NovaERP</span><span>17 · Warehouse</span></div>
+</section>
+
+<!-- =================== 18 MO DETAIL =================== -->
+<section class="page">
+  <div class="ph">
+    <div class="ph-left">
+      <div class="ph-num">18</div>
+      <div>
+        <div class="ph-kicker">Production</div>
+        <h2 class="ph-title">MO detail — inventory trail</h2>
+      </div>
+    </div>
+    <span class="ph-mod">MANUFACTURING</span>
+  </div>
+
+  <p class="lead">
+    Drill into any MO to see <strong>material requirements</strong> (required / issued / still needed / shortage),
+    linked <strong>transfer orders</strong>, and an <strong>inventory locations</strong> card built from the stock ledger —
+    where materials were consumed and where finished goods landed.
+  </p>
+
+  <img src="screenshots/18-manufacturing-detail.png" class="shot" alt="Manufacturing order detail" />
+
+  <div class="cards">
+    <div class="card">
+      <div class="card-title">Issue guardrails</div>
+      <div class="card-body">Issue disables when all materials are issued; Release only while status is planned.</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Adjust from shortage</div>
+      <div class="card-body">Deep link from a shortage row straight into Inventory Adjust with product pre-filled.</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Ledger-backed trail</div>
+      <div class="card-body">Every Issue and Production posting shows bin path and qty — MO is workflow, bins hold stock.</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Work orders</div>
+      <div class="card-body">Multi-stage routing with per-stage progress bars on the same detail screen.</div>
+    </div>
+  </div>
+
+  <div class="pfoot"><span class="pfoot-brand">NovaERP</span><span>18 · MO Detail</span></div>
+</section>
+
+<!-- =================== 19 PUTAWAY =================== -->
+<section class="page">
+  <div class="ph">
+    <div class="ph-left">
+      <div class="ph-num">19</div>
+      <div>
+        <div class="ph-kicker">Settings</div>
+        <h2 class="ph-title">Putaway rules</h2>
+      </div>
+    </div>
+    <span class="ph-mod">SETTINGS</span>
+  </div>
+
+  <p class="lead">
+    Every finished variant can map to a <strong>fixed destination bin</strong>. On MO complete, NovaERP resolves
+    putaway first — direct post when co-located, or FG on the line plus a putaway transfer when storage is elsewhere.
+  </p>
+
+  <img src="screenshots/19-settings-putaway.png" class="shot" alt="Putaway rules" />
+
+  <div class="cards">
+    <div class="card">
+      <div class="card-title">Variant-specific</div>
+      <div class="card-body">Rules can target a variant or fall back to product-level when variant is blank.</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Required bin in UI</div>
+      <div class="card-body">Operators must pick a destination bin — no silent auto-assign to empty slots.</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Priority ordering</div>
+      <div class="card-body">Lower priority number wins when multiple rules match the same SKU.</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Complete integration</div>
+      <div class="card-body">MO Complete uses <code>resolvePutawayDestination</code> before any fallback warehouse pick.</div>
+    </div>
+  </div>
+
+  <div class="pfoot"><span class="pfoot-brand">NovaERP</span><span>19 · Putaway Rules</span></div>
+</section>
+
+<!-- =================== 20 STOCK RULES =================== -->
+<section class="page">
+  <div class="ph">
+    <div class="ph-left">
+      <div class="ph-num">20</div>
+      <div>
+        <div class="ph-kicker">Settings</div>
+        <h2 class="ph-title">Stock rules — automation</h2>
+      </div>
+    </div>
+    <span class="ph-mod">SETTINGS</span>
+  </div>
+
+  <p class="lead">
+    Monitor a bin's on-hand qty against a <strong>minimum</strong>. When stock drops below, NovaERP can auto-create a
+    <strong>planned manufacturing order</strong> (batch size = BOM output qty) or a <strong>replenishment transfer</strong>
+    with team tags. Rules fire on issue, sale, adjust, and transfer pick/drop.
+  </p>
+
+  <img src="screenshots/20-settings-stock-rules.png" class="shot" alt="Stock rules" />
+
+  <div class="cards">
+    <div class="card">
+      <div class="card-title">MO trigger</div>
+      <div class="card-body">Creates a planned MO from the configured BOM; skips if an open MO already exists for that BOM.</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Transfer trigger</div>
+      <div class="card-body">Pulls from a source bin to the monitor bin (or explicit destination) with shortage qty.</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Check all now</div>
+      <div class="card-body">Manual sweep across every active monitor bin — useful after bulk imports or go-live.</div>
+    </div>
+    <div class="card">
+      <div class="card-title">Dedup by design</div>
+      <div class="card-body">Open MO/TO guards prevent duplicate automation storms on the same rule.</div>
+    </div>
+  </div>
+
+  <div class="pfoot"><span class="pfoot-brand">NovaERP</span><span>20 · Stock Rules</span></div>
+</section>
+
+<!-- =================== 21 ADVANTAGES =================== -->
+<section class="page">
+  <div class="ph">
+    <div class="ph-left">
+      <div class="ph-num">21</div>
       <div>
         <div class="ph-kicker">Closing</div>
         <h2 class="ph-title">Why implement an ERP — the business case</h2>
@@ -1103,12 +1365,11 @@
 
   <div class="closing-cta">
     <strong>NovaERP is ready today.</strong>
-    The catalog is loaded, the price lists are configured, and the entire
-    quote-to-cash cycle is operational across web, desktop, and mobile.
-    The platform you need to run the floor — now in your control.
+    Catalog, pricing, quote-to-cash, bin-level warehouse, manufacturing with putaway rules,
+    stock automation, and CRM enquiries — operational on web and mobile warehouse PWA.
   </div>
 
-  <div class="pfoot"><span class="pfoot-brand">NovaERP — Feature Brochure</span><span>15 · ERP Advantages</span></div>
+  <div class="pfoot"><span class="pfoot-brand">NovaERP — Feature Brochure</span><span>21 · ERP Advantages</span></div>
 </section>
 
 </body>

@@ -1,0 +1,101 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:PvsCommerce.Mobile.ViewModels"
+             xmlns:views="using:PvsCommerce.Mobile.Views"
+             xmlns:conv="using:PvsCommerce.Mobile.Converters"
+             x:Class="PvsCommerce.Mobile.Views.ExploreView"
+             x:DataType="vm:ExploreViewModel">
+
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+    <StackPanel Spacing="0" Margin="16,16,16,16">
+
+      <!-- Search bar -->
+      <Border Background="{StaticResource NeutralWhite}"
+              CornerRadius="{StaticResource RadiusFull}"
+              BorderBrush="{StaticResource NeutralBorder}"
+              BorderThickness="1"
+              BoxShadow="{StaticResource ShadowSm}"
+              Padding="14,10">
+        <Grid ColumnDefinitions="Auto,*">
+          <TextBlock Grid.Column="0" Text="🔍" FontSize="14"
+                     VerticalAlignment="Center" Margin="0,0,8,0" />
+          <TextBox Grid.Column="1"
+                   Text="{Binding SearchQuery, Mode=TwoWay}"
+                   Watermark="Search grains, oils, cookies..."
+                   BorderThickness="0"
+                   Background="Transparent"
+                   FontSize="13"
+                   Padding="0" />
+        </Grid>
+      </Border>
+
+      <!-- Category chips -->
+      <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled" Margin="0,12,0,0">
+        <ItemsControl ItemsSource="{Binding Chips}">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate>
+              <StackPanel Orientation="Horizontal" Spacing="8" />
+            </ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate>
+            <DataTemplate DataType="vm:CategoryTileViewModel">
+              <Button Classes="icon" Padding="0"
+                      Command="{Binding $parent[ItemsControl].((vm:ExploreViewModel)DataContext).SelectChipCommand}"
+                      CommandParameter="{Binding Id}">
+                <Panel>
+                  <!-- Active variant -->
+                  <Border CornerRadius="9999" Padding="14,8"
+                          Background="{StaticResource ForestGreen}"
+                          IsVisible="{Binding IsActive}">
+                    <TextBlock Text="{Binding Name}" FontSize="11" FontWeight="Bold"
+                               Foreground="{StaticResource NeutralWhite}" />
+                  </Border>
+                  <!-- Inactive variant -->
+                  <Border CornerRadius="9999" Padding="14,8"
+                          Background="{StaticResource NeutralWhite}"
+                          BorderBrush="{StaticResource NeutralBorder}"
+                          BorderThickness="1.5"
+                          IsVisible="{Binding !IsActive}">
+                    <TextBlock Text="{Binding Name}" FontSize="11" FontWeight="Bold"
+                               Foreground="{StaticResource NeutralDark}" />
+                  </Border>
+                </Panel>
+              </Button>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+      </ScrollViewer>
+
+      <!-- Section title -->
+      <Grid ColumnDefinitions="*,Auto" Margin="0,16,0,8">
+        <TextBlock Grid.Column="0" Text="{Binding ActiveCategoryName}" Classes="h2" />
+        <TextBlock Grid.Column="1" Text="{Binding CountLabel}" FontSize="11" FontWeight="Bold"
+                   Foreground="{StaticResource NeutralGray}" VerticalAlignment="Bottom" />
+      </Grid>
+
+      <!-- Empty state -->
+      <StackPanel HorizontalAlignment="Center" Margin="0,40"
+                  IsVisible="{Binding IsEmpty}">
+        <TextBlock Text="No items match search" FontWeight="Bold" FontSize="14"
+                   Foreground="{StaticResource NeutralGray}" HorizontalAlignment="Center" />
+        <TextBlock Text="Try another keyword or tap a different category."
+                   Classes="muted" HorizontalAlignment="Center" Margin="0,4,0,0" />
+      </StackPanel>
+
+      <!-- Product grid -->
+      <ItemsControl ItemsSource="{Binding Products}">
+        <ItemsControl.ItemsPanel>
+          <ItemsPanelTemplate>
+            <UniformGrid Columns="2" />
+          </ItemsPanelTemplate>
+        </ItemsControl.ItemsPanel>
+        <ItemsControl.ItemTemplate>
+          <DataTemplate DataType="vm:ProductCardViewModel">
+            <views:ProductCardView />
+          </DataTemplate>
+        </ItemsControl.ItemTemplate>
+      </ItemsControl>
+
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

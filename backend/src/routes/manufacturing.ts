@@ -25,7 +25,28 @@ import { db } from "../db.js";
 import { recordChange } from "../sync/log.js";
 import { bomTree, explodeBom, whereUsed } from "../lib/bom.js";
 import { normalizeUomCode } from "../lib/uom.js";
-import { resolvePutawayDestination } from "../lib/putaway.js";
+import { pickBestBin, resolvePutawayDestination } from "../lib/putaway.js";
+import { checkStockRules } from "../lib/stock-rules.js";
+
+/** Sum qty already issued to this MO from stock ledger (negative Issue rows). */
+const issuedQtyByProduct = async (
+  orderNo: string,
+  productIds: string[]
+): Promise<Map<string, number>> => {
+  if (productIds.length === 0) return new Map();
+  const rows = await db.stockLedger.groupBy({
+    by: ["productId"],
+    where: {
+      ref: orderNo,
+      productId: { in: productIds },
+      qty: { lt: 0 },
+    },
+    _sum: { qty: true },
+  });
+  return new Map(
+    rows.map((r) => [r.productId, Math.abs(Math.round(r._sum.qty ?? 0))])
+  );
+};
 
 // Normalize the uom field of every BOM item against the UoM master
 // and validate that each item's UoM is in the same category as the
@@ -1265,26 +1286,214 @@ export const mfgRoutes = async (app: FastifyInstance) => {
           },
         ])
       );
+      const issuedMap = await issuedQtyByProduct(po.orderNo, productIds);
       const lines = leaves.map((l) => {
         const s = stockMap.get(l.productId) ?? { onHand: 0, reserved: 0 };
         const free = s.onHand - s.reserved;
+        const required = Math.ceil(l.qty);
+        const issued = issuedMap.get(l.productId) ?? 0;
+        const stillNeeded = Math.max(0, required - issued);
         return {
           productId: l.productId,
           sku: l.sku,
           name: l.name,
           uom: l.uom,
           path: l.path,
-          required: l.qty,
+          required,
+          issued,
+          stillNeeded,
           onHand: s.onHand,
           free,
-          shortage: Math.max(0, l.qty - free),
+          // Shortage = additional stock needed in bins to finish issuing.
+          // After issue, material left the bins — do not treat that as a shortage.
+          shortage: Math.max(0, stillNeeded - free),
         };
       });
+      const allFullyIssued = lines.every((l) => l.stillNeeded <= 0);
+      const materialsIssued =
+        po.status !== "planned" || lines.some((l) => l.issued > 0);
       return {
         productionOrderId: po.id,
         plannedFor: planQty,
+        orderNo: po.orderNo,
+        status: po.status,
         lines,
         anyShortage: lines.some((l) => l.shortage > 0),
+        allFullyIssued,
+        materialsIssued,
+      };
+    }
+  );
+
+  // GET /production-orders/:id/inventory-trail
+  // Summarises bin/warehouse locations for material issue and FG receipt
+  // (stock ledger ref = orderNo) plus linked transfer orders.
+  app.get(
+    "/production-orders/:id/inventory-trail",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      const id = (req.params as { id: string }).id;
+      const po = await db.productionOrder.findUnique({
+        where: { id },
+        include: {
+          bom: {
+            include: {
+              product: { select: { id: true, sku: true, name: true, uom: true } },
+              defaultWorkCenter: {
+                include: {
+                  productionLineWarehouse: {
+                    select: { id: true, code: true, name: true, kind: true },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+      if (!po) return reply.code(404).send({ error: { code: "not_found" } });
+
+      const plWh = po.bom.defaultWorkCenter?.productionLineWarehouse ?? null;
+      const fgProductId = po.bom.productId;
+
+      const ledger = await db.stockLedger.findMany({
+        where: { ref: po.orderNo },
+        include: {
+          product: { select: { id: true, sku: true, name: true } },
+          warehouse: { select: { code: true, name: true, kind: true } },
+        },
+        orderBy: { date: "asc" },
+      });
+
+      const isConsumption = (txnType: string, qty: number) =>
+        qty < 0 ||
+        txnType.toLowerCase() === "issue" ||
+        txnType.toLowerCase() === "out";
+
+      type AggRow = {
+        productId: string;
+        sku: string;
+        name: string;
+        warehouseCode: string;
+        warehouseName: string;
+        warehouseKind: string;
+        binPath: string;
+        qty: number;
+        txnTypes: Set<string>;
+        lastDate: Date;
+      };
+      const aggKey = (productId: string, warehouseId: string, binPath: string) =>
+        `${productId}|${warehouseId}|${binPath}`;
+
+      const materialsMap = new Map<string, AggRow>();
+      const finishedMap = new Map<string, AggRow>();
+
+      for (const row of ledger) {
+        const binPath = row.bin?.trim() || "—";
+        const key = aggKey(row.productId, row.warehouseId, binPath);
+        const target =
+          row.productId === fgProductId && !isConsumption(row.txnType, row.qty)
+            ? finishedMap
+            : isConsumption(row.txnType, row.qty)
+              ? materialsMap
+              : row.productId === fgProductId
+                ? finishedMap
+                : null;
+        if (!target) continue;
+        const qtyAbs = Math.abs(Math.round(row.qty));
+        const existing = target.get(key);
+        if (existing) {
+          existing.qty += qtyAbs;
+          existing.txnTypes.add(row.txnType);
+          if (row.date > existing.lastDate) existing.lastDate = row.date;
+        } else {
+          target.set(key, {
+            productId: row.productId,
+            sku: row.product.sku,
+            name: row.product.name,
+            warehouseCode: row.warehouse.code,
+            warehouseName: row.warehouse.name,
+            warehouseKind: row.warehouse.kind,
+            binPath,
+            qty: qtyAbs,
+            txnTypes: new Set([row.txnType]),
+            lastDate: row.date,
+          });
+        }
+      }
+
+      const toRows = (m: Map<string, AggRow>) =>
+        [...m.values()]
+          .map((r) => ({
+            productId: r.productId,
+            sku: r.sku,
+            name: r.name,
+            warehouseCode: r.warehouseCode,
+            warehouseName: r.warehouseName,
+            warehouseKind: r.warehouseKind,
+            binPath: r.binPath,
+            qty: r.qty,
+            txnTypes: [...r.txnTypes],
+            lastDate: r.lastDate.toISOString(),
+          }))
+          .sort((a, b) => a.sku.localeCompare(b.sku) || a.binPath.localeCompare(b.binPath));
+
+      const transfers = await db.transferOrder.findMany({
+        where: { productionOrderId: id },
+        include: {
+          fromWarehouse: { select: { code: true, name: true } },
+          toWarehouse: { select: { code: true, name: true } },
+          items: {
+            include: {
+              product: { select: { sku: true, name: true } },
+              fromBin: { select: { zone: true, shelf: true, bin: true } },
+              tobin: { select: { zone: true, shelf: true, bin: true } },
+            },
+          },
+        },
+        orderBy: { createdAt: "asc" },
+      });
+
+      const binLabel = (b: { zone: string; shelf: string; bin: string } | null) =>
+        b ? `${b.zone}/${b.shelf}/${b.bin}` : null;
+
+      return {
+        productionOrderId: po.id,
+        orderNo: po.orderNo,
+        status: po.status,
+        finishedGood: {
+          productId: po.bom.product.id,
+          sku: po.bom.product.sku,
+          name: po.bom.product.name,
+          uom: po.bom.product.uom,
+        },
+        productionLineWarehouse: plWh
+          ? { code: plWh.code, name: plWh.name, kind: plWh.kind }
+          : null,
+        materialsConsumed: toRows(materialsMap),
+        finishedGoodsPosted: toRows(finishedMap),
+        transfers: transfers.map((t) => ({
+          id: t.id,
+          transferNo: t.transferNo,
+          kind: t.kind,
+          status: t.status,
+          fromWarehouseCode: t.fromWarehouse.code,
+          fromWarehouseName: t.fromWarehouse.name,
+          toWarehouseCode: t.toWarehouse.code,
+          toWarehouseName: t.toWarehouse.name,
+          items: t.items.map((i) => ({
+            sku: i.product.sku,
+            name: i.product.name,
+            qtyRequested: i.qtyRequested,
+            qtyPicked: i.qtyPicked,
+            qtyDropped: i.qtyDropped,
+            fromBinPath: binLabel(i.fromBin),
+            toBinPath: binLabel(i.tobin),
+          })),
+        })),
+        hasActivity:
+          materialsMap.size > 0 ||
+          finishedMap.size > 0 ||
+          transfers.length > 0,
       };
     }
   );
@@ -1367,6 +1576,14 @@ export const mfgRoutes = async (app: FastifyInstance) => {
       if (!po) return reply.code(404).send({ error: { code: "not_found" } });
       if (po.status === "completed") {
         return reply.code(409).send({ error: { code: "already_completed" } });
+      }
+      if (po.status !== "planned") {
+        return reply.code(409).send({
+          error: {
+            code: "already_released",
+            message: `MO ${po.orderNo} is already ${po.status}. Release only applies to planned orders.`,
+          },
+        });
       }
 
       const productionLineWhId =
@@ -1556,6 +1773,21 @@ export const mfgRoutes = async (app: FastifyInstance) => {
       const leaves = await explodeBom(po.bom.productId, planQty, {
         variantId: po.bom.variantId,
       });
+      const productIds = leaves.map((l) => l.productId);
+      const issuedMap = await issuedQtyByProduct(po.orderNo, productIds);
+      const alreadyFullyIssued = leaves.every((l) => {
+        const required = Math.ceil(l.qty);
+        const issued = issuedMap.get(l.productId) ?? 0;
+        return Math.max(0, required - issued) <= 0;
+      });
+      if (alreadyFullyIssued) {
+        return reply.code(409).send({
+          error: {
+            code: "materials_already_issued",
+            message: `MO ${po.orderNo} already has all BOM materials issued.`,
+          },
+        });
+      }
 
       // When the BOM's work center has a production-line warehouse, issue
       // ONLY from that warehouse. If it doesn't have one, fall back to
@@ -1613,6 +1845,7 @@ export const mfgRoutes = async (app: FastifyInstance) => {
         uom: string;
       }> = [];
       let anyShort = false;
+      const decrementedBinIds = new Set<string>();
 
       for (const leaf of leaves) {
         // leaf.qty is in leaf.uom (the component's stock UoM). Round up
@@ -1634,12 +1867,13 @@ export const mfgRoutes = async (app: FastifyInstance) => {
             where: { id: bin.id },
             data: { qty: { decrement: take } },
           });
+          decrementedBinIds.add(bin.id);
           await db.stockLedger.create({
             data: {
               productId: leaf.productId,
               warehouseId: bin.warehouseId,
               bin: `${bin.zone}/${bin.shelf}/${bin.bin}`,
-              txnType: "out",
+              txnType: "Issue",
               ref: po.orderNo,
               qty: -take,
               balance: bin.qty - take,
@@ -1699,7 +1933,13 @@ export const mfgRoutes = async (app: FastifyInstance) => {
       }
       await recordChange("ProductionOrder", id, "update", updated, req.user.sub);
 
-      return { issued, anyShort, productionOrder: updated };
+      const stockRuleResults = [];
+      for (const binId of decrementedBinIds) {
+        const part = await checkStockRules(binId, req.user.sub);
+        stockRuleResults.push(...part.filter((r) => r.created));
+      }
+
+      return { issued, anyShort, productionOrder: updated, stockRuleTriggers: stockRuleResults };
     }
   );
 
@@ -1793,52 +2033,92 @@ export const mfgRoutes = async (app: FastifyInstance) => {
         });
       }
 
-      // Determine where to land the FG:
-      //   1. The work center's production-line warehouse (preferred).
-      //   2. The caller-supplied warehouseId override.
-      //   3. Any active storage warehouse (legacy fallback).
       const productionLineWhId =
         po.bom.defaultWorkCenter?.productionLineWarehouse?.id ?? null;
       const landingWhId = productionLineWhId ?? body.warehouseId ?? null;
 
-      if (landingWhId) {
-        const wh = await db.warehouse.findUnique({ where: { id: landingWhId } });
-        if (!wh) {
-          return reply.code(404).send({ error: { code: "warehouse_not_found" } });
+      const dest = await resolvePutawayDestination(
+        po.bom.productId,
+        po.bom.variantId,
+        landingWhId
+      );
+
+      const directPost =
+        !productionLineWhId ||
+        !dest ||
+        dest.warehouseId === productionLineWhId;
+
+      let receiveBin: {
+        id: string;
+        warehouseId: string;
+        zone: string;
+        shelf: string;
+        bin: string;
+        qty: number;
+        productId: string | null;
+      } | null = null;
+
+      if (directPost && dest) {
+        if (dest.binId) {
+          receiveBin = await db.bin.findUnique({ where: { id: dest.binId } });
+        } else if (dest.warehouseId) {
+          receiveBin = await pickBestBin(dest.warehouseId, po.bom.productId, {
+            allowEmptyBinFallback: !dest.fixedBin,
+          });
+          if (!receiveBin && dest.fixedBin) {
+            return reply.code(409).send({
+              error: {
+                code: "no_putaway_bin",
+                message:
+                  "Putaway rule requires a fixed destination bin but none is configured.",
+              },
+            });
+          }
         }
+      } else if (productionLineWhId) {
+        receiveBin = await pickBinForReceive(productionLineWhId, po.bom.productId);
       }
 
-      // Try to put away the FG into the landing warehouse.
+      if (!receiveBin) {
+        receiveBin = await pickBinForReceive(landingWhId, po.bom.productId);
+      }
+
+      if (!receiveBin) {
+        return reply.code(409).send({
+          error: {
+            code: "no_receive_bin",
+            message:
+              "No bin available to receive finished goods. Configure a putaway rule with a destination bin.",
+          },
+        });
+      }
+
       let putaway: { binId: string; bin: string; qty: number } | null = null;
-      const bin = await pickBinForReceive(landingWhId, po.bom.productId);
-      if (bin) {
-        await db.bin.update({
-          where: { id: bin.id },
-          data: {
-            qty: { increment: finalQty },
-            productId: bin.productId ?? po.bom.productId,
-          },
-        });
-        await db.stockLedger.create({
-          data: {
-            productId: po.bom.productId,
-            warehouseId: bin.warehouseId,
-            bin: `${bin.zone}/${bin.shelf}/${bin.bin}`,
-            txnType: "in",
-            ref: po.orderNo,
-            qty: finalQty,
-            balance: bin.qty + finalQty,
-            date: new Date(),
-          },
-        });
-        putaway = {
-          binId: bin.id,
-          bin: `${bin.zone}/${bin.shelf}/${bin.bin}`,
+      await db.bin.update({
+        where: { id: receiveBin.id },
+        data: {
+          qty: { increment: finalQty },
+          productId: receiveBin.productId ?? po.bom.productId,
+        },
+      });
+      await db.stockLedger.create({
+        data: {
+          productId: po.bom.productId,
+          warehouseId: receiveBin.warehouseId,
+          bin: `${receiveBin.zone}/${receiveBin.shelf}/${receiveBin.bin}`,
+          txnType: "Production",
+          ref: po.orderNo,
           qty: finalQty,
-        };
-      }
+          balance: receiveBin.qty + finalQty,
+          date: new Date(),
+        },
+      });
+      putaway = {
+        binId: receiveBin.id,
+        bin: `${receiveBin.zone}/${receiveBin.shelf}/${receiveBin.bin}`,
+        qty: finalQty,
+      };
 
-      // Keep parent and variant stockOnHand counters in sync.
       await db.product.update({
         where: { id: po.bom.productId },
         data: { stockOnHand: { increment: finalQty } },
@@ -1850,43 +2130,38 @@ export const mfgRoutes = async (app: FastifyInstance) => {
         });
       }
 
-      // Auto-create a putaway transfer order when the FG lands in a
-      // production-line warehouse and a putaway rule (or any storage
-      // warehouse) can provide a storage destination.
       let putawayTransferOrderId: string | null = null;
-      if (productionLineWhId && bin) {
-        const dest = await resolvePutawayDestination(
-          po.bom.productId,
-          po.bom.variantId,
-          null
-        );
-        if (dest && dest.warehouseId !== productionLineWhId) {
-          const transferNo = await nextTransferNo();
-          const toOrder = await db.transferOrder.create({
-            data: {
-              transferNo,
-              kind: "putaway",
-              status: "ready",
-              fromWarehouseId: productionLineWhId,
-              toWarehouseId: dest.warehouseId,
-              productionOrderId: id,
-              notes: `Auto-created on MO ${po.orderNo} completion`,
-              items: {
-                create: [
-                  {
-                    productId: po.bom.productId,
-                    variantId: po.bom.variantId ?? null,
-                    qtyRequested: finalQty,
-                    fromBinId: bin.id,
-                    toBinId: dest.binId ?? null,
-                  },
-                ],
-              },
+      if (
+        productionLineWhId &&
+        dest &&
+        dest.warehouseId !== productionLineWhId &&
+        receiveBin.warehouseId === productionLineWhId
+      ) {
+        const transferNo = await nextTransferNo();
+        const toOrder = await db.transferOrder.create({
+          data: {
+            transferNo,
+            kind: "putaway",
+            status: "ready",
+            fromWarehouseId: productionLineWhId,
+            toWarehouseId: dest.warehouseId,
+            productionOrderId: id,
+            notes: `Auto-created on MO ${po.orderNo} completion`,
+            items: {
+              create: [
+                {
+                  productId: po.bom.productId,
+                  variantId: po.bom.variantId ?? null,
+                  qtyRequested: finalQty,
+                  fromBinId: receiveBin.id,
+                  toBinId: dest.binId ?? null,
+                },
+              ],
             },
-          });
-          putawayTransferOrderId = toOrder.id;
-          await recordChange("TransferOrder", toOrder.id, "insert", toOrder, req.user.sub);
-        }
+          },
+        });
+        putawayTransferOrderId = toOrder.id;
+        await recordChange("TransferOrder", toOrder.id, "insert", toOrder, req.user.sub);
       }
 
       // Close all work orders.

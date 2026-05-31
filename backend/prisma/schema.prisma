@@ -39,6 +39,9 @@ model User {
   transferOrderClaims  TransferOrder[] @relation("TransferOrderAssignee")
   transferOrderPicks   TransferOrder[] @relation("TransferOrderPicker")
   transferOrderDrops   TransferOrder[] @relation("TransferOrderDropper")
+  enquiriesAssigned    Enquiry[]       @relation("EnquiryAssignee")
+  enquiriesCreated     Enquiry[]       @relation("EnquiryCreator")
+  enquiryActivities    EnquiryActivity[]
 }
 
 model Session {
@@ -132,6 +135,7 @@ model Warehouse {
   // Reverse relation: the WorkCenter that owns this production warehouse
   productionWorkCenter WorkCenter? @relation("WorkCenterProductionWarehouse")
   putawayRulesTo       PutawayRule[] @relation("PutawayRuleTo")
+  stockRulesTo         StockRule[] @relation("StockRuleToWarehouse")
   transferOrdersFrom   TransferOrder[] @relation("TransferOrderFromWarehouse")
   transferOrdersTo     TransferOrder[] @relation("TransferOrderToWarehouse")
 }
@@ -162,6 +166,9 @@ model Bin {
   pickListItems PickListItem[]
   binCounts    BinCount[]
   putawayRules  PutawayRule[]
+  stockRulesMonitor StockRule[] @relation("StockRuleMonitor")
+  stockRulesSource  StockRule[] @relation("StockRuleSource")
+  stockRulesDest    StockRule[] @relation("StockRuleDest")
   transferItemsFrom TransferOrderItem[] @relation("TransferItemFromBin")
   transferItemsTo   TransferOrderItem[] @relation("TransferItemToBin")
 
@@ -221,7 +228,9 @@ model Product {
   packingSlipItems PackingSlipItem[]
   priceListItems PriceListItem[]
   putawayRules  PutawayRule[]
+  stockRules    StockRule[]
   transferOrderItems TransferOrderItem[]
+  enquiryItems  EnquiryItem[]
 }
 
 model ProductVariant {
@@ -270,7 +279,9 @@ model ProductVariant {
   returnItems         CustomerReturnItem[]
   creditNoteItems     CreditNoteItem[]
   putawayRules        PutawayRule[]
+  stockRules          StockRule[]
   transferOrderItems  TransferOrderItem[]
+  enquiryItems        EnquiryItem[]
 
   @@index([productId])
 }
@@ -324,8 +335,99 @@ model Customer {
   payments    CustomerPayment[]
   customerReturns CustomerReturn[]
   creditNotes     CreditNote[]
+  enquiries   Enquiry[]
 
   @@index([priceListId])
+}
+
+// ─── CRM: Enquiries / leads pipeline ──────────────────────────────────────
+// An Enquiry is an inbound interest captured BEFORE a Customer/Quote exists.
+// It can be a product enquiry, a dealership application, a farm-visit request,
+// or anything else. It moves through a pipeline (new → contacted → qualified
+// → proposal → won/lost) and, when won, is linked to (or creates) a Customer.
+model Enquiry {
+  id                String    @id @default(cuid())
+  enquiryNo         String    @unique
+  type              String    @default("product")  // product | dealership | farm_visit | other
+  stage             String    @default("new")      // new | contacted | qualified | proposal | won | lost
+  source            String    @default("walk_in")  // walk_in | phone | website | whatsapp | referral | exhibition | social | other
+  priority          String    @default("medium")   // low | medium | high
+
+  // Lead contact — captured even when the lead is not yet a Customer.
+  contactName       String
+  phone             String?
+  email             String?
+  company           String?
+  city              String?
+
+  subject           String
+  requirement       String?                          // free-form description of the need
+  estimatedValue    Float     @default(0)             // pipeline value for forecasting
+  expectedCloseDate DateTime?
+  nextFollowUpAt    DateTime?                         // denormalised from the earliest open task for quick filtering
+
+  // Pipeline outcome
+  lostReason        String?
+  wonAt             DateTime?
+  lostAt            DateTime?
+
+  // Links
+  customerId        String?                           // existing customer, or the one created on conversion
+  customer          Customer? @relation(fields: [customerId], references: [id])
+  assignedToId      String?
+  assignedTo        User?     @relation("EnquiryAssignee", fields: [assignedToId], references: [id])
+  createdById       String?
+  createdBy         User?     @relation("EnquiryCreator", fields: [createdById], references: [id])
+  convertedQuoteId  String?                           // optional deep-link if a quote is later raised
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  items             EnquiryItem[]
+  activities        EnquiryActivity[]
+
+  @@index([stage])
+  @@index([type])
+  @@index([assignedToId])
+  @@index([customerId])
+  @@index([nextFollowUpAt])
+}
+
+// Optional line items for product / dealership enquiries. Either references a
+// catalog Product/Variant, or carries a free-text description for something
+// not yet in the catalog.
+model EnquiryItem {
+  id          String          @id @default(cuid())
+  enquiryId   String
+  productId   String?
+  variantId   String?
+  description String?          // free text when product not in catalog
+  qty         Float           @default(1)
+  notes       String?
+  enquiry     Enquiry         @relation(fields: [enquiryId], references: [id], onDelete: Cascade)
+  product     Product?        @relation(fields: [productId], references: [id])
+  variant     ProductVariant? @relation(fields: [variantId], references: [id])
+
+  @@index([enquiryId])
+}
+
+// Timeline entry on an enquiry. Doubles as a follow-up task when dueAt is set
+// (open task = dueAt set & completedAt null).
+model EnquiryActivity {
+  id          String   @id @default(cuid())
+  enquiryId   String
+  type        String   // note | call | email | meeting | whatsapp | visit | stage_change
+  body        String
+  outcome     String?
+  dueAt       DateTime?
+  completedAt DateTime?
+  createdById String?
+  createdBy   User?    @relation(fields: [createdById], references: [id])
+  createdAt   DateTime @default(now())
+  enquiry     Enquiry  @relation(fields: [enquiryId], references: [id], onDelete: Cascade)
+
+  @@index([enquiryId])
+  @@index([dueAt])
 }
 
 // Accounts-Receivable payment recorded against a customer.
@@ -559,6 +661,7 @@ model Bom {
   defaultMachine    Machine?    @relation(fields: [defaultMachineId], references: [id])
   items       BomItem[]
   productionOrders ProductionOrder[]
+  stockRules  StockRule[]
 
   @@index([productId])
   @@index([variantId])
@@ -756,6 +859,39 @@ model PutawayRule {
   @@index([toWarehouseId])
 }
 
+// Monitors a bin's qty; when below minQty, auto-creates an MO or transfer.
+model StockRule {
+  id              String   @id @default(cuid())
+  productId       String
+  variantId       String?
+  monitorBinId    String
+  minQty          Float
+  // mo = create ProductionOrder; transfer = create TransferOrder
+  triggerType     String
+  bomId           String?
+  sourceBinId     String?
+  toWarehouseId   String?
+  toBinId         String?
+  tags            String?
+  active          Boolean  @default(true)
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  product         Product         @relation(fields: [productId], references: [id])
+  variant         ProductVariant? @relation(fields: [variantId], references: [id])
+  monitorBin      Bin             @relation("StockRuleMonitor", fields: [monitorBinId], references: [id])
+  bom             Bom?            @relation(fields: [bomId], references: [id])
+  sourceBin       Bin?            @relation("StockRuleSource", fields: [sourceBinId], references: [id])
+  toBin           Bin?            @relation("StockRuleDest", fields: [toBinId], references: [id])
+  toWarehouse     Warehouse?      @relation("StockRuleToWarehouse", fields: [toWarehouseId], references: [id])
+
+  @@index([productId])
+  @@index([variantId])
+  @@index([monitorBinId])
+  @@index([active])
+  @@index([triggerType])
+}
+
 // A first-class internal movement document. Three kinds:
 //   putaway      - FG leaving production line -> storage (auto-created on MO complete)
 //   replenishment - raw materials leaving storage -> production line (auto-created on MO release)
@@ -782,6 +918,8 @@ model TransferOrder {
   droppedAt         DateTime?
   cancelledAt       DateTime?
   notes             String?
+  // Comma-separated team/routing tags for mobile task filtering.
+  tags              String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
   fromWarehouse     Warehouse @relation("TransferOrderFromWarehouse", fields: [fromWarehouseId], references: [id])

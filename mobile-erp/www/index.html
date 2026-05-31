@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icons/wh-192.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#003087" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="NovaWH" />
+    <title>NovaERP — High-Performance Manufacturing</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" crossorigin href="/assets/index-xDAGvseu.css">
+    <script>
+      // When the Capacitor WebView opens index.html, the URL is "/" (or
+      // index.html) - which would route us to the desktop dashboard
+      // login. We're a warehouse APK, so force the URL to /m/login
+      // BEFORE React Router boots. history.replaceState doesn't trigger
+      // a navigation, just updates the address so BrowserRouter reads
+      // the right initial location.
+      (function () {
+        var p = window.location.pathname || "/";
+        if (p === "/" || /\/index\.html$/.test(p)) {
+          history.replaceState({}, "", "/m/login");
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-BrVev0Cx.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>

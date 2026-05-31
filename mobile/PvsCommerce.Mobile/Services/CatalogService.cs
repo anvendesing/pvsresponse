@@ -19,6 +19,8 @@ public sealed class CatalogService
 
     public IReadOnlyList<CatalogProduct> Products => _cache ?? (IReadOnlyList<CatalogProduct>)System.Array.Empty<CatalogProduct>();
 
+    public string ApiBaseUrl => _api.Config.ApiBaseUrl;
+
     public async Task<IReadOnlyList<CatalogProduct>> EnsureLoadedAsync(CancellationToken ct = default)
     {
         if (_cache is not null) return _cache;

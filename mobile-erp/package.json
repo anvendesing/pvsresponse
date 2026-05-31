@@ -1,0 +1,17 @@
+{
+  "name": "novaerp-warehouse",
+  "version": "1.0.0",
+  "private": true,
+  "description": "NovaERP Warehouse — Capacitor wrapper around the /m/ PWA (picking, packing, stock correction).",
+  "scripts": {
+    "sync": "cap sync android",
+    "build:android": "cap sync android && cd android && gradlew.bat assembleDebug",
+    "open:android": "cap open android"
+  },
+  "dependencies": {
+    "@capacitor-mlkit/barcode-scanning": "^6.2.0",
+    "@capacitor/android": "^6.2.1",
+    "@capacitor/cli": "^6.2.1",
+    "@capacitor/core": "^6.2.1"
+  }
+}

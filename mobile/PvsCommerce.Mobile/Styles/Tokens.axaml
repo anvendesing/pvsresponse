@@ -1,49 +1,53 @@
 <ResourceDictionary xmlns="https://github.com/avaloniaui"
                     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-  <!-- Brand tokens. Sourced from pvsecommerce/src/styles/theme.css :root.
-       Keep these in sync if the React app's theme is ever revised. -->
+  <!--
+    Design tokens — sourced 1:1 from app.html :root vars (Modern Organic Luxury).
+    Keep colours, radii and shadows in sync if the HTML mock is ever revised.
+  -->
 
-  <!-- Brand: gold -->
-  <Color x:Key="BrandGoldColor">#F0C238</Color>
-  <Color x:Key="BrandGoldDarkColor">#DCA31F</Color>
-  <Color x:Key="BrandGoldLightColor">#FEF08A</Color>
-  <Color x:Key="BrandGoldCreamColor">#FEFCF3</Color>
-  <Color x:Key="BrandGoldSoftColor">#FEF3C7</Color>
+  <!-- Forest greens -->
+  <Color x:Key="ForestGreenColor">#1E4620</Color>
+  <Color x:Key="ForestGreenLightColor">#2C5E2F</Color>
+  <Color x:Key="ForestGreenDarkColor">#122B14</Color>
+  <Color x:Key="ForestGreenSoftColor">#F0FDF4</Color>
 
-  <SolidColorBrush x:Key="BrandGold" Color="{StaticResource BrandGoldColor}" />
-  <SolidColorBrush x:Key="BrandGoldDark" Color="{StaticResource BrandGoldDarkColor}" />
-  <SolidColorBrush x:Key="BrandGoldLight" Color="{StaticResource BrandGoldLightColor}" />
-  <SolidColorBrush x:Key="BrandGoldCream" Color="{StaticResource BrandGoldCreamColor}" />
-  <SolidColorBrush x:Key="BrandGoldSoft" Color="{StaticResource BrandGoldSoftColor}" />
+  <SolidColorBrush x:Key="ForestGreen"      Color="{StaticResource ForestGreenColor}" />
+  <SolidColorBrush x:Key="ForestGreenLight" Color="{StaticResource ForestGreenLightColor}" />
+  <SolidColorBrush x:Key="ForestGreenDark"  Color="{StaticResource ForestGreenDarkColor}" />
+  <SolidColorBrush x:Key="ForestGreenSoft"  Color="{StaticResource ForestGreenSoftColor}" />
 
-  <!-- Brand: forest -->
-  <Color x:Key="BrandForestColor">#385F1C</Color>
-  <Color x:Key="BrandForestLightColor">#4C7B2A</Color>
-  <Color x:Key="BrandForestDarkColor">#233E11</Color>
-  <Color x:Key="BrandForestSoftColor">#F1F8EC</Color>
+  <!-- Primary golds -->
+  <Color x:Key="PrimaryGoldColor">#F0C238</Color>
+  <Color x:Key="PrimaryGoldAccentColor">#EAB308</Color>
+  <Color x:Key="PrimaryGoldDarkColor">#CA8A04</Color>
+  <Color x:Key="PrimaryGoldCreamColor">#FEFBEB</Color>
+  <Color x:Key="PrimaryGoldLightColor">#FEF3C7</Color>
 
-  <SolidColorBrush x:Key="BrandForest" Color="{StaticResource BrandForestColor}" />
-  <SolidColorBrush x:Key="BrandForestLight" Color="{StaticResource BrandForestLightColor}" />
-  <SolidColorBrush x:Key="BrandForestDark" Color="{StaticResource BrandForestDarkColor}" />
-  <SolidColorBrush x:Key="BrandForestSoft" Color="{StaticResource BrandForestSoftColor}" />
+  <SolidColorBrush x:Key="PrimaryGold"        Color="{StaticResource PrimaryGoldColor}" />
+  <SolidColorBrush x:Key="PrimaryGoldAccent"  Color="{StaticResource PrimaryGoldAccentColor}" />
+  <SolidColorBrush x:Key="PrimaryGoldDark"    Color="{StaticResource PrimaryGoldDarkColor}" />
+  <SolidColorBrush x:Key="PrimaryGoldCream"   Color="{StaticResource PrimaryGoldCreamColor}" />
+  <SolidColorBrush x:Key="PrimaryGoldLight"   Color="{StaticResource PrimaryGoldLightColor}" />
 
   <!-- Neutrals -->
-  <Color x:Key="NeutralDarkColor">#22251F</Color>
+  <Color x:Key="NeutralDarkColor">#171717</Color>
   <Color x:Key="NeutralGrayColor">#78716C</Color>
-  <Color x:Key="NeutralLightColor">#FAFAF9</Color>
+  <Color x:Key="NeutralLightColor">#F7F7F5</Color>
+  <Color x:Key="NeutralCreamColor">#FAF5E6</Color>
   <Color x:Key="NeutralWhiteColor">#FFFFFF</Color>
-  <Color x:Key="NeutralCreamColor">#FDFAF2</Color>
+  <Color x:Key="NeutralBorderColor">#EAEAE5</Color>
 
-  <SolidColorBrush x:Key="NeutralDark" Color="{StaticResource NeutralDarkColor}" />
-  <SolidColorBrush x:Key="NeutralGray" Color="{StaticResource NeutralGrayColor}" />
-  <SolidColorBrush x:Key="NeutralLight" Color="{StaticResource NeutralLightColor}" />
-  <SolidColorBrush x:Key="NeutralWhite" Color="{StaticResource NeutralWhiteColor}" />
-  <SolidColorBrush x:Key="NeutralCream" Color="{StaticResource NeutralCreamColor}" />
+  <SolidColorBrush x:Key="NeutralDark"   Color="{StaticResource NeutralDarkColor}" />
+  <SolidColorBrush x:Key="NeutralGray"   Color="{StaticResource NeutralGrayColor}" />
+  <SolidColorBrush x:Key="NeutralLight"  Color="{StaticResource NeutralLightColor}" />
+  <SolidColorBrush x:Key="NeutralCream"  Color="{StaticResource NeutralCreamColor}" />
+  <SolidColorBrush x:Key="NeutralWhite"  Color="{StaticResource NeutralWhiteColor}" />
+  <SolidColorBrush x:Key="NeutralBorder" Color="{StaticResource NeutralBorderColor}" />
 
   <!-- Status -->
   <SolidColorBrush x:Key="StatusSuccess" Color="#16A34A" />
-  <SolidColorBrush x:Key="StatusError" Color="#DC2626" />
-  <SolidColorBrush x:Key="StatusWarning" Color="#CA8A04" />
+  <SolidColorBrush x:Key="StatusWarning" Color="#D97706" />
+  <SolidColorBrush x:Key="StatusError"   Color="#DC2626" />
 
   <!-- Geometry -->
   <CornerRadius x:Key="RadiusSm">8</CornerRadius>
@@ -51,13 +55,16 @@
   <CornerRadius x:Key="RadiusLg">24</CornerRadius>
   <CornerRadius x:Key="RadiusFull">9999</CornerRadius>
 
-  <Thickness x:Key="PadXs">4</Thickness>
-  <Thickness x:Key="PadSm">8</Thickness>
-  <Thickness x:Key="PadMd">16</Thickness>
-  <Thickness x:Key="PadLg">24</Thickness>
+  <!-- Shadows -->
+  <BoxShadows x:Key="ShadowSm">0 2 8 0 #0A000000</BoxShadows>
+  <BoxShadows x:Key="ShadowMd">0 8 24 0 #0F1E4620</BoxShadows>
+  <BoxShadows x:Key="ShadowLg">0 16 40 0 #14000000</BoxShadows>
 
-  <!-- Shadows (Avalonia BoxShadows: offsetX, offsetY, blur, spread, color) -->
-  <BoxShadows x:Key="ShadowSm">0 2 4 0 #0F22251F</BoxShadows>
-  <BoxShadows x:Key="ShadowMd">0 4 14 0 #1422251F</BoxShadows>
-  <BoxShadows x:Key="ShadowLg">0 10 30 0 #1F22251F</BoxShadows>
+  <!-- Typography defaults — registered as the logical "Inter" family by
+       AppBuilder.WithInterFont() in each platform entry point. The HTML
+       mockup uses Outfit/Playfair Display; Inter has the same modern
+       neutral feel so we lean on weight + size for hierarchy instead of
+       bundling extra fonts. Swap in proper font assets later if desired. -->
+  <FontFamily x:Key="BodyFont">Inter</FontFamily>
+  <FontFamily x:Key="DisplayFont">Inter</FontFamily>
 </ResourceDictionary>

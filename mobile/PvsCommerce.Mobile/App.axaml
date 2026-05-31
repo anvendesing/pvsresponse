@@ -7,45 +7,22 @@
 
   <Application.Resources>
     <ResourceDictionary>
-      <!-- Registered by .WithInterFont() in each platform entry point.
-           Use the logical family name — not avares://…#Inter — so Bold/SemiBold
-           weights resolve correctly (avares URIs caused a layout crash → blank UI). -->
-      <FontFamily x:Key="BodyFont">Inter</FontFamily>
-      <FontFamily x:Key="DisplayFont">Inter</FontFamily>
-
       <ResourceDictionary.MergedDictionaries>
         <ResourceInclude Source="avares://PvsCommerce.Mobile/Styles/Tokens.axaml" />
       </ResourceDictionary.MergedDictionaries>
     </ResourceDictionary>
   </Application.Resources>
 
-  <!-- DataTemplate routing: ContentControl resolves the correct view when
-       CurrentPage is set to a given ViewModel type. -->
+  <!-- Global view-model → view mappings. ContentControl picks the right
+       view for a given Content type without us juggling ancestor bindings. -->
   <Application.DataTemplates>
-    <DataTemplate DataType="vm:HomeViewModel">
-      <views:HomeView />
-    </DataTemplate>
-    <DataTemplate DataType="vm:CategoryViewModel">
-      <views:CategoryView />
-    </DataTemplate>
-    <DataTemplate DataType="vm:ProductDetailViewModel">
-      <views:ProductDetailView />
-    </DataTemplate>
-    <DataTemplate DataType="vm:CartViewModel">
-      <views:CartView />
-    </DataTemplate>
-    <DataTemplate DataType="vm:CheckoutViewModel">
-      <views:CheckoutView />
-    </DataTemplate>
-    <DataTemplate DataType="vm:LoginViewModel">
-      <views:LoginView />
-    </DataTemplate>
-    <DataTemplate DataType="vm:AccountViewModel">
-      <views:AccountView />
-    </DataTemplate>
-    <DataTemplate DataType="vm:SettingsViewModel">
-      <views:SettingsView />
-    </DataTemplate>
+    <DataTemplate DataType="vm:ShopViewModel"><views:ShopView /></DataTemplate>
+    <DataTemplate DataType="vm:ExploreViewModel"><views:ExploreView /></DataTemplate>
+    <DataTemplate DataType="vm:CartViewModel"><views:CartView /></DataTemplate>
+    <DataTemplate DataType="vm:ProfileViewModel"><views:ProfileView /></DataTemplate>
+    <DataTemplate DataType="vm:AuthViewModel"><views:AuthView /></DataTemplate>
+    <DataTemplate DataType="vm:CheckoutViewModel"><views:CheckoutSheet /></DataTemplate>
+    <DataTemplate DataType="vm:TrackerViewModel"><views:TrackerSheet /></DataTemplate>
   </Application.DataTemplates>
 
   <Application.Styles>

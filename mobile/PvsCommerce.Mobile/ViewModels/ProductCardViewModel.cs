@@ -1,50 +1,77 @@
 using System.Globalization;
 using System.Linq;
 using CommunityToolkit.Mvvm.ComponentModel;
+using CommunityToolkit.Mvvm.Input;
 using PvsCommerce.Mobile.Models;
 using PvsCommerce.Mobile.Services;
 
 namespace PvsCommerce.Mobile.ViewModels;
 
-// Wraps a CatalogProduct with the bits the card needs: resolved image URL,
-// formatted price, in-stock state, and the optional contextual badge.
+// Wraps a CatalogProduct for the 2-col product card grid used on Shop and
+// Explore views. Keeps the bag-tone + tag-line logic mirroring the HTML
+// `renderProductCard` switch (oil → cream, combo → tan, default → millet).
 public partial class ProductCardViewModel : ObservableObject
 {
-    public ProductCardViewModel(CatalogProduct product, CatalogService catalog, string? badge = null)
+    private readonly CatalogService _catalog;
+    private readonly CartService _cart;
+    private readonly WishlistService _wishlist;
+
+    public ProductCardViewModel(
+        CatalogProduct product,
+        CatalogService catalog,
+        CartService cart,
+        WishlistService wishlist,
+        string? badge = null)
     {
         Product = product;
-        Badge = badge;
+        _catalog = catalog;
+        _cart = cart;
+        _wishlist = wishlist;
+        Badge = badge ?? "Best Seller";
 
-        var primaryVariant = product.Variants.FirstOrDefault();
-        Price = (primaryVariant?.Price ?? product.SellingPrice);
-        Uom = primaryVariant?.Uom ?? product.Uom;
-        StockOnHand = primaryVariant?.StockOnHand ?? product.StockOnHand;
-        ImageUrl = catalog.ResolveImageUrl(product.ImageUrl);
-        PackagingHint = PackagingFromName(product.Name);
+        var primary = product.Variants.FirstOrDefault();
+        Price       = primary?.Price ?? product.SellingPrice;
+        WeightLabel = primary?.Size ?? product.Uom ?? "Standard";
+        StockOnHand = primary?.StockOnHand ?? product.StockOnHand;
+        ImageUrl    = catalog.ResolveImageUrl(product.ImageUrl);
+
+        // Pouch tinting heuristic mirrors HTML mock.
+        var n = product.Name.ToLowerInvariant();
+        var c = product.Category.ToLowerInvariant();
+        if (c.Contains("oil") || n.Contains("oil") || n.Contains("ghee"))
+        { PouchColor = "#FCE7AD"; PouchTag = "PURE OIL"; }
+        else if (n.Contains("combo"))
+        { PouchColor = "#E3C298"; PouchTag = "COMBOS"; }
+        else
+        { PouchColor = "#D8BC93"; PouchTag = "MILLETS"; }
     }
 
     public CatalogProduct Product { get; }
-    public string? Badge { get; }
     public string Name => Product.Name;
-    public string Sku => Product.Sku;
+    public string Sku  => Product.Sku;
     public double Price { get; }
-    public string PriceFormatted => "₹" + Price.ToString("N0", CultureInfo.GetCultureInfo("en-IN"));
-    public string? Uom { get; }
+    public string PriceFormatted => "₹" + Price.ToString("N0", CultureInfo.GetCultureInfo("en-IN")) + "/-";
+    public string WeightLabel { get; }
+    public string Badge { get; }
     public int StockOnHand { get; }
-    public bool IsLowStock => StockOnHand > 0 && StockOnHand <= 5;
     public bool IsOutOfStock => StockOnHand <= 0;
-    public string StockLabel => IsOutOfStock ? "Sold out" : IsLowStock ? $"{StockOnHand} left" : "In Stock";
     public string? ImageUrl { get; }
-    public string PackagingHint { get; }
+    public string PouchColor { get; }
+    public string PouchTag { get; }
 
-    // Mirrors pvsecommerce/src/lib/format.ts packagingFromName - same buckets
-    // so the vector packaging art chosen on web and mobile stay consistent.
-    private static string PackagingFromName(string name)
+    public bool IsWishlisted => _wishlist.Has(Product.Id);
+
+    [RelayCommand]
+    private async System.Threading.Tasks.Task AddToCart()
     {
-        var n = name.ToLowerInvariant();
-        if (n.Contains("oil") || n.Contains("ghee")) return "bottle-oil";
-        if (n.Contains("soap")) return "soap-pack";
-        if (n.Contains("combo")) return "combo-bags";
-        return "craft-bag";
+        var primary = Product.Variants.FirstOrDefault();
+        await _cart.AddAsync(Product, primary, 1);
+    }
+
+    [RelayCommand]
+    private void ToggleWishlist()
+    {
+        _wishlist.Toggle(Product.Id);
+        OnPropertyChanged(nameof(IsWishlisted));
     }
 }

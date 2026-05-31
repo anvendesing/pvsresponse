@@ -6,12 +6,14 @@ import {
   Clock,
   Factory,
   IndianRupee,
+  KanbanSquare,
   Package,
   PackageCheck,
   ShoppingCart,
   TrendingUp,
   Users,
 } from "lucide-react";
+import { Link } from "react-router-dom";
 import {
   Area,
   AreaChart,
@@ -165,6 +167,8 @@ export const Dashboard = () => {
           accent="warning"
         />
       </div>
+
+      <EnquiryPipelineWidget />
 
       {/* Charts row */}
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
@@ -440,5 +444,65 @@ export const Dashboard = () => {
         </Card>
       </div>
     </div>
+  );
+};
+
+// Self-contained CRM pipeline widget. Fetches independently and hides itself
+// if the API errors (e.g. for roles without enquiry access) so it never
+// blocks the rest of the dashboard.
+const PIPELINE_STAGES: { id: string; label: string; cls: string }[] = [
+  { id: "new",       label: "New",       cls: "bg-info" },
+  { id: "contacted", label: "Contacted", cls: "bg-primary" },
+  { id: "qualified", label: "Qualified", cls: "bg-warning" },
+  { id: "proposal",  label: "Proposal",  cls: "bg-purple-500" },
+  { id: "won",       label: "Won",       cls: "bg-success" },
+];
+
+const EnquiryPipelineWidget = () => {
+  const { data, error } = useApi(() => api.enquiryStats(), []);
+  if (error || !data) return null;
+  const maxStage = Math.max(1, ...PIPELINE_STAGES.map((s) => data.byStage[s.id] ?? 0));
+
+  return (
+    <Card
+      title="Enquiry pipeline"
+      subtitle="CRM leads in progress"
+      actions={
+        <Link to="/enquiries" className="text-caption font-semibold text-primary hover:underline flex items-center gap-1">
+          <KanbanSquare size={13} /> Open CRM →
+        </Link>
+      }
+    >
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 items-center">
+        <div className="md:col-span-3 space-y-2">
+          {PIPELINE_STAGES.map((s) => {
+            const n = data.byStage[s.id] ?? 0;
+            return (
+              <div key={s.id} className="flex items-center gap-3">
+                <div className="w-20 text-caption text-ink-muted shrink-0">{s.label}</div>
+                <div className="flex-1 h-5 bg-canvas rounded-full overflow-hidden">
+                  <div className={`h-full ${s.cls} rounded-full transition-all`} style={{ width: `${(n / maxStage) * 100}%` }} />
+                </div>
+                <div className="w-8 text-right text-body-sm font-semibold tnum">{n}</div>
+              </div>
+            );
+          })}
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-1 gap-2">
+          <div className="rounded-lg border border-border px-3 py-2">
+            <div className="text-caption text-ink-muted uppercase tracking-wide">Pipeline value</div>
+            <div className="text-h3 font-bold tnum">{inr(data.pipelineValue)}</div>
+          </div>
+          <div className={`rounded-lg border px-3 py-2 ${data.followUpsDue > 0 ? "border-danger/30 bg-danger/5" : "border-border"}`}>
+            <div className="text-caption text-ink-muted uppercase tracking-wide flex items-center gap-1">
+              <Clock size={11} /> Follow-ups due
+            </div>
+            <div className={`text-h3 font-bold tnum ${data.followUpsDue > 0 ? "text-danger" : "text-ink"}`}>
+              {data.followUpsDue}
+            </div>
+          </div>
+        </div>
+      </div>
+    </Card>
   );
 };

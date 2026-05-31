@@ -1,0 +1,14 @@
+{
+  "name": "novaerp-brochure",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "screenshots": "node capture-screenshots.mjs",
+    "pdf": "powershell -ExecutionPolicy Bypass -File build-pdf.ps1",
+    "build": "npm run screenshots && npm run pdf",
+    "sync-public": "node sync-public.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.49.1"
+  }
+}

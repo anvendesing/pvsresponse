@@ -23,24 +23,35 @@ public partial class App : Application
     {
         Services = ConfigureServices();
 
-        // DiskCachedWebImageLoader gives us RAM + disk LRU cache.
-        // AppContext.BaseDirectory is empty on Android — use LocalApplicationData
-        // which resolves to the app's private files directory on every platform.
-        var localAppData = Environment.GetFolderPath(
+        // Disk-cached web image loader for product photos. Use LocalAppData
+        // because AppContext.BaseDirectory is empty on Android.
+        var appData = Environment.GetFolderPath(
             Environment.SpecialFolder.LocalApplicationData,
             Environment.SpecialFolderOption.Create);
-        if (string.IsNullOrEmpty(localAppData))
-            localAppData = Path.Combine(Path.GetTempPath(), "PvsCommerce");
-        var cacheDir = Path.Combine(localAppData, "image-cache");
+        if (string.IsNullOrEmpty(appData))
+            appData = Path.Combine(Path.GetTempPath(), "PvsCommerce");
+        var cacheDir = Path.Combine(appData, "image-cache");
         Directory.CreateDirectory(cacheDir);
         ImageLoader.AsyncImageLoader = new DiskCachedWebImageLoader(cacheDir);
 
-        var mainVm = Services.GetRequiredService<MainViewModel>();
+        // MainViewModel is constructed first; the per-tab view-models are
+        // built afterwards (they need a back-reference to the shell).
+        var main = Services.GetRequiredService<MainViewModel>();
+        main.Shop     = Services.GetRequiredService<ShopViewModel>();
+        main.Explore  = Services.GetRequiredService<ExploreViewModel>();
+        main.CartTab  = Services.GetRequiredService<CartViewModel>();
+        main.Profile  = Services.GetRequiredService<ProfileViewModel>();
+        main.AuthTab  = Services.GetRequiredService<AuthViewModel>();
+        main.Checkout = Services.GetRequiredService<CheckoutViewModel>();
+        main.Tracker  = Services.GetRequiredService<TrackerViewModel>();
+
+        // Kick off the initial catalog fetch so the Shop tab is ready.
+        _ = main.Shop.LoadAsync();
 
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
-            desktop.MainWindow = new MainWindow { DataContext = mainVm };
+            desktop.MainWindow = new MainWindow { DataContext = main };
         else if (ApplicationLifetime is ISingleViewApplicationLifetime sv)
-            sv.MainView = new MainView { DataContext = mainVm };
+            sv.MainView = new MainView { DataContext = main };
 
         base.OnFrameworkInitializationCompleted();
     }
@@ -48,36 +59,26 @@ public partial class App : Application
     private static IServiceProvider ConfigureServices()
     {
         var sc = new ServiceCollection();
-
-        // Infrastructure
         sc.AddSingleton<AppConfig>();
         sc.AddSingleton<HttpClient>();
         sc.AddSingleton<ApiClient>();
         sc.AddSingleton<CatalogService>();
-        sc.AddSingleton<NavigationService>();
-
-        // State services (persisted to LocalApplicationData/PvsCommerce/)
         sc.AddSingleton<CartService>();
         sc.AddSingleton<AuthService>();
         sc.AddSingleton<WishlistService>();
 
-        // View-models (singleton so navigating back doesn't reset state)
-        sc.AddSingleton<HomeViewModel>();
-        sc.AddSingleton<CategoryViewModel>();
-        sc.AddSingleton<ProductDetailViewModel>();
-        sc.AddSingleton<CartViewModel>();
-        sc.AddSingleton<CheckoutViewModel>();
-        sc.AddSingleton<LoginViewModel>();
-        sc.AddSingleton<AccountViewModel>();
-        sc.AddSingleton<SettingsViewModel>();
         sc.AddSingleton<MainViewModel>();
-
+        sc.AddSingleton<ShopViewModel>();
+        sc.AddSingleton<ExploreViewModel>();
+        sc.AddSingleton<CartViewModel>();
+        sc.AddSingleton<ProfileViewModel>();
+        sc.AddSingleton<AuthViewModel>();
+        sc.AddSingleton<CheckoutViewModel>();
+        sc.AddSingleton<TrackerViewModel>();
         return sc.BuildServiceProvider();
     }
 }
 
-// Extension helper so view-models can resolve dependencies without injecting
-// the full IServiceProvider (keeps constructors lean).
 public static class ServiceProviderExtensions
 {
     public static T GetRequiredService<T>(this IServiceProvider sp) where T : notnull

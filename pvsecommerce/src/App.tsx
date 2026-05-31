@@ -21,6 +21,7 @@ import { AccountWishlist } from "@/pages/AccountWishlist";
 import { AccountAddresses } from "@/pages/AccountAddresses";
 import { NotFoundPage } from "@/pages/NotFoundPage";
 import { ProductDetailPage } from "@/pages/ProductDetailPage";
+import { EnquiryPage } from "@/pages/EnquiryPage";
 import { CartProvider } from "@/state/CartContext";
 import { WishlistProvider } from "@/state/WishlistContext";
 import { AuthProvider } from "@/state/AuthContext";
@@ -35,6 +36,7 @@ const router = createBrowserRouter([
       { path: "/", element: <HomePage /> },
       { path: "/category/:slug", element: <CategoryPage /> },
       { path: "/product/:id", element: <ProductDetailPage /> },
+      { path: "/enquiry", element: <EnquiryPage /> },
       { path: "/cart", element: <CartPage /> },
       { path: "/checkout", element: <CheckoutPage /> },
       { path: "/order/:soNo", element: <OrderSuccessPage /> },

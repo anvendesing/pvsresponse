@@ -1,0 +1,132 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:PvsCommerce.Mobile.ViewModels"
+             xmlns:conv="using:PvsCommerce.Mobile.Converters"
+             x:Class="PvsCommerce.Mobile.Views.AuthView"
+             x:DataType="vm:AuthViewModel">
+
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+    <StackPanel Margin="20" Spacing="16">
+
+      <StackPanel HorizontalAlignment="Center" Spacing="6" Margin="0,16,0,0">
+        <Border Background="{StaticResource ForestGreen}"
+                CornerRadius="9999" Width="60" Height="60">
+          <TextBlock Text="🌿" HorizontalAlignment="Center" VerticalAlignment="Center" FontSize="28" />
+        </Border>
+        <TextBlock Text="Join Prakruthivanam"
+                   FontFamily="{StaticResource DisplayFont}"
+                   FontSize="22" FontWeight="Bold"
+                   Foreground="{StaticResource ForestGreenDark}"
+                   HorizontalAlignment="Center" />
+        <TextBlock Text="Experience chemical-free organic luxury direct from farms."
+                   Classes="muted" HorizontalAlignment="Center" TextAlignment="Center" />
+      </StackPanel>
+
+      <Border Classes="card" Padding="20">
+        <StackPanel Spacing="14">
+
+          <!-- Sign in / sign up tabs -->
+          <Border Background="{StaticResource NeutralLight}" CornerRadius="9999" Padding="4">
+            <Grid ColumnDefinitions="*,*">
+              <Button Grid.Column="0" Classes="icon" Padding="0"
+                      Command="{Binding ShowSignInCommand}">
+                <Border Classes="subTab" HorizontalAlignment="Stretch"
+                        Classes.active="{Binding ActiveMode,
+                                         Converter={x:Static conv:EqualsParamConverter.Instance},
+                                         ConverterParameter=signin}">
+                  <TextBlock Text="Sign In" />
+                </Border>
+              </Button>
+              <Button Grid.Column="1" Classes="icon" Padding="0"
+                      Command="{Binding ShowSignUpCommand}">
+                <Border Classes="subTab" HorizontalAlignment="Stretch"
+                        Classes.active="{Binding ActiveMode,
+                                         Converter={x:Static conv:EqualsParamConverter.Instance},
+                                         ConverterParameter=signup}">
+                  <TextBlock Text="Sign Up" />
+                </Border>
+              </Button>
+            </Grid>
+          </Border>
+
+          <!-- Sign-in form -->
+          <StackPanel Spacing="12"
+                      IsVisible="{Binding ActiveMode, Converter={x:Static conv:EqualsParamConverter.Instance}, ConverterParameter=signin}">
+            <Grid ColumnDefinitions="*,*" ColumnSpacing="8">
+              <Button Grid.Column="0" Classes="icon" Padding="0"
+                      Command="{Binding UseOtpCommand}">
+                <Border Classes="subTab" HorizontalAlignment="Stretch"
+                        Classes.active="{Binding ActiveSignInMethod,
+                                         Converter={x:Static conv:EqualsParamConverter.Instance},
+                                         ConverterParameter=otp}">
+                  <TextBlock Text="OTP Sign-In" />
+                </Border>
+              </Button>
+              <Button Grid.Column="1" Classes="icon" Padding="0"
+                      Command="{Binding UsePasswordCommand}">
+                <Border Classes="subTab" HorizontalAlignment="Stretch"
+                        Classes.active="{Binding ActiveSignInMethod,
+                                         Converter={x:Static conv:EqualsParamConverter.Instance},
+                                         ConverterParameter=pass}">
+                  <TextBlock Text="Password" />
+                </Border>
+              </Button>
+            </Grid>
+
+            <!-- OTP block -->
+            <StackPanel Spacing="10"
+                        IsVisible="{Binding ActiveSignInMethod, Converter={x:Static conv:EqualsParamConverter.Instance}, ConverterParameter=otp}">
+              <TextBox Classes="app" Watermark="Mobile Number"
+                       Text="{Binding SignInMobile, Mode=TwoWay}" />
+              <TextBox Classes="app" Watermark="6-digit verification code"
+                       Text="{Binding SignInOtpCode, Mode=TwoWay}"
+                       IsVisible="{Binding OtpRequested}" />
+              <Button Classes="primary" Content="Request OTP 🌾"
+                      Command="{Binding SignInCommand}"
+                      IsVisible="{Binding !OtpRequested}" />
+              <Button Classes="primary" Content="Verify &amp; Sign In 🔒"
+                      Command="{Binding SignInCommand}"
+                      IsVisible="{Binding OtpRequested}" />
+            </StackPanel>
+
+            <!-- Password block -->
+            <StackPanel Spacing="10"
+                        IsVisible="{Binding ActiveSignInMethod, Converter={x:Static conv:EqualsParamConverter.Instance}, ConverterParameter=pass}">
+              <TextBox Classes="app" Watermark="Email Address"
+                       Text="{Binding SignInEmail, Mode=TwoWay}" />
+              <TextBox Classes="app" Watermark="Password"
+                       PasswordChar="•"
+                       Text="{Binding SignInPassword, Mode=TwoWay}" />
+              <Button Classes="primary" Content="Sign In Securely 🔒"
+                      Command="{Binding SignInCommand}" />
+            </StackPanel>
+          </StackPanel>
+
+          <!-- Sign-up form -->
+          <StackPanel Spacing="10"
+                      IsVisible="{Binding ActiveMode, Converter={x:Static conv:EqualsParamConverter.Instance}, ConverterParameter=signup}">
+            <TextBox Classes="app" Watermark="Full Name"
+                     Text="{Binding SignUpName, Mode=TwoWay}" />
+            <TextBox Classes="app" Watermark="Mobile Number"
+                     Text="{Binding SignUpMobile, Mode=TwoWay}" />
+            <TextBox Classes="app" Watermark="Email Address"
+                     Text="{Binding SignUpEmail, Mode=TwoWay}" />
+            <Button Classes="primary" Content="Create Account 🌾"
+                    Command="{Binding SignUpCommand}" />
+          </StackPanel>
+
+          <!-- Status message -->
+          <TextBlock Text="{Binding StatusMessage}" Classes="muted" TextWrapping="Wrap"
+                     IsVisible="{Binding StatusMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+
+          <!-- Guest bypass -->
+          <Button Classes="icon" Padding="0" HorizontalAlignment="Center"
+                  Command="{Binding ContinueAsGuestCommand}">
+            <TextBlock Text="Continue as Guest 🌾" FontSize="13" FontWeight="Bold"
+                       Foreground="{StaticResource ForestGreen}" />
+          </Button>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ImagePlus, Plus, Trash2, X } from "lucide-react";
+import { AlertTriangle, History, ImagePlus, Lock, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Chip } from "@/components/common/Chip";
 import { Input } from "@/components/common/Input";
 import { UomPicker } from "@/components/common/UomPicker";
-import type { Product, ProductState, ProductType, ProductVariant } from "@/data/types";
+import type { Product, ProductState, ProductType, ProductVariant, StockLedgerEntry } from "@/data/types";
 import { api, resolveUploadUrl } from "@/lib/api";
 import { useApi } from "@/hooks/useApi";
 import type { ProductCategory } from "@/data/types";
+import { cn } from "@/lib/cn";
+import { dd, num } from "@/lib/format";
 
 type Mode = "create" | "edit";
 
@@ -68,6 +70,12 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
   const [form, setForm] = useState<Product>(() => emptyForm());
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [ledgerProductId, setLedgerProductId] = useState<string | null>(null);
+  const [binStock, setBinStock] = useState<{ total: number; free: number; bins: { warehouse: string; location: string; qty: number; reserved: number; free: number }[] } | null>(null);
+  const [binStockLoading, setBinStockLoading] = useState(false);
+  const [syncingStock, setSyncingStock] = useState(false);
+  // variantId → { newQty: number; saving: boolean }
+  const [varAdjust, setVarAdjust] = useState<Record<string, { newQty: number; saving: boolean }>>({});
   // Image upload state
   const [imgUploading, setImgUploading] = useState(false);
   const [varImgUploading, setVarImgUploading] = useState<string | null>(null); // variantId being uploaded
@@ -89,7 +97,53 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
       setForm(f);
     }
     setError(null);
+    if (mode === "edit" && product?.id) {
+      setBinStockLoading(true);
+      api.productBinStock(product.id).then((d) => { setBinStock(d); setBinStockLoading(false); }).catch(() => setBinStockLoading(false));
+    } else {
+      setBinStock(null);
+    }
+    setVarAdjust({});
   }, [open, mode, product]);
+
+  const handleSyncStock = async () => {
+    if (!form.id) return;
+    setSyncingStock(true);
+    try {
+      const r = await api.syncProductStock(form.id);
+      setForm((f) => ({ ...f, stockOnHand: r.after }));
+      setBinStock((prev) => prev ? { ...prev, total: r.binTotal } : prev);
+    } catch {
+      // ignore
+    } finally {
+      setSyncingStock(false);
+    }
+  };
+
+  const openVariantAdjust = (vid: string, current: number) =>
+    setVarAdjust((m) => ({ ...m, [vid]: { newQty: current, saving: false } }));
+
+  const closeVariantAdjust = (vid: string) =>
+    setVarAdjust((m) => { const n = { ...m }; delete n[vid]; return n; });
+
+  const saveVariantAdjust = async (vid: string, productId: string) => {
+    const adj = varAdjust[vid];
+    if (!adj) return;
+    setVarAdjust((m) => ({ ...m, [vid]: { ...m[vid], saving: true } }));
+    try {
+      const r = await api.adjustVariantStock(productId, vid, adj.newQty);
+      setForm((f) => ({
+        ...f,
+        stockOnHand: f.stockOnHand + r.delta,
+        variants: (f.variants ?? []).map((v) =>
+          v.id === vid ? { ...v, stockOnHand: r.after } : v
+        ),
+      }));
+      closeVariantAdjust(vid);
+    } catch {
+      setVarAdjust((m) => ({ ...m, [vid]: { ...m[vid], saving: false } }));
+    }
+  };
 
   const update = <K extends keyof Product>(k: K, v: Product[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
@@ -376,11 +430,64 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
               />
             </Field>
             <Field label="On-hand">
-              <Input
-                type="number"
-                value={String(form.stockOnHand)}
-                onChange={(e) => update("stockOnHand", Number(e.target.value))}
-              />
+              {mode === "edit" ? (
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2 h-9 px-3 bg-canvas border border-border rounded-md text-body-sm">
+                    <Lock size={12} className="text-ink-muted shrink-0" />
+                    <span className="flex-1 tnum font-semibold">{num(form.stockOnHand)}</span>
+                    <span className="text-caption text-ink-muted">{form.uom}</span>
+                    {form.id && (
+                      <button
+                        type="button"
+                        className="flex items-center gap-1 text-caption text-primary hover:underline ml-1"
+                        onClick={() => setLedgerProductId(form.id)}
+                      >
+                        <History size={12} />
+                        History
+                      </button>
+                    )}
+                  </div>
+                  {/* Bin stock reconciliation row */}
+                  {form.id && (
+                    <div className={cn(
+                      "flex items-center gap-2 text-caption rounded px-2 py-1",
+                      binStockLoading ? "text-ink-muted" :
+                      binStock && binStock.total !== form.stockOnHand
+                        ? "bg-warning-soft text-[#8a6300] border border-warning/30"
+                        : "bg-canvas text-ink-muted border border-border/60"
+                    )}>
+                      {binStockLoading ? (
+                        <span>Loading bin total…</span>
+                      ) : binStock ? (
+                        <>
+                          <span>Bins: <strong className="tnum">{num(binStock.total)}</strong> ({num(binStock.free)} free)</span>
+                          {binStock.total !== form.stockOnHand && (
+                            <>
+                              <AlertTriangle size={11} />
+                              <span>Counter mismatch ({form.stockOnHand > binStock.total ? "+" : ""}{num(form.stockOnHand - binStock.total)})</span>
+                              <button
+                                type="button"
+                                disabled={syncingStock}
+                                onClick={handleSyncStock}
+                                className="ml-auto flex items-center gap-1 text-[#8a6300] hover:underline disabled:opacity-50"
+                              >
+                                <RefreshCw size={10} className={syncingStock ? "animate-spin" : ""} />
+                                Sync from bins
+                              </button>
+                            </>
+                          )}
+                        </>
+                      ) : null}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <Input
+                  type="number"
+                  value={String(form.stockOnHand)}
+                  onChange={(e) => update("stockOnHand", Number(e.target.value))}
+                />
+              )}
             </Field>
             <Field label="Cost Price">
               <Input
@@ -544,13 +651,69 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
                       </div>
                       <div className="col-span-2">
                         <Label>Stock</Label>
-                        <Input
-                          type="number"
-                          value={String(v.stockOnHand)}
-                          onChange={(e) =>
-                            updateVariant(i, { stockOnHand: Number(e.target.value) })
-                          }
-                        />
+                        {mode === "edit" ? (
+                          <div className="space-y-1">
+                            {varAdjust[v.id ?? ""] ? (
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="number"
+                                  min="0"
+                                  className="flex-1 h-8 px-2 text-body-sm border border-primary rounded-md bg-surface tnum"
+                                  value={varAdjust[v.id ?? ""].newQty}
+                                  onChange={(e) =>
+                                    setVarAdjust((m) => ({ ...m, [v.id ?? ""]: { ...m[v.id ?? ""], newQty: Number(e.target.value) } }))
+                                  }
+                                />
+                                <button
+                                  type="button"
+                                  disabled={varAdjust[v.id ?? ""].saving}
+                                  onClick={() => v.id && form.id && saveVariantAdjust(v.id, form.id)}
+                                  className="h-8 px-2 text-caption bg-primary text-white rounded-md hover:bg-primary/90 disabled:opacity-50"
+                                >
+                                  {varAdjust[v.id ?? ""].saving ? "…" : "Save"}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => v.id && closeVariantAdjust(v.id)}
+                                  className="h-8 w-8 grid place-items-center text-ink-muted hover:bg-canvas rounded-md"
+                                >
+                                  <X size={12} />
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-1.5 h-9 px-2 bg-canvas border border-border rounded-md text-body-sm">
+                                <Lock size={11} className="text-ink-muted shrink-0" />
+                                <span className="flex-1 tnum font-semibold">{num(v.stockOnHand)}</span>
+                                {form.id && v.id && (
+                                  <button
+                                    type="button"
+                                    className="flex items-center gap-1 text-caption text-primary hover:underline"
+                                    onClick={() => openVariantAdjust(v.id!, v.stockOnHand)}
+                                  >
+                                    Adjust
+                                  </button>
+                                )}
+                                {form.id && (
+                                  <button
+                                    type="button"
+                                    className="flex items-center gap-1 text-caption text-ink-muted hover:underline"
+                                    onClick={() => setLedgerProductId(form.id)}
+                                  >
+                                    <History size={11} />
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        ) : (
+                          <Input
+                            type="number"
+                            value={String(v.stockOnHand)}
+                            onChange={(e) =>
+                              updateVariant(i, { stockOnHand: Number(e.target.value) })
+                            }
+                          />
+                        )}
                       </div>
 
                       <div className="col-span-3">
@@ -632,10 +795,153 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
           </Button>
         </div>
       </div>
+
+      {/* Stock ledger drawer */}
+      {ledgerProductId && (
+        <StockLedgerDrawer
+          productId={ledgerProductId}
+          productName={form.name}
+          onClose={() => setLedgerProductId(null)}
+        />
+      )}
     </div>
   );
 };
 
+// ─── Stock Ledger Drawer ─────────────────────────────────────────────────────
+const TXN_META: Record<string, { tone: string; label: string }> = {
+  GRN:        { tone: "bg-success-soft text-success border-success/30",     label: "GRN" },
+  Sale:       { tone: "bg-primary-50 text-primary border-primary/30",       label: "Sale" },
+  Issue:      { tone: "bg-warning-soft text-[#8a6300] border-warning/30",   label: "Issue" },
+  Transfer:   { tone: "bg-purple-50 text-purple-700 border-purple-200",     label: "Transfer" },
+  Production: { tone: "bg-info-soft text-info border-info/30",              label: "Production" },
+  Adjust:     { tone: "bg-canvas text-ink-muted border-border",             label: "Adjust" },
+};
+
+const StockLedgerDrawer = ({
+  productId,
+  productName,
+  onClose,
+}: {
+  productId: string;
+  productName: string;
+  onClose: () => void;
+}) => {
+  const { data, loading, error } = useApi(
+    () => api.ledger({ productId, limit: 500 }),
+    [productId]
+  );
+  const entries: StockLedgerEntry[] = data ?? [];
+
+  const rows = useMemo(() => [...entries].reverse(), [entries]);
+
+  const totalIn  = entries.filter((e) => e.qty > 0).reduce((s, e) => s + e.qty, 0);
+  const totalOut = entries.filter((e) => e.qty < 0).reduce((s, e) => s + Math.abs(e.qty), 0);
+  const closing  = entries.length > 0 ? entries[0].balance : 0;
+
+  return (
+    <div
+      className="fixed inset-0 z-[60] bg-ink/40 flex items-stretch justify-end"
+      onClick={onClose}
+    >
+      <div
+        className="bg-surface w-full max-w-2xl flex flex-col elevation-3"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-5 py-3 border-b border-border flex items-start justify-between gap-3">
+          <div>
+            <div className="text-caption text-ink-muted uppercase font-semibold tracking-wide flex items-center gap-1.5">
+              <History size={12} /> Stock ledger
+            </div>
+            <div className="text-h3 font-bold">{productName}</div>
+          </div>
+          <button
+            onClick={onClose}
+            className="h-9 w-9 grid place-items-center rounded-md text-ink-muted hover:bg-canvas"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        {entries.length > 0 && (
+          <div className="grid grid-cols-3 divide-x divide-border border-b border-border bg-canvas">
+            <div className="px-4 py-2.5 text-center">
+              <div className="text-caption text-ink-muted uppercase tracking-wide">Total In</div>
+              <div className="text-h3 font-bold text-success tnum">+{num(totalIn, 2)}</div>
+            </div>
+            <div className="px-4 py-2.5 text-center">
+              <div className="text-caption text-ink-muted uppercase tracking-wide">Total Out</div>
+              <div className="text-h3 font-bold text-danger tnum">−{num(totalOut, 2)}</div>
+            </div>
+            <div className="px-4 py-2.5 text-center">
+              <div className="text-caption text-ink-muted uppercase tracking-wide">Closing Balance</div>
+              <div className={cn("text-h3 font-bold tnum", closing < 0 ? "text-danger" : "text-ink")}>
+                {num(closing, 2)}
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="grid grid-cols-12 px-4 py-1.5 bg-canvas border-b border-border text-[10px] uppercase tracking-wide text-ink-muted font-semibold">
+          <div className="col-span-2">Date</div>
+          <div className="col-span-2">Type</div>
+          <div className="col-span-3">Reference</div>
+          <div className="col-span-2">Warehouse · Bin</div>
+          <div className="col-span-1 text-right">Change</div>
+          <div className="col-span-2 text-right">Balance</div>
+        </div>
+
+        <div className="flex-1 overflow-y-auto divide-y divide-border/60">
+          {loading && (
+            <div className="py-10 text-center text-body-sm text-ink-muted">Loading ledger…</div>
+          )}
+          {error && (
+            <div className="py-10 text-center text-body-sm text-danger">{error.message}</div>
+          )}
+          {!loading && !error && rows.length === 0 && (
+            <div className="py-10 text-center text-body-sm text-ink-muted">
+              No transactions recorded yet. Stock movements via GRN, Inventory Adjust,
+              Sales, Issues, and Transfers will appear here.
+            </div>
+          )}
+          {rows.map((e) => {
+            const meta = TXN_META[e.txnType] ?? TXN_META.Adjust;
+            const isIn = e.qty > 0;
+            return (
+              <div
+                key={e.id}
+                className="grid grid-cols-12 px-4 py-2.5 items-center hover:bg-canvas/60 text-body-sm"
+              >
+                <div className="col-span-2 text-caption text-ink-muted tnum">{dd(e.date)}</div>
+                <div className="col-span-2">
+                  <span className={cn("text-[10px] rounded-full px-2 py-0.5 border font-semibold uppercase tracking-wide", meta.tone)}>
+                    {meta.label}
+                  </span>
+                </div>
+                <div className="col-span-3 font-mono text-caption truncate">{e.ref}</div>
+                <div className="col-span-2 text-caption text-ink-muted truncate">
+                  {e.warehouse}{e.bin ? ` · ${e.bin}` : ""}
+                </div>
+                <div className={cn("col-span-1 text-right tnum font-semibold", isIn ? "text-success" : "text-danger")}>
+                  {isIn ? "+" : ""}{num(e.qty, 2)}
+                </div>
+                <div className={cn("col-span-2 text-right tnum font-semibold", e.balance < 0 ? "text-danger" : "text-ink")}>
+                  {num(e.balance, 2)}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="border-t border-border px-5 py-3 flex justify-end">
+          <Button variant="ghost" size="sm" onClick={onClose}>Close</Button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── Field / Label helpers ────────────────────────────────────────────────────
 const Field = ({
   label,
   children,

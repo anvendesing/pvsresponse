@@ -130,10 +130,46 @@ the seeded users (printed in the backend startup logs).
 
 ## 7. Day-to-day operations
 
+### Full deploy (recommended)
+
+On the VPS after `git pull`, run the bundled deploy script. It restarts the
+stack and reconciles `Product.stockOnHand` from bin quantities:
+
+```bash
+cd ~/pvsresponse   # or ~/novaerp
+bash scripts/vps-deploy.sh --build
+```
+
+From your Windows dev machine (SSH key required):
+
+```powershell
+.\scripts\deploy-to-vps.ps1 -SshKey "C:\Users\You\.ssh\your_vps_key"
+```
+
+GHCR prebuilt images (CI on `main`):
+
+```bash
+export REGISTRY_OWNER=anvendesing
+export IMAGE_TAG=latest
+bash scripts/vps-deploy.sh --pull
+```
+
+**Stock sync** (also run automatically by `vps-deploy.sh`):
+
+```bash
+docker compose exec backend npm run db:sync-stock
+```
+
+This runs `dist/scripts/sync-stock-from-bins.js` inside the container — safe
+to re-run; aligns product/variant counters with summed `Bin.qty`.
+
+### Manual steps
+
 ```bash
 # Pull latest code + rebuild + restart
 git pull
 docker compose up -d --build
+docker compose exec backend npm run db:sync-stock
 
 # Tail logs
 docker compose logs -f
@@ -427,6 +463,8 @@ are enabled.
 | `pvsecommerce/nginx.conf` | Same proxy pattern as ERP; serves the shop on `$SHOP_PORT`. |
 | `pvsecommerce/.dockerignore` | Shop build context exclusions. |
 | `.github/workflows/build-images.yml` | CI: matrix build of backend + web + shop → push to ghcr.io with `latest`, `sha-<short>`, semver tags. |
+| `scripts/vps-deploy.sh` | Full VPS deploy: `git pull`, compose up, `db:sync-stock`, optional image copy. |
+| `scripts/deploy-to-vps.ps1` | From Windows: optional `git push`, SSH remote `vps-deploy.sh`. |
 
 ## 13. Troubleshooting
 

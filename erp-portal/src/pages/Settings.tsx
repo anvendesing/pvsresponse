@@ -9,6 +9,7 @@ import {
   Cog,
   Database,
   Factory,
+  Gauge,
   Globe,
   Key,
   Loader2,
@@ -39,6 +40,7 @@ import {
   type CompanyProfile,
   type CompanyProfileUpdate,
   type PutawayRuleRow,
+  type StockRuleRow,
   type WarehouseRow,
 } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -51,6 +53,7 @@ const SECTIONS = [
   { id: "warehouses", label: "Warehouses", icon: WarehouseIcon },
   { id: "production", label: "Production lines", icon: Factory },
   { id: "putaway", label: "Putaway rules", icon: ArrowRightLeft },
+  { id: "stockrules", label: "Stock rules", icon: Gauge },
   { id: "categories", label: "Categories", icon: Tags },
   { id: "users", label: "Users & Roles", icon: Users },
   { id: "security", label: "Security", icon: Shield },
@@ -99,6 +102,7 @@ export const Settings = () => {
           {active === "warehouses" && <WarehouseManager />}
           {active === "production" && <ProductionMaster />}
           {active === "putaway" && <PutawayRulesManager />}
+          {active === "stockrules" && <StockRulesManager />}
 
           {active === "categories" && <CategoryManager />}
 
@@ -2309,16 +2313,23 @@ const MachinesCard = ({
 // Putaway Rules
 // =====================================================================
 
+const binPath = (b: { zone: string; shelf: string; bin: string }) =>
+  `${b.zone}/${b.shelf}/${b.bin}`;
+
 const PutawayRulesManager = () => {
   const [rules, setRules] = useState<PutawayRuleRow[]>([]);
   const [warehouses, setWarehouses] = useState<WarehouseRow[]>([]);
   const [products, setProducts] = useState<Array<{ id: string; sku: string; name: string }>>([]);
+  const [variants, setVariants] = useState<Array<{ id: string; sku: string; label: string }>>([]);
+  const [whBins, setWhBins] = useState<Array<{ id: string; label: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [draft, setDraft] = useState({
     productId: "",
+    variantId: "",
     toWarehouseId: "",
+    toBinId: "",
     priority: "100",
     notes: "",
   });
@@ -2353,22 +2364,66 @@ const PutawayRulesManager = () => {
     void reload();
   }, []);
 
+  useEffect(() => {
+    if (!draft.productId) {
+      setVariants([]);
+      return;
+    }
+    void api.variantsWithBoms(draft.productId).then((res) => {
+      setVariants(
+        res.variants.map((v) => ({
+          id: v.id,
+          sku: v.sku,
+          label: v.label ?? v.sku,
+        }))
+      );
+    }).catch(() => setVariants([]));
+  }, [draft.productId]);
+
+  useEffect(() => {
+    if (!draft.toWarehouseId) {
+      setWhBins([]);
+      return;
+    }
+    void api.bins(draft.toWarehouseId).then((bins) => {
+      setWhBins(
+        bins.map((b) => ({
+          id: b.id,
+          label: `${binPath(b)}${b.qty > 0 ? ` (${b.qty})` : " (empty)"}`,
+        }))
+      );
+    }).catch(() => setWhBins([]));
+  }, [draft.toWarehouseId]);
+
   const submitNew = async () => {
     if (!draft.productId || !draft.toWarehouseId) {
       alert("Product and destination warehouse are required.");
+      return;
+    }
+    if (!draft.toBinId) {
+      alert("Destination bin is required. Auto-pick empty bins is disabled.");
       return;
     }
     setBusy(true);
     try {
       await api.createPutawayRule({
         productId: draft.productId,
+        variantId: draft.variantId || null,
         toWarehouseId: draft.toWarehouseId,
+        toBinId: draft.toBinId,
         priority: Number(draft.priority) || 100,
         notes: draft.notes.trim() || null,
         active: true,
       });
       setShowAdd(false);
-      setDraft({ productId: "", toWarehouseId: "", priority: "100", notes: "" });
+      setDraft({
+        productId: "",
+        variantId: "",
+        toWarehouseId: "",
+        toBinId: "",
+        priority: "100",
+        notes: "",
+      });
       await reload();
     } catch (e) {
       alert((e as Error).message);
@@ -2405,7 +2460,7 @@ const PutawayRulesManager = () => {
   return (
     <Card
       title="Putaway rules"
-      subtitle="When a production order is completed, finished goods are automatically transferred to the configured storage warehouse/bin."
+      subtitle="Each variant must have a fixed destination bin. MO complete posts FG here (no auto-pick of empty bins)."
       actions={
         !showAdd ? (
           <Button size="sm" icon={<Plus size={14} />} onClick={() => setShowAdd(true)} disabled={busy}>
@@ -2427,7 +2482,13 @@ const PutawayRulesManager = () => {
               <select
                 className="h-8 w-full rounded border border-border bg-surface text-body-sm px-2"
                 value={draft.productId}
-                onChange={(e) => setDraft({ ...draft, productId: e.target.value })}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    productId: e.target.value,
+                    variantId: "",
+                  })
+                }
               >
                 <option value="">— select product —</option>
                 {products.map((p) => (
@@ -2438,16 +2499,50 @@ const PutawayRulesManager = () => {
               </select>
             </div>
             <div>
+              <label className="text-caption text-ink-muted block mb-1">Variant (optional)</label>
+              <select
+                className="h-8 w-full rounded border border-border bg-surface text-body-sm px-2"
+                value={draft.variantId}
+                onChange={(e) => setDraft({ ...draft, variantId: e.target.value })}
+                disabled={!draft.productId}
+              >
+                <option value="">— all variants —</option>
+                {variants.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.sku} — {v.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
               <label className="text-caption text-ink-muted block mb-1">Destination warehouse</label>
               <select
                 className="h-8 w-full rounded border border-border bg-surface text-body-sm px-2"
                 value={draft.toWarehouseId}
-                onChange={(e) => setDraft({ ...draft, toWarehouseId: e.target.value })}
+                onChange={(e) =>
+                  setDraft({ ...draft, toWarehouseId: e.target.value, toBinId: "" })
+                }
               >
                 <option value="">— select warehouse —</option>
                 {warehouses.map((wh) => (
                   <option key={wh.id} value={wh.id}>
                     {wh.code} — {wh.name} ({wh.kind})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-caption text-ink-muted block mb-1">Destination bin *</label>
+              <select
+                className="h-8 w-full rounded border border-border bg-surface text-body-sm px-2"
+                value={draft.toBinId}
+                onChange={(e) => setDraft({ ...draft, toBinId: e.target.value })}
+                disabled={!draft.toWarehouseId}
+              >
+                <option value="">— select bin —</option>
+                {whBins.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.label}
                   </option>
                 ))}
               </select>
@@ -2528,10 +2623,8 @@ const PutawayRulesManager = () => {
                   <span className="font-mono text-caption text-primary">{r.toWarehouse.code}</span>
                   <div className="text-caption text-ink-muted">{r.toWarehouse.name}</div>
                 </td>
-                <td className="px-3 py-2 text-caption text-ink-muted">
-                  {r.tobin
-                    ? `${r.tobin.zone}/${r.tobin.shelf}/${r.tobin.bin}`
-                    : "auto-pick"}
+                <td className="px-3 py-2 text-caption font-mono">
+                  {r.tobin ? binPath(r.tobin) : "—"}
                 </td>
                 <td className="px-3 py-2 text-right tnum">{r.priority}</td>
                 <td className="px-3 py-2 text-center">
@@ -2546,6 +2639,403 @@ const PutawayRulesManager = () => {
                     onClick={() => remove(r)}
                     className="h-7 w-7 grid place-items-center rounded text-danger hover:bg-danger-soft"
                     title="Delete rule"
+                  >
+                    <Trash2 size={14} />
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+};
+
+// =====================================================================
+// Stock Rules (min-qty → auto MO or transfer)
+// =====================================================================
+
+const StockRulesManager = () => {
+  const [rules, setRules] = useState<StockRuleRow[]>([]);
+  const [products, setProducts] = useState<Array<{ id: string; sku: string; name: string }>>([]);
+  const [variants, setVariants] = useState<Array<{ id: string; sku: string; label: string }>>([]);
+  const [boms, setBoms] = useState<Array<{ id: string; label: string }>>([]);
+  const [allBins, setAllBins] = useState<Array<{ id: string; label: string }>>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [checkResult, setCheckResult] = useState<string | null>(null);
+  const [draft, setDraft] = useState({
+    productId: "",
+    variantId: "",
+    monitorBinId: "",
+    minQty: "20",
+    triggerType: "mo" as "mo" | "transfer",
+    bomId: "",
+    sourceBinId: "",
+    toBinId: "",
+    tags: "",
+    notes: "",
+  });
+
+  const reload = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [r, p, bins] = await Promise.all([
+        api.stockRules(),
+        api.products(),
+        api.warehousesAndBins(),
+      ]);
+      setRules(r);
+      setProducts(
+        (p as unknown as Array<{ id: string; sku: string; name: string }>).map((x) => ({
+          id: x.id,
+          sku: x.sku,
+          name: x.name,
+        }))
+      );
+      setAllBins(
+        bins.map((b) => ({
+          id: b.id,
+          label: `${b.warehouseCode ?? ""} · ${binPath(b)} (qty ${b.qty})`,
+        }))
+      );
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void reload();
+  }, []);
+
+  useEffect(() => {
+    if (!draft.productId) {
+      setVariants([]);
+      setBoms([]);
+      return;
+    }
+    void api.variantsWithBoms(draft.productId).then((res) => {
+      setVariants(
+        res.variants.map((v) => ({
+          id: v.id,
+          sku: v.sku,
+          label: v.label ?? v.sku,
+        }))
+      );
+    }).catch(() => setVariants([]));
+    void api.boms({ productId: draft.productId, active: true }).then((rows) => {
+      setBoms(
+        (rows as Array<{ id: string; revision: string; outputQty: number }>).map((b) => ({
+          id: b.id,
+          label: `${b.revision} · batch ${b.outputQty}`,
+        }))
+      );
+    }).catch(() => setBoms([]));
+  }, [draft.productId]);
+
+  const submitNew = async () => {
+    if (!draft.productId || !draft.monitorBinId || !draft.minQty) {
+      alert("Product, monitored bin, and min qty are required.");
+      return;
+    }
+    if (draft.triggerType === "mo" && !draft.bomId) {
+      alert("Select a BOM for auto-manufacture triggers.");
+      return;
+    }
+    if (draft.triggerType === "transfer" && !draft.sourceBinId) {
+      alert("Select a source bin for auto-transfer triggers.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.createStockRule({
+        productId: draft.productId,
+        variantId: draft.variantId || null,
+        monitorBinId: draft.monitorBinId,
+        minQty: Number(draft.minQty),
+        triggerType: draft.triggerType,
+        bomId: draft.triggerType === "mo" ? draft.bomId : null,
+        sourceBinId: draft.triggerType === "transfer" ? draft.sourceBinId : null,
+        toBinId: draft.toBinId || draft.monitorBinId,
+        tags: draft.tags.trim() || null,
+        notes: draft.notes.trim() || null,
+        active: true,
+      });
+      setShowAdd(false);
+      await reload();
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const runCheckAll = async () => {
+    setBusy(true);
+    setCheckResult(null);
+    try {
+      const res = await api.checkAllStockRules();
+      setCheckResult(
+        `Checked ${res.checked} evaluations · ${res.triggered} document(s) created.`
+      );
+      await reload();
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const toggleActive = async (rule: StockRuleRow) => {
+    setBusy(true);
+    try {
+      await api.updateStockRule(rule.id, { active: !rule.active });
+      await reload();
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (rule: StockRuleRow) => {
+    if (!confirm(`Delete stock rule for ${rule.product.sku}?`)) return;
+    setBusy(true);
+    try {
+      await api.deleteStockRule(rule.id);
+      await reload();
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card
+      title="Stock rules"
+      subtitle="When a monitored bin falls below min qty, auto-create an MO (batch = BOM output) or a replenishment transfer (with team tags)."
+      actions={
+        <div className="flex gap-2">
+          <Button size="sm" variant="outline" onClick={runCheckAll} disabled={busy}>
+            Check all now
+          </Button>
+          {!showAdd && (
+            <Button size="sm" icon={<Plus size={14} />} onClick={() => setShowAdd(true)} disabled={busy}>
+              Add rule
+            </Button>
+          )}
+        </div>
+      }
+      noPadding
+    >
+      {checkResult && (
+        <div className="px-4 py-2 bg-success-soft text-success text-body-sm border-b border-success/30">
+          {checkResult}
+        </div>
+      )}
+      {error && <div className="px-4 py-2 text-danger text-body-sm">{error}</div>}
+      {showAdd && (
+        <div className="px-4 py-3 bg-primary-50/30 border-b border-border space-y-3">
+          <p className="text-body-sm font-medium text-ink">New stock rule</p>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-caption text-ink-muted block mb-1">Product</label>
+              <select
+                className="h-8 w-full rounded border border-border bg-surface text-body-sm px-2"
+                value={draft.productId}
+                onChange={(e) =>
+                  setDraft({ ...draft, productId: e.target.value, variantId: "", bomId: "" })
+                }
+              >
+                <option value="">— select —</option>
+                {products.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.sku} — {p.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-caption text-ink-muted block mb-1">Variant</label>
+              <select
+                className="h-8 w-full rounded border border-border bg-surface text-body-sm px-2"
+                value={draft.variantId}
+                onChange={(e) => setDraft({ ...draft, variantId: e.target.value })}
+                disabled={!draft.productId}
+              >
+                <option value="">— any —</option>
+                {variants.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.sku}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="col-span-2">
+              <label className="text-caption text-ink-muted block mb-1">Monitored bin (destination)</label>
+              <select
+                className="h-8 w-full rounded border border-border bg-surface text-body-sm px-2"
+                value={draft.monitorBinId}
+                onChange={(e) =>
+                  setDraft({ ...draft, monitorBinId: e.target.value, toBinId: e.target.value })
+                }
+              >
+                <option value="">— select bin —</option>
+                {allBins.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="text-caption text-ink-muted block mb-1">Min qty</label>
+              <Input
+                size="sm"
+                type="number"
+                min={0}
+                value={draft.minQty}
+                onChange={(e) => setDraft({ ...draft, minQty: e.target.value })}
+              />
+            </div>
+            <div>
+              <label className="text-caption text-ink-muted block mb-1">Trigger</label>
+              <select
+                className="h-8 w-full rounded border border-border bg-surface text-body-sm px-2"
+                value={draft.triggerType}
+                onChange={(e) =>
+                  setDraft({ ...draft, triggerType: e.target.value as "mo" | "transfer" })
+                }
+              >
+                <option value="mo">Auto manufacturing order</option>
+                <option value="transfer">Auto transfer order</option>
+              </select>
+            </div>
+            {draft.triggerType === "mo" ? (
+              <div className="col-span-2">
+                <label className="text-caption text-ink-muted block mb-1">BOM (batch size = output qty)</label>
+                <select
+                  className="h-8 w-full rounded border border-border bg-surface text-body-sm px-2"
+                  value={draft.bomId}
+                  onChange={(e) => setDraft({ ...draft, bomId: e.target.value })}
+                >
+                  <option value="">— select BOM —</option>
+                  {boms.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ) : (
+              <div className="col-span-2">
+                <label className="text-caption text-ink-muted block mb-1">Source bin</label>
+                <select
+                  className="h-8 w-full rounded border border-border bg-surface text-body-sm px-2"
+                  value={draft.sourceBinId}
+                  onChange={(e) => setDraft({ ...draft, sourceBinId: e.target.value })}
+                >
+                  <option value="">— select source —</option>
+                  {allBins.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            <div className="col-span-2">
+              <label className="text-caption text-ink-muted block mb-1">Team tags (comma-separated)</label>
+              <Input
+                size="sm"
+                placeholder="e.g. cold-storage, night-shift"
+                value={draft.tags}
+                onChange={(e) => setDraft({ ...draft, tags: e.target.value })}
+              />
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <Button size="sm" icon={<Save size={12} />} onClick={submitNew} disabled={busy}>
+              Save rule
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setShowAdd(false)} disabled={busy}>
+              Cancel
+            </Button>
+          </div>
+        </div>
+      )}
+      <div className="overflow-x-auto">
+        <table className="w-full text-body-sm">
+          <thead className="bg-canvas text-caption uppercase font-semibold text-ink-muted">
+            <tr>
+              <th className="text-left px-3 py-2">Product</th>
+              <th className="text-left px-3 py-2">Monitor bin</th>
+              <th className="text-right px-3 py-2">Min</th>
+              <th className="text-left px-3 py-2">Trigger</th>
+              <th className="text-left px-3 py-2">Action / tags</th>
+              <th className="text-center px-3 py-2">Status</th>
+              <th className="text-right px-3 py-2 w-12" />
+            </tr>
+          </thead>
+          <tbody>
+            {loading && (
+              <tr>
+                <td colSpan={7} className="px-3 py-6 text-center text-ink-muted">
+                  <Loader2 size={14} className="inline animate-spin mr-1" /> Loading…
+                </td>
+              </tr>
+            )}
+            {!loading && rules.length === 0 && (
+              <tr>
+                <td colSpan={7} className="px-3 py-6 text-center text-ink-muted">
+                  No stock rules yet.
+                </td>
+              </tr>
+            )}
+            {rules.map((r) => (
+              <tr key={r.id} className="border-t border-border hover:bg-canvas/50">
+                <td className="px-3 py-2">
+                  <span className="font-mono text-caption text-primary">{r.product.sku}</span>
+                  {r.variant && (
+                    <div className="text-caption text-ink-muted">{r.variant.sku}</div>
+                  )}
+                </td>
+                <td className="px-3 py-2 font-mono text-caption">
+                  {r.monitorBin.warehouse.code} · {binPath(r.monitorBin)}
+                  <div className="text-ink-muted tnum">now {r.monitorBin.qty}</div>
+                </td>
+                <td className="px-3 py-2 text-right tnum font-semibold">{r.minQty}</td>
+                <td className="px-3 py-2">
+                  <Chip size="sm" tone={r.triggerType === "mo" ? "primary" : "warning"}>
+                    {r.triggerType === "mo" ? "MO" : "Transfer"}
+                  </Chip>
+                </td>
+                <td className="px-3 py-2 text-caption text-ink-muted">
+                  {r.triggerType === "mo" && r.bom
+                    ? `BOM ${r.bom.revision} · batch ${r.bom.outputQty}`
+                    : r.sourceBin
+                      ? `from ${r.sourceBin.warehouse.code}/${binPath(r.sourceBin)}`
+                      : "—"}
+                  {r.tags && <div className="mt-0.5 text-primary">{r.tags}</div>}
+                </td>
+                <td className="px-3 py-2 text-center">
+                  <button onClick={() => toggleActive(r)} disabled={busy}>
+                    <Chip size="sm" tone={r.active ? "success" : "neutral"}>
+                      {r.active ? "active" : "off"}
+                    </Chip>
+                  </button>
+                </td>
+                <td className="px-3 py-2 text-right">
+                  <button
+                    onClick={() => remove(r)}
+                    className="h-7 w-7 grid place-items-center rounded text-danger hover:bg-danger-soft"
                   >
                     <Trash2 size={14} />
                   </button>

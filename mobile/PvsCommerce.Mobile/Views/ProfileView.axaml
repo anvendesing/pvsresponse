@@ -1,0 +1,143 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:PvsCommerce.Mobile.ViewModels"
+             xmlns:conv="using:PvsCommerce.Mobile.Converters"
+             x:Class="PvsCommerce.Mobile.Views.ProfileView"
+             x:DataType="vm:ProfileViewModel">
+
+  <ScrollViewer HorizontalScrollBarVisibility="Disabled">
+    <StackPanel Margin="16" Spacing="14">
+
+      <!-- Greet card -->
+      <Border Classes="card" Padding="20" Background="{StaticResource ForestGreen}"
+              BorderBrush="{StaticResource ForestGreen}">
+        <StackPanel Spacing="6">
+          <TextBlock Text="{Binding GreetText}" FontFamily="{StaticResource DisplayFont}"
+                     FontSize="20" FontWeight="Bold"
+                     Foreground="{StaticResource NeutralWhite}" />
+          <TextBlock Text="Welcome back to Prakruthivanam organic lifestyle."
+                     FontSize="12" Foreground="#CCFFFFFF" TextWrapping="Wrap" />
+          <Button Classes="gold" Content="Sign In / Sign Up"
+                  Command="{Binding GoSignInCommand}"
+                  IsVisible="{Binding !Auth.IsAuthed}"
+                  HorizontalAlignment="Left" Margin="0,8,0,0" />
+          <Button Classes="outline" Content="Sign Out"
+                  Command="{Binding SignOutCommand}"
+                  IsVisible="{Binding Auth.IsAuthed}"
+                  Foreground="{StaticResource NeutralWhite}"
+                  BorderBrush="{StaticResource NeutralWhite}"
+                  HorizontalAlignment="Left" Margin="0,8,0,0" />
+        </StackPanel>
+      </Border>
+
+      <!-- Stats grid -->
+      <Grid ColumnDefinitions="*,*,*" ColumnSpacing="10">
+        <Border Grid.Column="0" Classes="card" Padding="14">
+          <StackPanel Spacing="2" HorizontalAlignment="Center">
+            <TextBlock Text="0" FontSize="22" FontWeight="Bold"
+                       Foreground="{StaticResource ForestGreenDark}"
+                       HorizontalAlignment="Center" />
+            <TextBlock Text="Orders" FontSize="11" FontWeight="SemiBold"
+                       Foreground="{StaticResource NeutralGray}"
+                       HorizontalAlignment="Center" />
+          </StackPanel>
+        </Border>
+        <Border Grid.Column="1" Classes="card" Padding="14">
+          <StackPanel Spacing="2" HorizontalAlignment="Center">
+            <TextBlock Text="0" FontSize="22" FontWeight="Bold"
+                       Foreground="{StaticResource ForestGreenDark}"
+                       HorizontalAlignment="Center" />
+            <TextBlock Text="Favorites" FontSize="11" FontWeight="SemiBold"
+                       Foreground="{StaticResource NeutralGray}"
+                       HorizontalAlignment="Center" />
+          </StackPanel>
+        </Border>
+        <Border Grid.Column="2" Classes="card" Padding="14">
+          <StackPanel Spacing="2" HorizontalAlignment="Center">
+            <TextBlock Text="₹0" FontSize="22" FontWeight="Bold"
+                       Foreground="{StaticResource ForestGreenDark}"
+                       HorizontalAlignment="Center" />
+            <TextBlock Text="Saved" FontSize="11" FontWeight="SemiBold"
+                       Foreground="{StaticResource NeutralGray}"
+                       HorizontalAlignment="Center" />
+          </StackPanel>
+        </Border>
+      </Grid>
+
+      <!-- Sub-tab pills -->
+      <Border Background="{StaticResource NeutralLight}" CornerRadius="9999" Padding="4">
+        <Grid ColumnDefinitions="*,*,*">
+          <Button Grid.Column="0" Classes="icon" Padding="0"
+                  Command="{Binding ShowOrdersCommand}">
+            <Border Classes="subTab" Classes.active="{Binding ActiveSubTab,
+                                                     Converter={x:Static conv:EqualsParamConverter.Instance},
+                                                     ConverterParameter=orders}"
+                    HorizontalAlignment="Stretch">
+              <TextBlock Text="Invoices" />
+            </Border>
+          </Button>
+          <Button Grid.Column="1" Classes="icon" Padding="0"
+                  Command="{Binding ShowWishlistCommand}">
+            <Border Classes="subTab" Classes.active="{Binding ActiveSubTab,
+                                                     Converter={x:Static conv:EqualsParamConverter.Instance},
+                                                     ConverterParameter=wishlist}"
+                    HorizontalAlignment="Stretch">
+              <TextBlock Text="Favorites" />
+            </Border>
+          </Button>
+          <Button Grid.Column="2" Classes="icon" Padding="0"
+                  Command="{Binding ShowAddressesCommand}">
+            <Border Classes="subTab" Classes.active="{Binding ActiveSubTab,
+                                                     Converter={x:Static conv:EqualsParamConverter.Instance},
+                                                     ConverterParameter=addresses}"
+                    HorizontalAlignment="Stretch">
+              <TextBlock Text="Destinations" />
+            </Border>
+          </Button>
+        </Grid>
+      </Border>
+
+      <!-- Panel: orders -->
+      <StackPanel IsVisible="{Binding ActiveSubTab, Converter={x:Static conv:EqualsParamConverter.Instance}, ConverterParameter=orders}"
+                  Spacing="10">
+        <Border Classes="card" Padding="16">
+          <StackPanel Spacing="6">
+            <TextBlock Text="No invoices yet" FontWeight="Bold" />
+            <TextBlock Text="Place your first order to see it tracked here in real time."
+                       Classes="muted" TextWrapping="Wrap" />
+          </StackPanel>
+        </Border>
+      </StackPanel>
+
+      <!-- Panel: wishlist -->
+      <StackPanel IsVisible="{Binding ActiveSubTab, Converter={x:Static conv:EqualsParamConverter.Instance}, ConverterParameter=wishlist}"
+                  Spacing="10">
+        <Border Classes="card" Padding="16">
+          <StackPanel Spacing="6">
+            <TextBlock Text="No favorites yet" FontWeight="Bold" />
+            <TextBlock Text="Tap the heart icon on any product to save it for later."
+                       Classes="muted" TextWrapping="Wrap" />
+          </StackPanel>
+        </Border>
+      </StackPanel>
+
+      <!-- Panel: addresses -->
+      <StackPanel IsVisible="{Binding ActiveSubTab, Converter={x:Static conv:EqualsParamConverter.Instance}, ConverterParameter=addresses}"
+                  Spacing="10">
+        <Border Classes="card" Padding="16">
+          <StackPanel Spacing="8">
+            <Grid ColumnDefinitions="*,Auto">
+              <TextBlock Grid.Column="0" Text="Primary Shipping Address" FontWeight="Bold"
+                         FontSize="12" Foreground="{StaticResource ForestGreen}" />
+              <Border Grid.Column="1" Classes="chip" Padding="6,2">
+                <TextBlock Text="DEFAULT" FontSize="9" FontWeight="Bold"
+                           Foreground="{StaticResource ForestGreen}" />
+              </Border>
+            </Grid>
+            <TextBlock Text="{Binding AddressText}" Classes="body" TextWrapping="Wrap" />
+          </StackPanel>
+        </Border>
+      </StackPanel>
+    </StackPanel>
+  </ScrollViewer>
+</UserControl>

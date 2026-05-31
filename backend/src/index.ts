@@ -31,6 +31,8 @@ import { bulkOrderRoutes } from "./routes/bulk-order.js";
 import { customerPaymentRoutes } from "./routes/customer-payments.js";
 import { returnsRoutes } from "./routes/returns.js";
 import { transfersRoutes } from "./routes/transfers.js";
+import { enquiriesRoutes } from "./routes/enquiries.js";
+import { stockRulesRoutes } from "./routes/stock-rules.js";
 import multipart from "@fastify/multipart";
 import fastifyStatic from "@fastify/static";
 import { fileURLToPath } from "url";
@@ -159,6 +161,7 @@ await app.register(
     await api.register(categoriesRoutes);
 
     // Sales & order management
+    await withRole(api, enquiriesRoutes,     "supervisor", "billing");
     await withRole(api, salesRoutes,         "supervisor", "billing");
     await withRole(api, bulkOrderRoutes,     "supervisor", "billing");
     await withRole(api, billingRoutes,       "billing");
@@ -185,6 +188,7 @@ await app.register(
 
     // Transfers & putaway rules (warehouse + supervisor)
     await withRole(api, transfersRoutes,     "supervisor", "warehouse");
+    await withRole(api, stockRulesRoutes,    "supervisor", "warehouse");
 
     // Reports — read access for supervisors, billing, procurement
     await withRole(api, reportsRoutes,       "supervisor", "billing", "procurement");

@@ -1,9 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   AlertTriangle,
+  ArrowDownToLine,
   ArrowRightLeft,
+  ArrowUpFromLine,
+  BarChart2,
   CheckCircle2,
+  ClipboardList,
   Factory,
+  MapPin,
   Network,
   PackageCheck,
   Pause,
@@ -19,7 +25,12 @@ import { Card } from "@/components/common/Card";
 import { Chip, StatusDot } from "@/components/common/Chip";
 import { Kpi } from "@/components/common/Kpi";
 import { Toolbar } from "@/components/common/Toolbar";
-import { api, type MoRequirements, type TransferOrderRow } from "@/lib/api";
+import {
+  api,
+  type MoInventoryTrail,
+  type MoRequirements,
+  type TransferOrderRow,
+} from "@/lib/api";
 import { useApi } from "@/hooks/useApi";
 import { EmptyState } from "@/components/common/EmptyState";
 import type { Bom, ProductionOrder } from "@/data/types";
@@ -62,6 +73,7 @@ export const Manufacturing = () => {
   const lines = liveLines.data?.lines ?? [];
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<"orders" | "productivity">("orders");
   const [showBomList, setShowBomList] = useState(false);
   const [showNewMo, setShowNewMo] = useState(false);
   const [bomEditing, setBomEditing] = useState<{
@@ -78,11 +90,26 @@ export const Manufacturing = () => {
   const [requirements, setRequirements] = useState<MoRequirements | null>(null);
   // Transfer orders linked to the currently-selected MO.
   const [linkedTOs, setLinkedTOs] = useState<TransferOrderRow[]>([]);
+  const [inventoryTrail, setInventoryTrail] = useState<MoInventoryTrail | null>(
+    null
+  );
 
   const refreshAll = async () => {
     liveMo.refetch();
     liveBoms.refetch();
     liveLines.refetch();
+  };
+
+  const refreshRequirements = async (orderId: string) => {
+    const r = await api.productionOrderRequirements(orderId);
+    setRequirements(r);
+    return r;
+  };
+
+  const refreshInventoryTrail = async (orderId: string) => {
+    const t = await api.productionOrderInventoryTrail(orderId);
+    setInventoryTrail(t);
+    return t;
   };
 
   const loading = liveMo.loading || liveBoms.loading || liveWorkers.loading;
@@ -96,18 +123,21 @@ export const Manufacturing = () => {
     if (!order) {
       setRequirements(null);
       setLinkedTOs([]);
+      setInventoryTrail(null);
       return;
     }
     let cancelled = false;
     void (async () => {
       try {
-        const [r, tos] = await Promise.all([
+        const [r, tos, trail] = await Promise.all([
           api.productionOrderRequirements(order.id),
           api.transferOrders({ productionOrderId: order.id }),
+          api.productionOrderInventoryTrail(order.id),
         ]);
         if (!cancelled) {
           setRequirements(r);
           setLinkedTOs(tos);
+          setInventoryTrail(trail);
         }
       } catch (e) {
         if (!cancelled) setErrBanner((e as Error).message);
@@ -156,6 +186,22 @@ export const Manufacturing = () => {
   const inProgress = productionOrders.filter((p) => p.status === "in-progress").length;
   const delayed = productionOrders.filter((p) => p.status === "delayed").length;
 
+  const moComplete = order.status === "completed";
+  const canRelease = order.status === "planned";
+  const canIssue =
+    !moComplete && !(requirements?.allFullyIssued ?? false);
+  const canLogOutput =
+    !moComplete &&
+    (order.status === "in-progress" || order.status === "qc");
+  const releaseTitle = canRelease
+    ? "Check material availability at production line and create replenishment transfers if short"
+    : `Release only applies while MO is planned (current: ${order.status})`;
+  const issueTitle = requirements?.allFullyIssued
+    ? "All BOM materials are already issued for this MO"
+    : moComplete
+      ? "MO is completed"
+      : "Consume raw materials from bins per BOM explosion";
+
   // ---- MO actions ------------------------------------------------
   const onIssueMaterials = async () => {
     setBusy("issue");
@@ -174,6 +220,10 @@ export const Manufacturing = () => {
           : `Issued all ${num(totals.issued)} units across ${res.issued.length} components.`
       );
       await refreshAll();
+      await Promise.all([
+        refreshRequirements(order.id),
+        refreshInventoryTrail(order.id),
+      ]);
     } catch (e) {
       setErrBanner((e as Error).message);
     } finally {
@@ -199,6 +249,7 @@ export const Manufacturing = () => {
       await api.logOutput(order.id, { goodQty: good, scrapQty: Number.isFinite(scrap) ? scrap : 0 });
       setOkBanner(`Logged ${num(good)} good, ${num(scrap || 0)} scrap.`);
       await refreshAll();
+      await refreshRequirements(order.id);
     } catch (e) {
       setErrBanner((e as Error).message);
     } finally {
@@ -218,6 +269,10 @@ export const Manufacturing = () => {
         );
       }
       await refreshAll();
+      await Promise.all([
+        refreshRequirements(order.id),
+        refreshInventoryTrail(order.id),
+      ]);
     } catch (e) {
       setErrBanner((e as Error).message);
     } finally {
@@ -244,12 +299,22 @@ export const Manufacturing = () => {
           : `MO ${order.orderNo} closed. (No FG bin available - transfer manually.)`
       );
       await refreshAll();
+      await Promise.all([
+        refreshRequirements(order.id),
+        refreshInventoryTrail(order.id),
+      ]);
     } catch (e) {
       setErrBanner((e as Error).message);
     } finally {
       setBusy(null);
     }
   };
+
+  const locLabel = (
+    whCode: string,
+    whKind: string,
+    binPath: string
+  ) => `${whCode} (${whKind}) · ${binPath}`;
 
   return (
     <div className="h-full flex flex-col">
@@ -311,8 +376,32 @@ export const Manufacturing = () => {
         <Kpi label="Output Today" value={num(totalActual)} delta={6.4} accent="primary" hint={`Target ${num(totalPlanned)}`} />
       </div>
 
+      {/* Tab bar */}
+      <div className="border-b border-border bg-surface flex items-center px-4 gap-1">
+        {(
+          [
+            { id: "orders", label: "Orders", icon: <ClipboardList size={13} /> },
+            { id: "productivity", label: "Productivity", icon: <BarChart2 size={13} /> },
+          ] as const
+        ).map((tab) => (
+          <button
+            key={tab.id}
+            onClick={() => setActiveTab(tab.id)}
+            className={cn(
+              "flex items-center gap-1.5 px-3 py-2.5 text-body-sm border-b-2 -mb-px transition-colors",
+              activeTab === tab.id
+                ? "border-primary text-primary font-semibold"
+                : "border-transparent text-ink-muted hover:text-ink"
+            )}
+          >
+            {tab.icon}
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
       <div className="flex-1 grid grid-cols-12 min-h-0">
-        {/* Left: orders list */}
+        {/* Left: orders list — always visible */}
         <aside className="col-span-3 bg-surface border-r border-border flex flex-col">
           <div className="px-3 py-2 border-b border-border flex items-center justify-between">
             <span className="text-body-sm font-bold">Active Orders</span>
@@ -363,9 +452,10 @@ export const Manufacturing = () => {
           </div>
         </aside>
 
-        {/* Center: current work order */}
-        <section className="col-span-6 flex flex-col bg-canvas overflow-y-auto">
-          <div className="p-4 space-y-4">
+        {/* Right side: swaps between Orders detail and Productivity */}
+        <div className="col-span-9 flex flex-col min-h-0 overflow-y-auto">
+          {activeTab === "orders" && (
+            <div className="p-4 space-y-4">
             <Card
               title={
                 <div className="flex items-center gap-2">
@@ -382,8 +472,8 @@ export const Manufacturing = () => {
                     variant="outline"
                     icon={<ArrowRightLeft size={14} />}
                     onClick={onReleaseMo}
-                    disabled={busy === "release" || order.status === "completed"}
-                    title="Check material availability at production line and create replenishment transfers if short"
+                    disabled={busy === "release" || !canRelease}
+                    title={releaseTitle}
                   >
                     {busy === "release" ? "Releasing…" : "Release"}
                   </Button>
@@ -392,7 +482,8 @@ export const Manufacturing = () => {
                     variant="outline"
                     icon={<PackageCheck size={14} />}
                     onClick={onIssueMaterials}
-                    disabled={busy === "issue" || order.status === "completed"}
+                    disabled={busy === "issue" || !canIssue}
+                    title={issueTitle}
                   >
                     {busy === "issue" ? "Issuing…" : "Issue materials"}
                   </Button>
@@ -401,7 +492,12 @@ export const Manufacturing = () => {
                     variant="outline"
                     icon={<Plus size={14} />}
                     onClick={onLogOutput}
-                    disabled={busy === "log" || order.status === "completed"}
+                    disabled={busy === "log" || !canLogOutput}
+                    title={
+                      canLogOutput
+                        ? "Record good and scrap qty for this batch"
+                        : "Log output after materials are issued (MO in progress)"
+                    }
                   >
                     Log output
                   </Button>
@@ -518,6 +614,157 @@ export const Manufacturing = () => {
               </div>
             </Card>
 
+            <Card
+              title="Inventory locations"
+              subtitle="Where materials were issued from and where finished goods were posted (from stock ledger)"
+              actions={
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => {
+                    setInventoryTrail(null);
+                    if (order) {
+                      void refreshInventoryTrail(order.id).catch(() => {});
+                    }
+                  }}
+                  disabled={!order}
+                >
+                  Refresh
+                </Button>
+              }
+              noPadding
+            >
+              {!inventoryTrail ? (
+                <div className="px-4 py-6 text-center text-body-sm text-ink-muted">
+                  Loading inventory trail…
+                </div>
+              ) : !inventoryTrail.hasActivity ? (
+                <div className="px-4 py-6 text-body-sm text-ink-muted">
+                  <MapPin size={16} className="inline mr-1.5 -mt-0.5 text-ink-muted" />
+                  No bin movements yet for this MO.{" "}
+                  <strong>Issue materials</strong> records source bins;{" "}
+                  <strong>Complete</strong> records where {inventoryTrail.finishedGood.sku} was received.
+                </div>
+              ) : (
+                <div className="divide-y divide-border">
+                  {inventoryTrail.productionLineWarehouse && (
+                    <div className="px-4 py-2.5 bg-canvas text-caption text-ink-muted">
+                      BOM production line:{" "}
+                      <span className="font-semibold text-ink">
+                        {inventoryTrail.productionLineWarehouse.code}
+                      </span>{" "}
+                      ({inventoryTrail.productionLineWarehouse.name})
+                    </div>
+                  )}
+                  <div className="grid md:grid-cols-2 divide-y md:divide-y-0 md:divide-x divide-border">
+                    <div className="p-4">
+                      <div className="flex items-center gap-2 text-body-sm font-semibold text-ink mb-2">
+                        <ArrowDownToLine size={16} className="text-warning shrink-0" />
+                        Materials consumed (from bins)
+                      </div>
+                      {inventoryTrail.materialsConsumed.length === 0 ? (
+                        <p className="text-caption text-ink-muted">Not issued yet.</p>
+                      ) : (
+                        <ul className="space-y-2">
+                          {inventoryTrail.materialsConsumed.map((m) => (
+                            <li
+                              key={`${m.productId}-${m.warehouseCode}-${m.binPath}`}
+                              className="text-body-sm"
+                            >
+                              <span className="font-mono text-caption text-ink-muted">
+                                {m.sku}
+                              </span>{" "}
+                              <span className="font-semibold">{m.name}</span>
+                              <div className="text-caption text-ink-muted mt-0.5 flex items-start gap-1">
+                                <MapPin size={12} className="mt-0.5 shrink-0" />
+                                {locLabel(m.warehouseCode, m.warehouseKind, m.binPath)}
+                              </div>
+                              <div className="text-caption tnum text-ink-muted">
+                                −{num(m.qty)} · {m.txnTypes.join(", ")}
+                              </div>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                    <div className="p-4">
+                      <div className="flex items-center gap-2 text-body-sm font-semibold text-ink mb-2">
+                        <ArrowUpFromLine size={16} className="text-success shrink-0" />
+                        Finished goods stored at
+                      </div>
+                      {inventoryTrail.finishedGoodsPosted.length === 0 ? (
+                        <p className="text-caption text-ink-muted">
+                          Not posted yet. Complete the MO after logging output.
+                        </p>
+                      ) : (
+                        <ul className="space-y-2">
+                          {inventoryTrail.finishedGoodsPosted.map((f) => (
+                            <li
+                              key={`${f.warehouseCode}-${f.binPath}`}
+                              className="text-body-sm"
+                            >
+                              <span className="font-semibold">
+                                {f.name}{" "}
+                                <span className="font-mono text-caption text-ink-muted">
+                                  ({f.sku})
+                                </span>
+                              </span>
+                              <div className="text-caption text-primary mt-0.5 flex items-start gap-1 font-medium">
+                                <MapPin size={12} className="mt-0.5 shrink-0" />
+                                {locLabel(f.warehouseCode, f.warehouseKind, f.binPath)}
+                              </div>
+                              <div className="text-caption tnum text-ink-muted">
+                                +{num(f.qty)} {inventoryTrail.finishedGood.uom} ·{" "}
+                                {f.txnTypes.join(", ")}
+                              </div>
+                              <Link
+                                to={`/inventory?productId=${encodeURIComponent(f.productId)}`}
+                                className="text-caption text-primary hover:underline mt-0.5 inline-block"
+                              >
+                                View in Inventory →
+                              </Link>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  </div>
+                  {inventoryTrail.transfers.length > 0 && (
+                    <div className="px-4 py-3 bg-canvas">
+                      <div className="text-caption font-semibold text-ink-muted uppercase tracking-wide mb-2">
+                        Planned / in-flight moves (transfer orders)
+                      </div>
+                      <ul className="space-y-2">
+                        {inventoryTrail.transfers.map((t) => (
+                          <li key={t.id} className="text-body-sm">
+                            <span className="font-mono text-caption text-primary font-semibold">
+                              {t.transferNo}
+                            </span>{" "}
+                            <Chip size="sm" tone="neutral">
+                              {t.kind}
+                            </Chip>{" "}
+                            <span className="text-caption text-ink-muted">
+                              {t.fromWarehouseCode} → {t.toWarehouseCode} ({t.status})
+                            </span>
+                            {t.items.map((i, idx) => (
+                              <div
+                                key={idx}
+                                className="text-caption text-ink-muted mt-0.5 pl-2 border-l-2 border-border"
+                              >
+                                {i.sku}: {num(i.qtyRequested)} req
+                                {i.fromBinPath ? ` · from ${i.fromBinPath}` : ""}
+                                {i.toBinPath ? ` → to ${i.toBinPath}` : ""}
+                              </div>
+                            ))}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+            </Card>
+
             {/* Linked transfer orders (putaway + replenishment) */}
             {linkedTOs.length > 0 && (
               <Card
@@ -583,24 +830,74 @@ export const Manufacturing = () => {
                     : "Loading BOM…"
               }
               actions={
-                requirements?.anyShortage ? (
-                  <Chip tone="danger" icon={<AlertTriangle size={12} />}>
-                    Shortages
-                  </Chip>
-                ) : requirements && requirements.lines.length > 0 ? (
-                  <Chip tone="success" icon={<CheckCircle2 size={12} />}>
-                    All in stock
-                  </Chip>
-                ) : null
+                <div className="flex items-center gap-2">
+                  {requirements?.allFullyIssued ? (
+                    <Chip tone="success" icon={<PackageCheck size={12} />}>
+                      Materials issued
+                    </Chip>
+                  ) : requirements?.anyShortage ? (
+                    <Chip tone="danger" icon={<AlertTriangle size={12} />}>
+                      Shortages
+                    </Chip>
+                  ) : requirements && requirements.lines.length > 0 ? (
+                    <Chip tone="success" icon={<CheckCircle2 size={12} />}>
+                      All in stock
+                    </Chip>
+                  ) : null}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      setRequirements(null);
+                      if (order) {
+                        void refreshRequirements(order.id).catch(() => {});
+                      }
+                    }}
+                    title="Reload stock from bins"
+                  >
+                    Refresh
+                  </Button>
+                </div>
               }
               noPadding
             >
-              <div className="grid grid-cols-12 grid-header-cell">
+              {requirements?.allFullyIssued && (
+                <div className="px-4 py-2.5 bg-success-soft border-b border-success/30 flex items-start gap-2 text-body-sm text-success">
+                  <PackageCheck size={14} className="mt-0.5 shrink-0" />
+                  <div>
+                    <span className="font-semibold">Materials issued to this MO.</span>{" "}
+                    Issued quantities are tracked on the stock ledger; bin on-hand may be lower because components were consumed from storage.
+                    Use <strong>Log output</strong> and <strong>Complete</strong> for the next steps.
+                  </div>
+                </div>
+              )}
+              {requirements?.anyShortage && !requirements.allFullyIssued && (
+                <div className="px-4 py-2.5 bg-warning-soft border-b border-warning/30 flex items-start gap-2 text-body-sm text-[#8a6300]">
+                  <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                  <div>
+                    <span className="font-semibold">Stock shortage detected.</span>{" "}
+                    Shortage is what is still needed for this MO minus free bin qty (not full BOM vs bins after issue).
+                    <br />
+                    <strong>To resolve:</strong>{" "}
+                    {order.status === "planned" ? (
+                      <>
+                        use <strong>Release</strong> to create replenishment transfers, or{" "}
+                      </>
+                    ) : null}
+                    <strong>Inventory → Adjust</strong> on the short lines, then Refresh.
+                  </div>
+                </div>
+              )}
+              <div className="grid grid-cols-12 grid-header-cell text-caption">
                 <div className="col-span-2">SKU</div>
-                <div className="col-span-3">Component</div>
-                <div className="col-span-3">Path</div>
-                <div className="col-span-2 text-right">Required</div>
-                <div className="col-span-2 text-right">Free / Short</div>
+                <div className="col-span-2">Component</div>
+                <div className="col-span-2">Path</div>
+                <div className="col-span-1 text-right">Req</div>
+                <div className="col-span-1 text-right">Issued</div>
+                <div className="col-span-1 text-right">Need</div>
+                <div className="col-span-2 text-right">In bins</div>
+                <div className="col-span-1 text-right">Short</div>
+                <div className="col-span-1" />
               </div>
               {!requirements ? (
                 <div className="px-4 py-6 text-center text-body-sm text-ink-muted">
@@ -623,24 +920,49 @@ export const Manufacturing = () => {
                       <div className="col-span-2 font-mono text-caption">
                         {l.sku}
                       </div>
-                      <div className="col-span-3 font-semibold truncate">
+                      <div className="col-span-2 font-semibold truncate">
                         {l.name}
                       </div>
-                      <div className="col-span-3 text-caption text-ink-muted truncate">
+                      <div className="col-span-2 text-caption text-ink-muted truncate">
                         {l.path.join(" → ") || "(direct)"}
                       </div>
-                      <div className="col-span-2 text-right tnum">
-                        {num(l.required, 2)} {l.uom}
+                      <div className="col-span-1 text-right tnum">
+                        {num(l.required, 2)}
+                      </div>
+                      <div className="col-span-1 text-right tnum text-ink-muted">
+                        {num(l.issued, 2)}
                       </div>
                       <div
                         className={cn(
-                          "col-span-2 text-right tnum font-semibold",
+                          "col-span-1 text-right tnum",
+                          l.stillNeeded > 0 ? "text-warning font-semibold" : "text-success"
+                        )}
+                      >
+                        {num(l.stillNeeded, 2)}
+                      </div>
+                      <div className={cn("col-span-2 text-right tnum", l.onHand === 0 && l.stillNeeded > 0 ? "text-danger" : "text-ink-muted")}>
+                        {num(l.onHand, 2)} {l.uom}
+                      </div>
+                      <div
+                        className={cn(
+                          "col-span-1 text-right tnum font-semibold",
                           l.shortage > 0 ? "text-danger" : "text-success"
                         )}
                       >
                         {l.shortage > 0
-                          ? `short ${num(l.shortage, 2)}`
-                          : `free ${num(l.free, 2)}`}
+                          ? `−${num(l.shortage, 2)}`
+                          : "✓"}
+                      </div>
+                      <div className="col-span-1 flex justify-end">
+                        {l.shortage > 0 && l.stillNeeded > 0 && (
+                          <Link
+                            to={`/inventory?adjust=1&from=mfg&productId=${encodeURIComponent(l.productId)}&delta=${l.shortage}`}
+                            className="text-caption text-primary hover:underline whitespace-nowrap"
+                            title="Open Inventory → Adjust with shortage qty prefilled"
+                          >
+                            Adjust
+                          </Link>
+                        )}
                       </div>
                     </div>
                   );
@@ -648,192 +970,186 @@ export const Manufacturing = () => {
               )}
             </Card>
           </div>
-        </section>
+        )}
 
-        {/* Right rail: live workers + production-line rollup. The
-            machine list and per-line status used to be hardcoded here;
-            both are now sourced from /reports/production-lines, which
-            aggregates active MOs and machine.status flips from
-            issue-materials / complete. */}
-        <aside className="col-span-3 bg-surface border-l border-border flex flex-col overflow-y-auto">
-          <Card noPadding className="!rounded-none !border-0 !border-b !border-border !shadow-none">
-            <div className="px-3 py-2 border-b border-border flex items-center justify-between">
-              <span className="text-body-sm font-bold">Workers on Line</span>
-              <Chip
-                size="sm"
-                tone="success"
-                icon={<StatusDot tone="success" />}
+          {activeTab === "productivity" && (
+            <div className="p-4 grid grid-cols-2 gap-4 items-start">
+              {/* Employee productivity */}
+              <Card
+                noPadding
+                title={
+                  <div className="flex items-center gap-2">
+                    <Users size={14} />
+                    <span>Employee productivity</span>
+                  </div>
+                }
+                actions={
+                  <Chip size="sm" tone="success" icon={<StatusDot tone="success" />}>
+                    {workers.filter((w) => w.status === "in").length} active
+                  </Chip>
+                }
               >
-                {workers.filter((w) => w.status === "in").length} active
-              </Chip>
-            </div>
-            <div className="divide-y divide-border">
-              {workers.length === 0 && (
-                <div className="px-3 py-4 text-caption text-ink-muted text-center">
-                  No workers configured.
+                <div className="divide-y divide-border">
+                  {workers.length === 0 && (
+                    <div className="px-4 py-6 text-caption text-ink-muted text-center">
+                      No workers configured.
+                    </div>
+                  )}
+                  {workers.map((w) => {
+                    const eff = w.efficiency;
+                    return (
+                      <div key={w.id} className="px-4 py-3 flex items-center gap-3">
+                        <div className="h-9 w-9 rounded-full bg-primary-50 text-primary grid place-items-center font-bold text-caption shrink-0">
+                          {w.name.split(" ").map((p) => p[0]).slice(0, 2).join("")}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-body-sm font-semibold truncate">{w.name}</div>
+                          <div className="text-caption text-ink-muted">
+                            {w.empNo} · Shift {w.shift}
+                          </div>
+                          <div className="mt-1.5 h-1 bg-canvas rounded-full overflow-hidden">
+                            <div
+                              className={cn(
+                                "h-full",
+                                eff > 95 ? "bg-success" : eff > 80 ? "bg-warning" : "bg-danger"
+                              )}
+                              style={{ width: `${eff}%` }}
+                            />
+                          </div>
+                        </div>
+                        <div className="text-right shrink-0">
+                          <div className={cn("text-body-sm font-bold tnum", eff > 95 ? "text-success" : eff > 80 ? "text-warning" : "text-danger")}>
+                            {eff.toFixed(0)}%
+                          </div>
+                          <div className="text-caption text-ink-muted tnum">
+                            {num(w.unitsToday)}/{num(w.targetToday)}
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
-              )}
-              {workers.slice(0, 5).map((w) => {
-                const eff = w.efficiency;
-                return (
-                  <div key={w.id} className="px-3 py-2.5 flex items-center gap-2">
-                    <div className="h-8 w-8 rounded-full bg-primary-50 text-primary grid place-items-center font-bold text-caption">
-                      {w.name.split(" ").map((p) => p[0]).slice(0, 2).join("")}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-body-sm font-semibold truncate">{w.name}</div>
-                      <div className="text-caption text-ink-muted">
-                        {w.empNo} · Shift {w.shift}
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className={cn("text-body-sm font-bold tnum", eff > 95 ? "text-success" : eff > 80 ? "text-warning" : "text-danger")}>
-                        {eff.toFixed(0)}%
-                      </div>
-                      <div className="text-caption text-ink-muted tnum">
-                        {num(w.unitsToday)}/{num(w.targetToday)}
-                      </div>
+              </Card>
+
+              {/* Line productivity */}
+              <Card
+                noPadding
+                title={
+                  <div className="flex items-center gap-2">
+                    <Factory size={14} />
+                    <span>Line productivity</span>
+                  </div>
+                }
+                actions={<Chip size="sm" tone="neutral">{lines.length} lines</Chip>}
+              >
+                {lines.length === 0 && (
+                  <div className="px-4 py-6 text-caption text-ink-muted text-center">
+                    No work centers yet.
+                    <div className="mt-1">
+                      Add them in <strong>Settings › Production lines</strong>.
                     </div>
                   </div>
-                );
-              })}
-            </div>
-          </Card>
-
-          <Card noPadding className="!rounded-none !border-0 !shadow-none">
-            <div className="px-3 py-2 border-b border-border flex items-center justify-between">
-              <span className="text-body-sm font-bold">Production lines</span>
-              <Chip size="sm" tone="neutral">
-                {lines.length}
-              </Chip>
-            </div>
-            {lines.length === 0 && (
-              <div className="px-3 py-6 text-caption text-ink-muted text-center">
-                No work centers yet.
-                <div className="mt-1">Add them in <strong>Settings &raquo; Production lines</strong>.</div>
-              </div>
-            )}
-            <div className="divide-y divide-border">
-              {lines.map((line) => {
-                const utilTone =
-                  line.utilisationPct === null
-                    ? "neutral"
-                    : line.utilisationPct >= 80
-                      ? "success"
-                      : line.utilisationPct >= 30
-                        ? "warning"
-                        : "neutral";
-                const lineRunning = line.machines.some(
-                  (m) => m.status === "running" || m.busy
-                );
-                return (
-                  <div key={line.id} className="px-3 py-2.5">
-                    <div className="flex items-center gap-2 mb-1.5">
-                      <div
-                        className={cn(
-                          "h-8 w-8 rounded-md grid place-items-center",
-                          lineRunning
-                            ? "bg-success-soft text-success"
-                            : "bg-canvas text-ink-muted"
-                        )}
-                      >
-                        <Factory size={14} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-body-sm font-semibold truncate">
-                          {line.name}
-                        </div>
-                        <div className="text-caption text-ink-muted font-mono">
-                          {line.code}
-                        </div>
-                      </div>
-                      {line.activeOrders > 0 ? (
-                        <Chip size="sm" tone="primary">
-                          {line.activeOrders} MO
-                        </Chip>
-                      ) : (
-                        <Chip size="sm" tone="neutral">
-                          idle
-                        </Chip>
-                      )}
-                    </div>
-                    {/* Output today vs daily capacity bar. We hide it
-                        when capacity isn't set since "x of unknown" is
-                        not actionable. */}
-                    {line.dailyCapacity !== null && (
-                      <div className="px-1">
-                        <div className="flex items-center justify-between text-caption text-ink-muted mb-1">
-                          <span>Output today</span>
-                          <span className="tnum">
-                            {num(line.outputToday)} /{" "}
-                            {num(line.dailyCapacity)}
-                          </span>
-                        </div>
-                        <div className="h-1.5 bg-canvas rounded-full overflow-hidden">
+                )}
+                <div className="divide-y divide-border">
+                  {lines.map((line) => {
+                    const utilTone =
+                      line.utilisationPct === null
+                        ? "neutral"
+                        : line.utilisationPct >= 80
+                          ? "success"
+                          : line.utilisationPct >= 30
+                            ? "warning"
+                            : "neutral";
+                    const lineRunning = line.machines.some(
+                      (m) => m.status === "running" || m.busy
+                    );
+                    return (
+                      <div key={line.id} className="px-4 py-3">
+                        <div className="flex items-center gap-2 mb-2">
                           <div
                             className={cn(
-                              "h-full",
-                              utilTone === "success" && "bg-success",
-                              utilTone === "warning" && "bg-warning",
-                              utilTone === "neutral" && "bg-ink-muted/40"
+                              "h-8 w-8 rounded-md grid place-items-center shrink-0",
+                              lineRunning
+                                ? "bg-success-soft text-success"
+                                : "bg-canvas text-ink-muted"
                             )}
-                            style={{
-                              width: `${Math.min(100, line.utilisationPct ?? 0)}%`,
-                            }}
-                          />
+                          >
+                            <Factory size={14} />
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-body-sm font-semibold truncate">{line.name}</div>
+                            <div className="text-caption text-ink-muted font-mono">{line.code}</div>
+                          </div>
+                          {line.activeOrders > 0 ? (
+                            <Chip size="sm" tone="primary">{line.activeOrders} MO</Chip>
+                          ) : (
+                            <Chip size="sm" tone="neutral">idle</Chip>
+                          )}
+                        </div>
+                        {line.dailyCapacity !== null && (
+                          <div className="mb-2">
+                            <div className="flex items-center justify-between text-caption text-ink-muted mb-1">
+                              <span>Output today</span>
+                              <span className="tnum">
+                                {num(line.outputToday)} / {num(line.dailyCapacity)}
+                              </span>
+                            </div>
+                            <div className="h-1.5 bg-canvas rounded-full overflow-hidden">
+                              <div
+                                className={cn(
+                                  "h-full",
+                                  utilTone === "success" && "bg-success",
+                                  utilTone === "warning" && "bg-warning",
+                                  utilTone === "neutral" && "bg-ink-muted/40"
+                                )}
+                                style={{ width: `${Math.min(100, line.utilisationPct ?? 0)}%` }}
+                              />
+                            </div>
+                          </div>
+                        )}
+                        <div className="space-y-1">
+                          {line.machines.length === 0 ? (
+                            <div className="text-caption text-ink-muted">No machines configured.</div>
+                          ) : (
+                            line.machines.map((m) => {
+                              const st =
+                                m.status === "running"
+                                  ? "success"
+                                  : m.status === "maintenance"
+                                    ? "warning"
+                                    : m.status === "broken"
+                                      ? "danger"
+                                      : "neutral";
+                              return (
+                                <div
+                                  key={m.id}
+                                  className="flex items-center gap-2 px-2 py-1 rounded bg-canvas/60"
+                                >
+                                  <Wrench
+                                    size={12}
+                                    className={cn(
+                                      m.status === "running"
+                                        ? "text-success"
+                                        : m.status === "broken"
+                                          ? "text-danger"
+                                          : "text-ink-muted"
+                                    )}
+                                  />
+                                  <span className="text-caption flex-1 truncate">{m.name}</span>
+                                  <Chip size="sm" tone={st as "neutral"}>{m.status}</Chip>
+                                </div>
+                              );
+                            })
+                          )}
                         </div>
                       </div>
-                    )}
-                    {/* Machines on this line. Each machine is rendered
-                        as a slim row showing its operational status
-                        plus a "busy" hint when an active WO has it. */}
-                    <div className="mt-2 space-y-1">
-                      {line.machines.length === 0 ? (
-                        <div className="text-caption text-ink-muted px-1">
-                          No machines configured.
-                        </div>
-                      ) : (
-                        line.machines.map((m) => {
-                          const statusTone =
-                            m.status === "running"
-                              ? "success"
-                              : m.status === "maintenance"
-                                ? "warning"
-                                : m.status === "broken"
-                                  ? "danger"
-                                  : "neutral";
-                          return (
-                            <div
-                              key={m.id}
-                              className="flex items-center gap-2 px-1 py-1 rounded bg-canvas/40"
-                            >
-                              <Wrench
-                                size={12}
-                                className={cn(
-                                  m.status === "running"
-                                    ? "text-success"
-                                    : m.status === "broken"
-                                      ? "text-danger"
-                                      : "text-ink-muted"
-                                )}
-                              />
-                              <span className="text-caption flex-1 truncate">
-                                {m.name}
-                              </span>
-                              <Chip size="sm" tone={statusTone}>
-                                {m.status}
-                              </Chip>
-                            </div>
-                          );
-                        })
-                      )}
-                    </div>
-                  </div>
-                );
-              })}
+                    );
+                  })}
+                </div>
+              </Card>
             </div>
-          </Card>
-        </aside>
+          )}
+        </div>
       </div>
 
       {showBomList && (

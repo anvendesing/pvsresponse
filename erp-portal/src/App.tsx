@@ -12,6 +12,7 @@ import { Procurement } from "./pages/Procurement";
 import { Productivity } from "./pages/Productivity";
 import { Billing } from "./pages/Billing";
 import { Customers } from "./pages/Customers";
+import { Enquiries } from "./pages/Enquiries";
 import { Quotes } from "./pages/Quotes";
 import { SalesOrders } from "./pages/SalesOrders";
 import { Picking } from "./pages/Picking";
@@ -100,6 +101,7 @@ const App = () => {
         <Route path="/price-lists"    element={<RequireRole roles={["procurement"]}><PriceLists /></RequireRole>} />
 
         <Route path="/customers"      element={<RequireRole roles={["supervisor","billing"]}><Customers /></RequireRole>} />
+        <Route path="/enquiries"      element={<RequireRole roles={["supervisor","billing"]}><Enquiries /></RequireRole>} />
         <Route path="/quotes"         element={<RequireRole roles={["supervisor","billing"]}><Quotes /></RequireRole>} />
         <Route path="/sales-orders"   element={<RequireRole roles={["supervisor","billing"]}><SalesOrders /></RequireRole>} />
 

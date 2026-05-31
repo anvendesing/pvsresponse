@@ -470,6 +470,61 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
     });
   });
 
+  // Public enquiry capture — lets the storefront submit a lead (product
+  // interest, dealership application, farm-visit request, …) without auth.
+  // Lands in the CRM pipeline at stage "new", source "website".
+  app.post("/storefront-mock/enquiries", async (req, reply) => {
+    const body = z
+      .object({
+        type: z.enum(["product", "dealership", "farm_visit", "other"]).default("product"),
+        contactName: z.string().trim().min(1).max(160),
+        phone: z.string().trim().max(40).optional(),
+        email: z.string().trim().toLowerCase().email().optional().or(z.literal("")),
+        company: z.string().trim().max(160).optional(),
+        city: z.string().trim().max(120).optional(),
+        subject: z.string().trim().min(1).max(200),
+        requirement: z.string().trim().max(4000).optional(),
+      })
+      .parse(req.body);
+
+    if (!body.phone && !body.email) {
+      return reply.code(400).send({
+        error: { code: "contact_required", message: "Provide a phone or email so we can reach you." },
+      });
+    }
+
+    const year = new Date().getUTCFullYear();
+    const prefix = `ENQ-${year}-`;
+    const last = await db.enquiry.findFirst({
+      where: { enquiryNo: { startsWith: prefix } },
+      orderBy: { enquiryNo: "desc" },
+      select: { enquiryNo: true },
+    });
+    const n = last ? parseInt(last.enquiryNo.slice(prefix.length), 10) || 0 : 0;
+    const enquiryNo = `${prefix}${String(n + 1).padStart(4, "0")}`;
+
+    const created = await db.enquiry.create({
+      data: {
+        enquiryNo,
+        type: body.type,
+        source: "website",
+        priority: "medium",
+        contactName: body.contactName,
+        phone: body.phone || null,
+        email: body.email ? body.email : null,
+        company: body.company || null,
+        city: body.city || null,
+        subject: body.subject,
+        requirement: body.requirement || null,
+        activities: {
+          create: { type: "note", body: "Enquiry submitted via website." },
+        },
+      },
+      select: { id: true, enquiryNo: true },
+    });
+    return reply.code(201).send({ ok: true, enquiryNo: created.enquiryNo });
+  });
+
   // Public catalog used by the dummy store page so it doesn't need a
   // login to render variants. Filters out inactive products and
   // variants/products with zero stock so the demo can't accidentally

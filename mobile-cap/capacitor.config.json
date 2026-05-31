@@ -1,0 +1,14 @@
+{
+  "appId": "com.prakruthivanam.shop",
+  "appName": "Prakruthivanam",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": true,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": true
+  },
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true
+  }
+}

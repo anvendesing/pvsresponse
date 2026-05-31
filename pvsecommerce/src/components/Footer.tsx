@@ -48,6 +48,7 @@ export const Footer = () => (
       <div className="footer-col">
         <h4>Help</h4>
         <ul>
+          <li><Link to="/enquiry">Bulk / Dealership Enquiry</Link></li>
           <li><a href="mailto:prakruthivanam@gmail.com">Contact Us</a></li>
           <li><a href="#">Shipping Policy</a></li>
           <li><a href="#">Returns &amp; Refunds</a></li>

@@ -1,0 +1,164 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:PvsCommerce.Mobile.ViewModels"
+             x:Class="PvsCommerce.Mobile.Views.TrackerSheet"
+             x:DataType="vm:TrackerViewModel">
+
+  <Grid>
+    <Border Background="#80000000" />
+    <Border Background="{StaticResource NeutralWhite}"
+            CornerRadius="24,24,0,0"
+            VerticalAlignment="Bottom"
+            BoxShadow="{StaticResource ShadowLg}"
+            MaxHeight="700"
+            Padding="0">
+      <Grid RowDefinitions="Auto,*">
+        <!-- Header -->
+        <Border Grid.Row="0" Background="{StaticResource NeutralCream}"
+                BorderBrush="{StaticResource NeutralBorder}" BorderThickness="0,0,0,1"
+                Padding="16,14">
+          <Grid ColumnDefinitions="*,Auto">
+            <TextBlock Grid.Column="0" Text="🚚 Live Dispatch Tracker"
+                       FontWeight="Bold" FontSize="15"
+                       Foreground="{StaticResource ForestGreenDark}"
+                       VerticalAlignment="Center" />
+            <Button Grid.Column="1" Classes="icon" Padding="6"
+                    Command="{Binding CloseCommand}">
+              <TextBlock Text="✕" FontSize="16" />
+            </Button>
+          </Grid>
+        </Border>
+
+        <!-- Body -->
+        <ScrollViewer Grid.Row="1" Padding="16">
+          <StackPanel Spacing="16">
+
+            <!-- Success badge -->
+            <StackPanel HorizontalAlignment="Center" Spacing="8">
+              <Border Background="{StaticResource ForestGreen}"
+                      CornerRadius="9999" Width="64" Height="64">
+                <TextBlock Text="✓" FontSize="32" FontWeight="Bold"
+                           Foreground="{StaticResource NeutralWhite}"
+                           HorizontalAlignment="Center" VerticalAlignment="Center" />
+              </Border>
+              <TextBlock Text="Order Confirmed!"
+                         FontFamily="{StaticResource DisplayFont}"
+                         FontSize="20" FontWeight="Bold"
+                         Foreground="{StaticResource ForestGreenDark}"
+                         HorizontalAlignment="Center" />
+              <TextBlock Text="{Binding InvoiceLabel, StringFormat='Invoice ID: {0}'}"
+                         FontSize="11" Foreground="{StaticResource NeutralGray}"
+                         HorizontalAlignment="Center" />
+            </StackPanel>
+
+            <!-- 5-step vertical stepper -->
+            <StackPanel Spacing="0">
+              <Grid ColumnDefinitions="Auto,*">
+                <StackPanel Grid.Column="0" Width="32" HorizontalAlignment="Center">
+                  <Border Width="20" Height="20" CornerRadius="9999"
+                          Background="{StaticResource ForestGreen}" />
+                  <Border Width="2" Height="36" Background="{StaticResource ForestGreen}"
+                          HorizontalAlignment="Center" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Margin="8,0,0,18" Spacing="2">
+                  <TextBlock Text="Order Placed Successfully" FontWeight="Bold" FontSize="13" />
+                  <TextBlock Text="Awaiting farm kitchen dispatch clearance." Classes="muted" TextWrapping="Wrap" />
+                </StackPanel>
+              </Grid>
+
+              <Grid ColumnDefinitions="Auto,*">
+                <StackPanel Grid.Column="0" Width="32" HorizontalAlignment="Center">
+                  <Border Width="20" Height="20" CornerRadius="9999"
+                          Background="{StaticResource ForestGreen}"
+                          IsVisible="{Binding Step2Done}" />
+                  <Border Width="20" Height="20" CornerRadius="9999"
+                          BorderBrush="{StaticResource ForestGreen}" BorderThickness="3"
+                          IsVisible="{Binding Step2Active}" />
+                  <Border Width="2" Height="36"
+                          Background="{StaticResource NeutralBorder}"
+                          HorizontalAlignment="Center" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Margin="8,0,0,18" Spacing="2">
+                  <TextBlock Text="Preparing Grains &amp; Oils" FontWeight="Bold" FontSize="13" />
+                  <TextBlock Text="Preparing fresh, pesticide-free harvest batches at the farm." Classes="muted" TextWrapping="Wrap" />
+                </StackPanel>
+              </Grid>
+
+              <Grid ColumnDefinitions="Auto,*">
+                <StackPanel Grid.Column="0" Width="32" HorizontalAlignment="Center">
+                  <Border Width="20" Height="20" CornerRadius="9999"
+                          Background="{StaticResource ForestGreen}"
+                          IsVisible="{Binding Step3Done}" />
+                  <Border Width="20" Height="20" CornerRadius="9999"
+                          BorderBrush="{StaticResource ForestGreen}" BorderThickness="3"
+                          IsVisible="{Binding Step3Active}" />
+                  <Border Width="20" Height="20" CornerRadius="9999"
+                          Background="{StaticResource NeutralBorder}"
+                          IsVisible="{Binding !Step3Done}" />
+                  <Border Width="2" Height="36" Background="{StaticResource NeutralBorder}"
+                          HorizontalAlignment="Center" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Margin="8,0,0,18" Spacing="2">
+                  <TextBlock Text="Eco-Kraft Box Packing" FontWeight="Bold" FontSize="13" />
+                  <TextBlock Text="Tightly packed in double-kraft envelopes with natural insulation seals." Classes="muted" TextWrapping="Wrap" />
+                </StackPanel>
+              </Grid>
+
+              <Grid ColumnDefinitions="Auto,*">
+                <StackPanel Grid.Column="0" Width="32" HorizontalAlignment="Center">
+                  <Border Width="20" Height="20" CornerRadius="9999"
+                          Background="{StaticResource ForestGreen}"
+                          IsVisible="{Binding Step4Done}" />
+                  <Border Width="20" Height="20" CornerRadius="9999"
+                          BorderBrush="{StaticResource ForestGreen}" BorderThickness="3"
+                          IsVisible="{Binding Step4Active}" />
+                  <Border Width="20" Height="20" CornerRadius="9999"
+                          Background="{StaticResource NeutralBorder}"
+                          IsVisible="{Binding !Step4Done}" />
+                  <Border Width="2" Height="36" Background="{StaticResource NeutralBorder}"
+                          HorizontalAlignment="Center" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Margin="8,0,0,18" Spacing="2">
+                  <TextBlock Text="Shipped &amp; Dispatched" FontWeight="Bold" FontSize="13" />
+                  <TextBlock Text="Out for delivery with our organic dispatch carrier partners." Classes="muted" TextWrapping="Wrap" />
+                </StackPanel>
+              </Grid>
+
+              <Grid ColumnDefinitions="Auto,*">
+                <StackPanel Grid.Column="0" Width="32" HorizontalAlignment="Center">
+                  <Border Width="20" Height="20" CornerRadius="9999"
+                          Background="{StaticResource ForestGreen}"
+                          IsVisible="{Binding Step5Done}" />
+                  <Border Width="20" Height="20" CornerRadius="9999"
+                          BorderBrush="{StaticResource ForestGreen}" BorderThickness="3"
+                          IsVisible="{Binding Step5Active}" />
+                  <Border Width="20" Height="20" CornerRadius="9999"
+                          Background="{StaticResource NeutralBorder}"
+                          IsVisible="{Binding !Step5Done}" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Margin="8,0,0,0" Spacing="2">
+                  <TextBlock Text="Delivered at Doorstep" FontWeight="Bold" FontSize="13" />
+                  <TextBlock Text="Doorstep drop confirmed. Organic wellness delivered!" Classes="muted" TextWrapping="Wrap" />
+                </StackPanel>
+              </Grid>
+            </StackPanel>
+
+            <!-- Sandbox console -->
+            <Border Classes="card" Padding="14" Background="{StaticResource ForestGreenSoft}"
+                    BorderBrush="{StaticResource ForestGreenSoft}">
+              <StackPanel Spacing="8">
+                <TextBlock Text="LOGISTICS SANDBOX CONSOLE" FontWeight="Bold" FontSize="11"
+                           LetterSpacing="1.5" Foreground="{StaticResource ForestGreenDark}" />
+                <TextBlock Text="Test our dynamic shipping updates. Tap the button below to advance the timeline."
+                           Classes="muted" TextWrapping="Wrap" />
+                <Button Classes="outline" Content="Advance Logistics Step →"
+                        Command="{Binding AdvanceStepCommand}"
+                        HorizontalAlignment="Left" />
+              </StackPanel>
+            </Border>
+          </StackPanel>
+        </ScrollViewer>
+      </Grid>
+    </Border>
+  </Grid>
+</UserControl>

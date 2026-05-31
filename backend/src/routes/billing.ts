@@ -3,6 +3,7 @@ import { z } from "zod";
 import { db } from "../db.js";
 import { mintShareToken } from "../lib/share.js";
 import { recordChange } from "../sync/log.js";
+import { checkStockRules } from "../lib/stock-rules.js";
 import { resolveGstRate, computeTax, lineTax } from "../lib/tax.js";
 
 const invoiceCreate = z.object({
@@ -200,6 +201,7 @@ export const billingRoutes = async (app: FastifyInstance) => {
     // Stock-on-hand was validated above (pre-flight oversell guard), so the
     // decrement here is guaranteed not to produce a negative balance.
     const wh = await db.warehouse.findFirst();
+    const checkedBins = new Set<string>();
     for (const item of body.items) {
       const dec = Math.round(item.qty);
       if (item.variantId) {
@@ -213,6 +215,33 @@ export const billingRoutes = async (app: FastifyInstance) => {
           data: { stockOnHand: { decrement: dec } },
         });
       }
+
+      const rules = await db.stockRule.findMany({
+        where: {
+          productId: item.productId,
+          active: true,
+          ...(item.variantId
+            ? { OR: [{ variantId: item.variantId }, { variantId: null }] }
+            : { variantId: null }),
+        },
+      });
+      for (const rule of rules) {
+        const monitor = await db.bin.findUnique({
+          where: { id: rule.monitorBinId },
+        });
+        if (monitor && monitor.qty > 0) {
+          const take = Math.min(monitor.qty, dec);
+          await db.bin.update({
+            where: { id: rule.monitorBinId },
+            data: { qty: { decrement: take } },
+          });
+        }
+        if (!checkedBins.has(rule.monitorBinId)) {
+          checkedBins.add(rule.monitorBinId);
+          await checkStockRules(rule.monitorBinId, req.user.sub);
+        }
+      }
+
       if (wh) {
         await db.stockLedger.create({
           data: {

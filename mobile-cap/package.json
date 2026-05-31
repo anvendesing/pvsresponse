@@ -1,0 +1,16 @@
+{
+  "name": "prakruthivanam-mobile",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Prakruthivanam mobile shop - Capacitor wrap of app.html",
+  "scripts": {
+    "sync": "cap sync android",
+    "build:android": "cap sync android && cd android && gradlew.bat assembleDebug",
+    "open:android": "cap open android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^6.2.1",
+    "@capacitor/cli": "^6.2.1",
+    "@capacitor/core": "^6.2.1"
+  }
+}
