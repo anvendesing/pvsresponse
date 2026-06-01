@@ -1,5 +1,6 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { Link } from "react-router-dom";
 import {
   Camera,
   CheckCircle2,
@@ -688,18 +689,41 @@ const VariantStockCell = ({ product }: { product: Product }) => {
                           Parent (bulk)
                         </td>
                         <td className="px-3 py-1.5 text-caption text-ink-muted">
-                          stock monitor
+                          loose bulk only
                         </td>
                         <td
                           className={`px-3 py-1.5 text-right tnum font-bold ${stockClass(
                             parentTone
                           )}`}
+                          title="Bulk kg in storage — not packed variant pcs. Packaged stock is in the variant rows above."
                         >
                           {num(product.stockOnHand)} {product.uom}
                         </td>
                       </tr>
                     </tfoot>
                   </table>
+                  <div className="px-3 py-2 border-t border-border flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-caption text-ink-muted">
+                      Packaged total in bulk UoM:{" "}
+                      <span className="tnum font-semibold text-ink">
+                        {num(
+                          variants.reduce(
+                            (s, v) => s + v.stockOnHand * (v.packSize ?? 1),
+                            0
+                          ),
+                          3
+                        )}{" "}
+                        {product.uom}
+                      </span>{" "}
+                      (= sum of variant pcs × pack size)
+                    </span>
+                    <Link
+                      to={`/inventory?tab=locations&productId=${encodeURIComponent(product.id)}`}
+                      className="text-caption text-primary hover:underline font-semibold"
+                    >
+                      View bin locations →
+                    </Link>
+                  </div>
                 </div>
               ) : (
                 <div className="p-3 space-y-1.5 text-body-sm">

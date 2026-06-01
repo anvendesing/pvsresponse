@@ -45,7 +45,7 @@ interface TasksResponse {
 }
 
 export const MobileTasks = () => {
-  const [tab, setTab] = useState<"pick" | "pack" | "transfer">("pick");
+  const [tab, setTab] = useState<"pick" | "pack" | "transfer" | "more">("pick");
   const [data, setData] = useState<TasksResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -94,20 +94,24 @@ export const MobileTasks = () => {
       ? data?.pickClaimed ?? []
       : tab === "pack"
       ? data?.packClaimed ?? []
-      : data?.transferClaimed ?? [];
+      : tab === "transfer"
+      ? data?.transferClaimed ?? []
+      : [];
   const available =
     tab === "pick"
       ? data?.pickAvailable ?? []
       : tab === "pack"
       ? data?.packAvailable ?? []
-      : data?.transferAvailable ?? [];
+      : tab === "transfer"
+      ? data?.transferAvailable ?? []
+      : [];
 
   const transferTotal =
     (data?.counts.transferClaimed ?? 0) + (data?.counts.transferAvailable ?? 0);
 
   return (
     <div className="px-4 pt-4">
-      <div className="mb-3 flex rounded-2xl bg-slate-200 p-1">
+      <div className="mb-3 flex rounded-2xl bg-slate-200 p-1 gap-0.5">
         <SegmentBtn
           active={tab === "pick"}
           onClick={() => setTab("pick")}
@@ -123,6 +127,11 @@ export const MobileTasks = () => {
           onClick={() => setTab("transfer")}
           label={`Move (${transferTotal})`}
         />
+        <SegmentBtn
+          active={tab === "more"}
+          onClick={() => setTab("more")}
+          label="More"
+        />
       </div>
 
       {error && (
@@ -131,35 +140,65 @@ export const MobileTasks = () => {
         </div>
       )}
 
-      <Section title="My tasks" empty="Nothing claimed - grab one below.">
-        {mine.map((t) => (
-          <TaskCard key={t.id} task={t} kind={tab} mine />
-        ))}
-      </Section>
+      {tab !== "more" && (
+        <>
+          <Section title="My tasks" empty="Nothing claimed - grab one below.">
+            {mine.map((t) => (
+              <TaskCard key={t.id} task={t} kind={tab} mine />
+            ))}
+          </Section>
 
-      <Section
-        title="Available queue"
-        empty="The queue is clear. Nice work."
-      >
-        {available.map((t) => (
-          <TaskCard
-            key={t.id}
-            task={t}
-            kind={tab}
-            mine={false}
-            claiming={claiming === t.id}
-            onClaim={() => claim(t.id, tab)}
+          <Section
+            title="Available queue"
+            empty="The queue is clear. Nice work."
+          >
+            {available.map((t) => (
+              <TaskCard
+                key={t.id}
+                task={t}
+                kind={tab}
+                mine={false}
+                claiming={claiming === t.id}
+                onClaim={() => claim(t.id, tab)}
+              />
+            ))}
+          </Section>
+        </>
+      )}
+
+      {/* More tab: shortcuts to GRN, Count, Returns */}
+      {tab === "more" && (
+        <div className="space-y-2 mb-4">
+          <QuickLink
+            to="/m/grn"
+            icon="📦"
+            title="Goods Receipt (GRN)"
+            desc="Receive stock against open purchase orders"
           />
-        ))}
-      </Section>
+          <QuickLink
+            to="/m/count"
+            icon="🔢"
+            title="Cycle Count / Recount"
+            desc="Scan a bin to recount, reassign, or adjust stock"
+          />
+          <QuickLink
+            to="/m/returns"
+            icon="↩️"
+            title="Customer Returns"
+            desc="Review and decide pending return lines"
+          />
+        </div>
+      )}
 
-      <button
-        type="button"
-        onClick={() => void refresh()}
-        className="my-4 w-full rounded-xl border border-slate-300 bg-white py-2 text-sm font-medium text-slate-600"
-      >
-        {loading ? "Refreshing…" : "Refresh"}
-      </button>
+      {tab !== "more" && (
+        <button
+          type="button"
+          onClick={() => void refresh()}
+          className="my-4 w-full rounded-xl border border-slate-300 bg-white py-2 text-sm font-medium text-slate-600"
+        >
+          {loading ? "Refreshing…" : "Refresh"}
+        </button>
+      )}
     </div>
   );
 };
@@ -330,6 +369,30 @@ const TaskCard = ({
     </div>
   );
 };
+
+const QuickLink = ({
+  to,
+  icon,
+  title,
+  desc,
+}: {
+  to: string;
+  icon: string;
+  title: string;
+  desc: string;
+}) => (
+  <Link
+    to={to}
+    className="flex items-center gap-4 rounded-xl bg-white px-4 py-3 ring-1 ring-slate-200 shadow-sm"
+  >
+    <span className="text-2xl">{icon}</span>
+    <div className="min-w-0 flex-1">
+      <div className="text-sm font-semibold text-slate-800">{title}</div>
+      <div className="text-xs text-slate-500 truncate">{desc}</div>
+    </div>
+    <span className="text-slate-400 text-lg">›</span>
+  </Link>
+);
 
 const StatusPill = ({ status }: { status: string }) => {
   const map: Record<string, string> = {

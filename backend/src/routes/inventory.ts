@@ -42,6 +42,122 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
     });
   });
 
+  // GET /inventory/locations?q= — find products/variants and every bin holding stock
+  app.get("/inventory/locations", { preHandler: [app.authenticate] }, async (req) => {
+    const q = ((req.query as Record<string, string>).q ?? "").trim();
+    // Empty query = return all products that have bin stock
+    const where = q.length > 0 ? {
+      OR: [
+        { sku: { contains: q } },
+        { name: { contains: q } },
+        { barcode: { contains: q } },
+        { variants: { some: { sku: { contains: q } } } },
+        { variants: { some: { barcode: { contains: q } } } },
+      ],
+    } : {};
+    const products = await db.product.findMany({
+      where,
+      take: 100,
+      orderBy: { sku: "asc" },
+      select: {
+        id: true,
+        sku: true,
+        name: true,
+        uom: true,
+        stockOnHand: true,
+        variants: {
+          select: {
+            id: true,
+            sku: true,
+            barcode: true,
+            size: true,
+            stockOnHand: true,
+            packSize: true,
+            uom: true,
+          },
+        },
+      },
+    });
+
+    const productIds = products.map((p) => p.id);
+    const allBins =
+      productIds.length === 0
+        ? []
+        : await db.bin.findMany({
+            where: { productId: { in: productIds }, qty: { gt: 0 } },
+            select: {
+              id: true,
+              productId: true,
+              qty: true,
+              reservedQty: true,
+              zone: true,
+              shelf: true,
+              bin: true,
+              warehouseId: true,
+              warehouse: { select: { id: true, code: true, name: true, kind: true } },
+            },
+            orderBy: [
+              { productId: "asc" },
+              { warehouse: { code: "asc" } },
+              { zone: "asc" },
+              { shelf: "asc" },
+              { bin: "asc" },
+            ],
+          });
+
+    const binsByProduct = new Map<string, typeof allBins>();
+    for (const b of allBins) {
+      if (!b.productId) continue;
+      const list = binsByProduct.get(b.productId) ?? [];
+      list.push(b);
+      binsByProduct.set(b.productId, list);
+    }
+
+    const matches = products.map((p) => {
+      const bins = binsByProduct.get(p.id) ?? [];
+      const binTotal = bins.reduce((s, b) => s + b.qty, 0);
+      const binFree = bins.reduce((s, b) => s + (b.qty - b.reservedQty), 0);
+      const matchedVariant = p.variants.find(
+        (v) => v.sku.includes(q) || (v.barcode && v.barcode.includes(q))
+      ) ?? null;
+      return {
+        productId: p.id,
+        sku: p.sku,
+        name: p.name,
+        uom: p.uom,
+        counterOnHand: p.stockOnHand,
+        binTotal,
+        binFree,
+        matchedVariant: matchedVariant
+          ? {
+              id: matchedVariant.id,
+              sku: matchedVariant.sku,
+              label: [matchedVariant.size, matchedVariant.uom].filter(Boolean).join(" · "),
+              stockOnHand: matchedVariant.stockOnHand,
+              packSize: matchedVariant.packSize,
+            }
+          : null,
+        bins: bins.map((b) => ({
+          binId: b.id,
+          warehouseId: b.warehouseId,
+          warehouseCode: b.warehouse.code,
+          warehouseName: b.warehouse.name,
+          warehouseKind: b.warehouse.kind,
+          location: `${b.zone}/${b.shelf}/${b.bin}`,
+          zone: b.zone,
+          shelf: b.shelf,
+          bin: b.bin,
+          qty: b.qty,
+          reserved: b.reservedQty,
+          free: b.qty - b.reservedQty,
+        })),
+      };
+    });
+
+    // Only return products that actually have bins with stock
+    return { matches: matches.filter((m) => m.bins.length > 0) };
+  });
+
   app.get("/valuation", async () => {
     const rows = await db.product.findMany({
       orderBy: { sku: "asc" },

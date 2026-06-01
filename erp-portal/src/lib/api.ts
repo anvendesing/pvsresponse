@@ -299,6 +299,59 @@ export interface WarehouseInput {
 // Putaway rules
 // =====================================================================
 
+export interface ProductBinStockRow {
+  binId: string;
+  warehouseId: string;
+  warehouse: string;
+  warehouseName: string;
+  location: string;
+  zone: string;
+  shelf: string;
+  bin: string;
+  qty: number;
+  reserved: number;
+  free: number;
+}
+
+export interface ProductBinStockResult {
+  total: number;
+  free: number;
+  bins: ProductBinStockRow[];
+}
+
+export interface InventoryLocationBinRow {
+  binId: string;
+  warehouseId: string;
+  warehouseCode: string;
+  warehouseName: string;
+  warehouseKind: string;
+  location: string;
+  zone: string;
+  shelf: string;
+  bin: string;
+  qty: number;
+  reserved: number;
+  free: number;
+}
+
+export interface InventoryLocationMatch {
+  productId: string;
+  sku: string;
+  name: string;
+  uom: string;
+  counterOnHand: number;
+  binTotal: number;
+  binFree: number;
+  matchedVariant: {
+    id: string;
+    sku: string;
+    label: string;
+    stockOnHand: number;
+    packSize: number;
+  } | null;
+  bins: InventoryLocationBinRow[];
+}
+
 export interface PutawayRuleRow {
   id: string;
   productId: string;
@@ -723,6 +776,18 @@ export interface MoInventoryTrail {
     txnTypes: string[];
     lastDate: string;
   }>;
+  byproductsReleased: Array<{
+    productId: string;
+    sku: string;
+    name: string;
+    warehouseCode: string;
+    warehouseName: string;
+    warehouseKind: string;
+    binPath: string;
+    qty: number;
+    txnTypes: string[];
+    lastDate: string;
+  }>;
   transfers: Array<{
     id: string;
     transferNo: string;
@@ -795,6 +860,21 @@ const adaptBom = (r: Raw): Bom => {
         uom: item.uom as string,
         scrapPct: item.scrapPct as number,
         hasSubAssembly,
+      };
+    }),
+    byproducts: ((r.byproducts as Raw[]) ?? []).map((bp) => {
+      const pp = bp.product as Raw | null;
+      const pv = bp.variant as Raw | null;
+      return {
+        id: bp.id as string,
+        productId: (bp.productId as string) ?? (pp?.id as string),
+        variantId: (bp.variantId as string | null) ?? null,
+        sku: (pp?.sku as string) ?? "",
+        name: (pp?.name as string) ?? "",
+        qty: bp.qty as number,
+        uom: bp.uom as string,
+        costShare: (bp.costShare as number) ?? 0,
+        variantSku: (pv?.sku as string) ?? null,
       };
     }),
   };
@@ -1653,8 +1733,14 @@ export const api = {
     }
     return res.json();
   },
-  // Stock reconciliation
-  productBinStock: (productId: string): Promise<{ total: number; free: number; bins: { warehouse: string; location: string; qty: number; reserved: number; free: number }[] }> =>
+  // Stock reconciliation & location trace
+  inventoryLocations: async (q: string): Promise<InventoryLocationMatch[]> => {
+    const r = await fetcher<{ matches: InventoryLocationMatch[] }>("/inventory/locations", {
+      query: { q },
+    });
+    return r.matches ?? [];
+  },
+  productBinStock: (productId: string): Promise<ProductBinStockResult> =>
     fetcher(`/products/${productId}/bin-stock`),
   syncProductStock: (productId: string): Promise<{ before: number; after: number; delta: number; binTotal: number }> =>
     fetcher(`/products/${productId}/sync-stock`, { method: "POST" }),
@@ -1926,6 +2012,13 @@ export const api = {
     defaultWorkCenterId?: string | null;
     defaultMachineId?: string | null;
     items?: Array<{ productId: string; qty: number; uom: string; scrapPct?: number }>;
+    byproducts?: Array<{
+      productId: string;
+      variantId?: string | null;
+      qty: number;
+      uom: string;
+      costShare?: number;
+    }>;
   }) => fetcher<Raw>("/boms", { method: "POST", body }),
   updateBom: (
     id: string,
@@ -1936,6 +2029,13 @@ export const api = {
       defaultWorkCenterId?: string | null;
       defaultMachineId?: string | null;
       items?: Array<{ productId: string; qty: number; uom: string; scrapPct?: number }>;
+      byproducts?: Array<{
+        productId: string;
+        variantId?: string | null;
+        qty: number;
+        uom: string;
+        costShare?: number;
+      }>;
     }
   ) => fetcher<Raw>(`/boms/${id}`, { method: "PATCH", body }),
   // Clone an existing BOM. Omit `variantId` to keep the source

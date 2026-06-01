@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { useNavigate } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import {
   ArrowRightLeft,
   CheckCircle2,
@@ -230,6 +230,7 @@ const deepMatches = (n: TreeNode, q: string): boolean => {
 
 export const Warehouse = () => {
   const nav = useNavigate();
+  const location = useLocation();
   const liveBins = useApi(() => api.warehousesAndBins(), []);
   const liveWarehouses = useApi(() => api.warehouses(), []);
   const bins = liveBins.data ?? [];
@@ -240,6 +241,18 @@ export const Warehouse = () => {
   );
   const [selected, setSelected] = useState<Bin | undefined>(undefined);
   const [filter, setFilter] = useState("");
+
+  // From Inventory → Locations "Map" button
+  useEffect(() => {
+    const state = location.state as { binFilter?: string } | null;
+    if (state?.binFilter) {
+      setFilter(state.binFilter);
+      const match = bins.find(
+        (b) => `${b.zone}/${b.shelf}/${b.bin}` === state.binFilter
+      );
+      if (match) setSelected(match);
+    }
+  }, [location.state, bins]);
 
   // Bin layout (add/edit/delete) modal & banners.
   const [layoutMode, setLayoutMode] = useState<"single" | "bulk" | null>(null);

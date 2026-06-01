@@ -215,6 +215,7 @@ model Product {
   updatedAt     DateTime @updatedAt
   bins          Bin[]
   bomItems      BomItem[]
+  bomByproducts BomByproduct[]
   bomsAsParent  Bom[]
   ledger        StockLedger[]
   poItems       PurchaseOrderItem[]
@@ -276,6 +277,7 @@ model ProductVariant {
   packingSlipItems    PackingSlipItem[]
   priceListItems      PriceListItem[]
   boms                Bom[]
+  bomByproducts       BomByproduct[]
   returnItems         CustomerReturnItem[]
   creditNoteItems     CreditNoteItem[]
   putawayRules        PutawayRule[]
@@ -660,6 +662,7 @@ model Bom {
   defaultWorkCenter WorkCenter? @relation(fields: [defaultWorkCenterId], references: [id])
   defaultMachine    Machine?    @relation(fields: [defaultMachineId], references: [id])
   items       BomItem[]
+  byproducts  BomByproduct[]
   productionOrders ProductionOrder[]
   stockRules  StockRule[]
 
@@ -680,6 +683,24 @@ model BomItem {
   product   Product @relation(fields: [productId], references: [id])
 
   @@index([bomId])
+}
+
+// Secondary outputs produced alongside the main finished good when an
+// MO completes (by-products / co-products). Not consumed at issue.
+model BomByproduct {
+  id        String  @id @default(cuid())
+  bomId     String
+  productId String
+  variantId String?
+  qty       Float
+  uom       String
+  costShare Float   @default(0)
+  bom       Bom     @relation(fields: [bomId], references: [id], onDelete: Cascade)
+  product   Product @relation(fields: [productId], references: [id])
+  variant   ProductVariant? @relation(fields: [variantId], references: [id])
+
+  @@index([bomId])
+  @@index([productId])
 }
 
 model ProductionOrder {

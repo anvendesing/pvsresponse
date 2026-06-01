@@ -51,6 +51,15 @@ export const MobilePack = () => {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [scanFor, setScanFor] = useState<string | null>(null);
+  const [online, setOnline] = useState(navigator.onLine);
+
+  useEffect(() => {
+    const onUp = () => setOnline(true);
+    const onDown = () => setOnline(false);
+    window.addEventListener("online", onUp);
+    window.addEventListener("offline", onDown);
+    return () => { window.removeEventListener("online", onUp); window.removeEventListener("offline", onDown); };
+  }, []);
   // Per-line transient state (qty + product code + reason).
   const [draft, setDraft] = useState<
     Record<string, { qty: number; productCode: string; reason: PackReason; remarks: string }>
@@ -62,10 +71,15 @@ export const MobilePack = () => {
   const refresh = useCallback(async () => {
     if (!id) return;
     try {
-      const result: PackingSlip = await fetch(
+      const resp = await fetch(
         `${import.meta.env.VITE_API_URL}/v1/packing-slips/${id}`,
         { headers: { Authorization: `Bearer ${auth.token()}` } }
-      ).then((r) => r.json());
+      );
+      if (!resp.ok) {
+        const body = await resp.json().catch(() => ({}));
+        throw new ApiError(resp.status, body?.error?.message ?? `${resp.status}`, body?.error);
+      }
+      const result: PackingSlip = await resp.json();
       setPs(result);
       // Initialise drafts.
       const init: Record<string, { qty: number; productCode: string; reason: PackReason; remarks: string }> = {};
@@ -128,10 +142,14 @@ export const MobilePack = () => {
 
   const finalisePack = async () => {
     if (!id) return;
+    if (!navigator.onLine) {
+      setError("You're offline. Reconnect and try again.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      await fetch(
+      const r = await fetch(
         `${import.meta.env.VITE_API_URL}/v1/packing-slips/${id}/pack`,
         {
           method: "POST",
@@ -141,12 +159,11 @@ export const MobilePack = () => {
           },
           body: "{}",
         }
-      ).then(async (r) => {
-        if (!r.ok) {
-          const body = await r.json().catch(() => ({}));
-          throw new ApiError(r.status, body?.error?.message ?? `${r.status}`, body?.error);
-        }
-      });
+      );
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new ApiError(r.status, body?.error?.message ?? `${r.status}`, body?.error);
+      }
       nav("/m/tasks", { replace: true });
     } catch (err) {
       setError((err as Error).message);
@@ -188,9 +205,24 @@ export const MobilePack = () => {
         </div>
       </div>
 
+      {!online && (
+        <div className="mb-3 rounded-xl bg-amber-50 px-4 py-2 text-sm text-amber-800 ring-1 ring-amber-200 flex items-center gap-2">
+          <span className="font-bold">Offline</span>
+          <span>Changes won't save until you reconnect.</span>
+        </div>
+      )}
+
       {error && (
-        <div className="mb-3 rounded-xl bg-red-50 px-4 py-2 text-sm text-red-700 ring-1 ring-red-200">
-          {error}
+        <div className="mb-3 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-red-200">
+          <div className="font-semibold">Error</div>
+          <div className="mt-0.5">{error}</div>
+          <button
+            type="button"
+            onClick={() => { setError(null); void refresh(); }}
+            className="mt-2 text-xs text-red-600 underline"
+          >
+            Retry
+          </button>
         </div>
       )}
 

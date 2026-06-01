@@ -50,7 +50,9 @@ const ROUTE_TABS: Record<string, Omit<WorkspaceTab, "pinned">> = {
   "/returns":       { id: "returns",       title: "Returns",       path: "/returns",       icon: "RotateCcw" },
   "/inventory":     { id: "inventory",     title: "Inventory",     path: "/inventory",     icon: "Boxes" },
   "/warehouse":     { id: "warehouse",     title: "Warehouse",     path: "/warehouse",     icon: "Warehouse" },
+  "/putaway-rules": { id: "putaway-rules", title: "Putaway rules", path: "/putaway-rules", icon: "MapPin" },
   "/manufacturing": { id: "manufacturing", title: "Manufacturing", path: "/manufacturing", icon: "Factory" },
+  "/manufacturing/boms": { id: "boms", title: "BOMs", path: "/manufacturing/boms", icon: "Network" },
   "/productivity":  { id: "productivity",  title: "Productivity",  path: "/productivity",  icon: "Users" },
   "/transport":     { id: "transport",     title: "Transport",     path: "/transport",     icon: "Truck" },
   "/billing":       { id: "billing",       title: "Billing",       path: "/billing",       icon: "Receipt" },
@@ -117,7 +119,10 @@ export const WorkspaceProvider = ({ children }: { children: ReactNode }) => {
   // closed. We auto-open / auto-activate the matching tab on every route
   // change.
   useEffect(() => {
-    const match = ROUTE_TABS[location.pathname];
+    let match = ROUTE_TABS[location.pathname];
+    if (!match && location.pathname.startsWith("/manufacturing/boms")) {
+      match = ROUTE_TABS["/manufacturing/boms"];
+    }
     if (!match) return;
     setTabs((prev) => {
       const existing = prev.find((t) => t.id === match.id);

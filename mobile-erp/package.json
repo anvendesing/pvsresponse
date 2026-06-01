@@ -5,7 +5,9 @@
   "description": "NovaERP Warehouse — Capacitor wrapper around the /m/ PWA (picking, packing, stock correction).",
   "scripts": {
     "sync": "cap sync android",
-    "build:android": "cap sync android && cd android && gradlew.bat assembleDebug",
+    "build:web": "cd ../erp-portal && npm run build:mobile",
+    "build:android": "npm run build:web && cap sync android && cd android && gradlew.bat assembleDebug",
+    "build:android:only": "cap sync android && cd android && gradlew.bat assembleDebug",
     "open:android": "cap open android"
   },
   "dependencies": {

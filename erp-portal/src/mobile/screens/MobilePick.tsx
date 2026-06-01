@@ -36,6 +36,15 @@ export const MobilePick = () => {
   const [pl, setPl] = useState<PickList | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [online, setOnline] = useState(navigator.onLine);
+
+  useEffect(() => {
+    const onUp = () => setOnline(true);
+    const onDown = () => setOnline(false);
+    window.addEventListener("online", onUp);
+    window.addEventListener("offline", onDown);
+    return () => { window.removeEventListener("online", onUp); window.removeEventListener("offline", onDown); };
+  }, []);
   // Item ids the backend told us are stale (qtyPicked > 0 but the
   // variant has since been drained by another in-flight pick). Set
   // when /complete returns code=pick_blocked. Resolved by tapping
@@ -46,11 +55,15 @@ export const MobilePick = () => {
   const refresh = useCallback(async () => {
     if (!id) return;
     try {
-      const result = await fetch(
+      const r = await fetch(
         `${import.meta.env.VITE_API_URL}/v1/pick-lists/${id}`,
         { headers: { Authorization: `Bearer ${auth.token()}` } }
-      ).then((r) => r.json());
-      setPl(result as PickList);
+      );
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new ApiError(r.status, body?.error?.message ?? `${r.status}`, body?.error);
+      }
+      setPl(await r.json() as PickList);
     } catch (err) {
       setError((err as Error).message);
     }
@@ -75,11 +88,15 @@ export const MobilePick = () => {
 
   const complete = async () => {
     if (!id) return;
+    if (!navigator.onLine) {
+      setError("You're offline. Reconnect and try again.");
+      return;
+    }
     setBusy(true);
     setError(null);
     setStaleItemIds([]);
     try {
-      await fetch(
+      const r = await fetch(
         `${import.meta.env.VITE_API_URL}/v1/pick-lists/${id}/complete`,
         {
           method: "POST",
@@ -89,16 +106,11 @@ export const MobilePick = () => {
           },
           body: "{}",
         }
-      ).then(async (r) => {
-        if (!r.ok) {
-          const body = await r.json().catch(() => ({}));
-          throw new ApiError(
-            r.status,
-            body?.error?.message ?? `${r.status}`,
-            body?.error
-          );
-        }
-      });
+      );
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new ApiError(r.status, body?.error?.message ?? `${r.status}`, body?.error);
+      }
       nav("/m/tasks", { replace: true });
     } catch (err) {
       const apiErr = err as ApiError;
@@ -190,9 +202,24 @@ export const MobilePick = () => {
         </div>
       </div>
 
+      {!online && (
+        <div className="mb-3 rounded-xl bg-amber-50 px-4 py-2 text-sm text-amber-800 ring-1 ring-amber-200 flex items-center gap-2">
+          <span className="font-bold">Offline</span>
+          <span>Changes won't save until you reconnect.</span>
+        </div>
+      )}
+
       {error && (
-        <div className="mb-3 rounded-xl bg-red-50 px-4 py-2 text-sm text-red-700 ring-1 ring-red-200">
-          {error}
+        <div className="mb-3 rounded-xl bg-red-50 px-4 py-3 text-sm text-red-700 ring-1 ring-red-200">
+          <div className="font-semibold">Error</div>
+          <div className="mt-0.5">{error}</div>
+          <button
+            type="button"
+            onClick={() => { setError(null); void refresh(); }}
+            className="mt-2 text-xs text-red-600 underline"
+          >
+            Retry
+          </button>
         </div>
       )}
 

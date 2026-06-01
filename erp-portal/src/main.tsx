@@ -1,23 +1,53 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
-import App from "./App";
 import "./styles/globals.css";
-import { registerMobilePwa, watchInstallPrompt } from "./pwa/install";
 import { BrandProvider } from "./hooks/useBrand";
 
-// Register the warehouse PWA shell (only attaches under /m/*) and
-// start watching for the install prompt so the mobile UI can offer
-// "Add to Home Screen" at the right moment.
-registerMobilePwa();
-watchInstallPrompt();
+// =====================================================================
+// Build-mode-aware entry
+// =====================================================================
+// The Capacitor warehouse APK is built with `vite build --mode mobile`.
+// `import.meta.env.MODE` is replaced at build time with the literal
+// string "mobile" / "production", so the static comparison below is a
+// constant for Rollup — the unreachable branch (and the dynamic import
+// inside it) is tree-shaken out of the final bundle.
+//
+// Result: the warehouse APK chunk excludes App.tsx and all of its
+// desktop imports (Dashboard, Inventory, Manufacturing, recharts,
+// Shell, CommandPalette, WorkspaceProvider, etc.), shrinking the APK
+// from ~18 MB down to roughly 6-8 MB.
+//
+// To debug locally: run `vite build --mode mobile` and inspect
+// dist/assets — only MobileApp + its mobile/* dependencies should
+// appear.
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <BrowserRouter>
-      <BrandProvider>
-        <App />
-      </BrandProvider>
-    </BrowserRouter>
-  </React.StrictMode>
-);
+const MOBILE_BUILD = import.meta.env.MODE === "mobile";
+
+const mount = (children: React.ReactElement) => {
+  ReactDOM.createRoot(document.getElementById("root")!).render(
+    <React.StrictMode>
+      <BrowserRouter>
+        <BrandProvider>{children}</BrandProvider>
+      </BrowserRouter>
+    </React.StrictMode>
+  );
+};
+
+if (MOBILE_BUILD) {
+  // Warehouse handheld APK: only /m/* screens. Skip the PWA install
+  // prompt watcher (the APK is the install) and DO NOT statically
+  // import pwa/install.ts so it's tree-shaken from the mobile bundle.
+  import("./MobileApp").then(({ MobileApp }) => mount(<MobileApp />));
+} else {
+  // Full ERP portal (web). Register the warehouse PWA shell for the
+  // /m/* routes served from the browser, and watch for the install
+  // prompt so the mobile UI can offer "Add to Home Screen".
+  Promise.all([import("./pwa/install"), import("./App")]).then(
+    ([{ registerMobilePwa, watchInstallPrompt }, { default: App }]) => {
+      registerMobilePwa();
+      watchInstallPrompt();
+      mount(<App />);
+    }
+  );
+}

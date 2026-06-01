@@ -24,7 +24,7 @@ import { z } from "zod";
 import { db } from "../db.js";
 import { recordChange } from "../sync/log.js";
 import { bomTree, explodeBom, whereUsed } from "../lib/bom.js";
-import { normalizeUomCode } from "../lib/uom.js";
+import { convertUom, normalizeUomCode, UOMS } from "../lib/uom.js";
 import { pickBestBin, resolvePutawayDestination } from "../lib/putaway.js";
 import { checkStockRules } from "../lib/stock-rules.js";
 
@@ -110,6 +110,121 @@ const validateAndCanonicalizeBomItems = async (
   });
 };
 
+type BomByproductDraft = {
+  productId: string;
+  variantId: string | null;
+  qty: number;
+  uom: string;
+  costShare: number;
+};
+
+const validateAndCanonicalizeBomByproducts = async (
+  byproducts: BomByproductDraft[],
+  parentProductId: string
+): Promise<BomByproductDraft[]> => {
+  if (byproducts.length === 0) return byproducts;
+  const costTotal = byproducts.reduce((s, b) => s + b.costShare, 0);
+  if (costTotal > 100.0001) {
+    throw Object.assign(
+      new Error(`Total cost share for released components is ${costTotal}% (max 100%).`),
+      { statusCode: 400, code: "cost_share_exceeded" }
+    );
+  }
+  const productIds = [...new Set(byproducts.map((b) => b.productId))];
+  const products = await db.product.findMany({
+    where: { id: { in: productIds } },
+    select: { id: true, sku: true, uom: true },
+  });
+  const prodById = new Map(products.map((p) => [p.id, p]));
+  const allUoms = await db.uom.findMany({
+    select: { code: true, categoryId: true, category: { select: { code: true } } },
+  });
+  const catByCode = new Map(allUoms.map((u) => [u.code, u.category.code]));
+
+  const out: BomByproductDraft[] = [];
+  for (const bp of byproducts) {
+    if (bp.productId === parentProductId) {
+      throw Object.assign(
+        new Error(
+          "The main finished product cannot also be a released by-product on the same BOM."
+        ),
+        { statusCode: 400, code: "byproduct_same_as_parent" }
+      );
+    }
+    const canonical = normalizeUomCode(bp.uom);
+    if (!canonical) {
+      throw Object.assign(
+        new Error(`Released component uom "${bp.uom}" is not a recognised unit.`),
+        { statusCode: 400, code: "uom_unknown" }
+      );
+    }
+    const prod = prodById.get(bp.productId);
+    if (!prod) {
+      throw Object.assign(
+        new Error(`Released product ${bp.productId} not found.`),
+        { statusCode: 404, code: "byproduct_not_found" }
+      );
+    }
+    if (bp.variantId) {
+      const variant = await db.productVariant.findUnique({
+        where: { id: bp.variantId },
+        select: { productId: true },
+      });
+      if (!variant) {
+        throw Object.assign(new Error("Released variant not found."), {
+          statusCode: 404,
+          code: "variant_not_found",
+        });
+      }
+      if (variant.productId !== bp.productId) {
+        throw Object.assign(
+          new Error("Released variant does not belong to the released product."),
+          { statusCode: 400, code: "variant_product_mismatch" }
+        );
+      }
+    }
+    const productUomCanonical = normalizeUomCode(prod.uom) ?? prod.uom;
+    const itemCat = catByCode.get(canonical);
+    const productCat = catByCode.get(productUomCanonical);
+    if (itemCat && productCat && itemCat !== productCat) {
+      throw Object.assign(
+        new Error(
+          `Released product ${prod.sku} uses ${productUomCanonical} (${productCat}) but the line uses ${canonical} (${itemCat}).`
+        ),
+        { statusCode: 400, code: "uom_category_mismatch" }
+      );
+    }
+    out.push({
+      ...bp,
+      uom: canonical,
+      variantId: bp.variantId ?? null,
+    });
+  }
+  return out;
+};
+
+const bomDetailInclude = {
+  product: { select: { id: true, sku: true, name: true, type: true, uom: true } },
+  variant: { select: { id: true, sku: true, size: true } },
+  defaultWorkCenter: { select: { id: true, code: true, name: true } },
+  defaultMachine: { select: { id: true, code: true, name: true } },
+  items: {
+    include: {
+      product: {
+        select: { id: true, sku: true, name: true, uom: true, type: true },
+      },
+    },
+  },
+  byproducts: {
+    include: {
+      product: {
+        select: { id: true, sku: true, name: true, uom: true, type: true },
+      },
+      variant: { select: { id: true, sku: true, size: true } },
+    },
+  },
+} as const;
+
 // ----------------------------------------------------------------
 // Schemas
 
@@ -118,6 +233,14 @@ const bomItemInput = z.object({
   qty: z.number().positive(),
   uom: z.string().min(1).max(20),
   scrapPct: z.number().min(0).max(100).default(0),
+});
+
+const bomByproductInput = z.object({
+  productId: z.string().min(1),
+  variantId: z.string().min(1).nullable().optional(),
+  qty: z.number().positive(),
+  uom: z.string().min(1).max(20),
+  costShare: z.number().min(0).max(100).default(0),
 });
 
 const bomCreate = z.object({
@@ -135,6 +258,7 @@ const bomCreate = z.object({
   defaultWorkCenterId: z.string().min(1).nullable().optional(),
   defaultMachineId: z.string().min(1).nullable().optional(),
   items: z.array(bomItemInput).default([]),
+  byproducts: z.array(bomByproductInput).default([]),
 });
 
 const bomUpdate = z.object({
@@ -146,6 +270,7 @@ const bomUpdate = z.object({
   // Replace-all semantics: if items is provided, replace the entire
   // component list. Omit items to leave them untouched.
   items: z.array(bomItemInput).optional(),
+  byproducts: z.array(bomByproductInput).optional(),
   // variantId is intentionally NOT updateable here - cloning to a
   // different variant must go through POST /boms/:id/clone so the
   // copy keeps its own audit trail and you can tweak items freely
@@ -657,6 +782,14 @@ export const mfgRoutes = async (app: FastifyInstance) => {
             },
           },
         },
+        byproducts: {
+          include: {
+            product: {
+              select: { id: true, sku: true, name: true, uom: true, type: true },
+            },
+            variant: { select: { id: true, sku: true, size: true } },
+          },
+        },
       },
       orderBy: { createdAt: "desc" },
     });
@@ -666,19 +799,7 @@ export const mfgRoutes = async (app: FastifyInstance) => {
     const id = (req.params as { id: string }).id;
     const bom = await db.bom.findUnique({
       where: { id },
-      include: {
-        product: { select: { id: true, sku: true, name: true, type: true, uom: true } },
-        variant: { select: { id: true, sku: true, size: true } },
-        defaultWorkCenter: { select: { id: true, code: true, name: true } },
-        defaultMachine: { select: { id: true, code: true, name: true } },
-        items: {
-          include: {
-            product: {
-              select: { id: true, sku: true, name: true, uom: true, type: true },
-            },
-          },
-        },
-      },
+      include: bomDetailInclude,
     });
     if (!bom) return reply.code(404).send({ error: { code: "not_found" } });
     return bom;
@@ -792,8 +913,19 @@ export const mfgRoutes = async (app: FastifyInstance) => {
     // Canonicalize every component's uom and reject cross-category
     // mismatches before we persist anything.
     let canonicalItems: BomItemDraft[];
+    let canonicalByproducts: BomByproductDraft[];
     try {
       canonicalItems = await validateAndCanonicalizeBomItems(body.items);
+      canonicalByproducts = await validateAndCanonicalizeBomByproducts(
+        body.byproducts.map((b) => ({
+          productId: b.productId,
+          variantId: b.variantId ?? null,
+          qty: b.qty,
+          uom: b.uom,
+          costShare: b.costShare,
+        })),
+        body.productId
+      );
     } catch (e) {
       const err = e as Error & { statusCode?: number; code?: string };
       return reply.code(err.statusCode ?? 400).send({
@@ -832,20 +964,17 @@ export const mfgRoutes = async (app: FastifyInstance) => {
         defaultWorkCenterId: body.defaultWorkCenterId ?? null,
         defaultMachineId: body.defaultMachineId ?? null,
         items: { create: canonicalItems },
-      },
-      include: {
-        product: { select: { sku: true, name: true, type: true, uom: true } },
-        variant: { select: { id: true, sku: true, size: true } },
-        defaultWorkCenter: { select: { id: true, code: true, name: true } },
-        defaultMachine: { select: { id: true, code: true, name: true } },
-        items: {
-          include: {
-            product: {
-              select: { id: true, sku: true, name: true, uom: true, type: true },
-            },
-          },
+        byproducts: {
+          create: canonicalByproducts.map((b) => ({
+            productId: b.productId,
+            variantId: b.variantId,
+            qty: b.qty,
+            uom: b.uom,
+            costShare: b.costShare,
+          })),
         },
       },
+      include: bomDetailInclude,
     });
     await recordChange("Bom", created.id, "insert", created, req.user.sub);
     return created;
@@ -950,7 +1079,7 @@ export const mfgRoutes = async (app: FastifyInstance) => {
       const body = bomClone.parse(req.body ?? {});
       const source = await db.bom.findUnique({
         where: { id },
-        include: { items: true },
+        include: { items: true, byproducts: true },
       });
       if (!source) return reply.code(404).send({ error: { code: "not_found" } });
 
@@ -1011,24 +1140,17 @@ export const mfgRoutes = async (app: FastifyInstance) => {
               scrapPct: it.scrapPct,
             })),
           },
-        },
-        include: {
-          product: { select: { sku: true, name: true, type: true, uom: true } },
-          variant: { select: { id: true, sku: true, size: true } },
-          items: {
-            include: {
-              product: {
-                select: {
-                  id: true,
-                  sku: true,
-                  name: true,
-                  uom: true,
-                  type: true,
-                },
-              },
-            },
+          byproducts: {
+            create: source.byproducts.map((bp) => ({
+              productId: bp.productId,
+              variantId: bp.variantId,
+              qty: bp.qty,
+              uom: bp.uom,
+              costShare: bp.costShare,
+            })),
           },
         },
+        include: bomDetailInclude,
       });
       await recordChange("Bom", clone.id, "insert", clone, req.user.sub);
       return clone;
@@ -1048,6 +1170,7 @@ export const mfgRoutes = async (app: FastifyInstance) => {
       const existing = await db.bom.findUnique({ where: { id } });
       if (!existing) return reply.code(404).send({ error: { code: "not_found" } });
       let canonicalItems: BomItemDraft[] | undefined;
+      let canonicalByproducts: BomByproductDraft[] | undefined;
       if (body.items) {
         for (const it of body.items) {
           // Same rule as POST /boms: variant-scoped BOMs may consume
@@ -1066,6 +1189,28 @@ export const mfgRoutes = async (app: FastifyInstance) => {
           return reply.code(err.statusCode ?? 400).send({
             error: {
               code: err.code ?? "uom_validation_failed",
+              message: err.message,
+            },
+          });
+        }
+      }
+      if (body.byproducts) {
+        try {
+          canonicalByproducts = await validateAndCanonicalizeBomByproducts(
+            body.byproducts.map((b) => ({
+              productId: b.productId,
+              variantId: b.variantId ?? null,
+              qty: b.qty,
+              uom: b.uom,
+              costShare: b.costShare,
+            })),
+            existing.productId
+          );
+        } catch (e) {
+          const err = e as Error & { statusCode?: number; code?: string };
+          return reply.code(err.statusCode ?? 400).send({
+            error: {
+              code: err.code ?? "byproduct_validation_failed",
               message: err.message,
             },
           });
@@ -1116,6 +1261,19 @@ export const mfgRoutes = async (app: FastifyInstance) => {
             data: canonicalItems.map((it) => ({ ...it, bomId: id })),
           });
         }
+        if (canonicalByproducts) {
+          await tx.bomByproduct.deleteMany({ where: { bomId: id } });
+          await tx.bomByproduct.createMany({
+            data: canonicalByproducts.map((bp) => ({
+              bomId: id,
+              productId: bp.productId,
+              variantId: bp.variantId,
+              qty: bp.qty,
+              uom: bp.uom,
+              costShare: bp.costShare,
+            })),
+          });
+        }
         return tx.bom.update({
           where: { id },
           data: {
@@ -1129,27 +1287,7 @@ export const mfgRoutes = async (app: FastifyInstance) => {
               defaultMachineId: body.defaultMachineId,
             }),
           },
-          include: {
-            product: {
-              select: { sku: true, name: true, type: true, uom: true },
-            },
-            variant: { select: { id: true, sku: true, size: true } },
-            defaultWorkCenter: { select: { id: true, code: true, name: true } },
-            defaultMachine: { select: { id: true, code: true, name: true } },
-            items: {
-              include: {
-                product: {
-                  select: {
-                    id: true,
-                    sku: true,
-                    name: true,
-                    uom: true,
-                    type: true,
-                  },
-                },
-              },
-            },
-          },
+          include: bomDetailInclude,
         });
       });
       await recordChange("Bom", id, "update", updated, req.user.sub);
@@ -1339,6 +1477,7 @@ export const mfgRoutes = async (app: FastifyInstance) => {
           bom: {
             include: {
               product: { select: { id: true, sku: true, name: true, uom: true } },
+              byproducts: { select: { productId: true } },
               defaultWorkCenter: {
                 include: {
                   productionLineWarehouse: {
@@ -1354,6 +1493,9 @@ export const mfgRoutes = async (app: FastifyInstance) => {
 
       const plWh = po.bom.defaultWorkCenter?.productionLineWarehouse ?? null;
       const fgProductId = po.bom.productId;
+      const byproductProductIds = new Set(
+        po.bom.byproducts.map((b) => b.productId)
+      );
 
       const ledger = await db.stockLedger.findMany({
         where: { ref: po.orderNo },
@@ -1386,12 +1528,18 @@ export const mfgRoutes = async (app: FastifyInstance) => {
 
       const materialsMap = new Map<string, AggRow>();
       const finishedMap = new Map<string, AggRow>();
+      const byproductsMap = new Map<string, AggRow>();
 
       for (const row of ledger) {
         const binPath = row.bin?.trim() || "—";
         const key = aggKey(row.productId, row.warehouseId, binPath);
-        const target =
-          row.productId === fgProductId && !isConsumption(row.txnType, row.qty)
+        const isBp =
+          byproductProductIds.has(row.productId) &&
+          !isConsumption(row.txnType, row.qty) &&
+          row.qty > 0;
+        const target = isBp
+          ? byproductsMap
+          : row.productId === fgProductId && !isConsumption(row.txnType, row.qty)
             ? finishedMap
             : isConsumption(row.txnType, row.qty)
               ? materialsMap
@@ -1471,6 +1619,7 @@ export const mfgRoutes = async (app: FastifyInstance) => {
           : null,
         materialsConsumed: toRows(materialsMap),
         finishedGoodsPosted: toRows(finishedMap),
+        byproductsReleased: toRows(byproductsMap),
         transfers: transfers.map((t) => ({
           id: t.id,
           transferNo: t.transferNo,
@@ -1493,6 +1642,7 @@ export const mfgRoutes = async (app: FastifyInstance) => {
         hasActivity:
           materialsMap.size > 0 ||
           finishedMap.size > 0 ||
+          byproductsMap.size > 0 ||
           transfers.length > 0,
       };
     }
@@ -2010,6 +2160,13 @@ export const mfgRoutes = async (app: FastifyInstance) => {
         include: {
           bom: {
             include: {
+              byproducts: {
+                include: {
+                  product: {
+                    select: { id: true, sku: true, name: true, uom: true },
+                  },
+                },
+              },
               defaultWorkCenter: {
                 include: {
                   productionLineWarehouse: { select: { id: true, code: true, kind: true } },
@@ -2119,14 +2276,111 @@ export const mfgRoutes = async (app: FastifyInstance) => {
         qty: finalQty,
       };
 
-      await db.product.update({
-        where: { id: po.bom.productId },
-        data: { stockOnHand: { increment: finalQty } },
-      });
+      // Variant-scoped BOMs (packaging): output is sellable variant units
+      // (e.g. 50 pc). Bulk parent was already consumed on issue — do not
+      // add the piece count to parent.stockOnHand (that caused "50 pc → 50 kg").
+      // Product-level BOMs: output is the parent product in parent UoM.
       if (po.bom.variantId) {
         await db.productVariant.update({
           where: { id: po.bom.variantId },
           data: { stockOnHand: { increment: finalQty } },
+        });
+      } else {
+        await db.product.update({
+          where: { id: po.bom.productId },
+          data: { stockOnHand: { increment: finalQty } },
+        });
+      }
+
+      const byproductPostings: Array<{
+        productId: string;
+        variantId: string | null;
+        sku: string;
+        name: string;
+        qty: number;
+        uom: string;
+        bin: string;
+        binId: string;
+      }> = [];
+
+      for (const bp of po.bom.byproducts) {
+        const batchQty = (bp.qty / po.bom.outputQty) * finalQty;
+        if (batchQty <= 0) continue;
+        let stockQty = batchQty;
+        try {
+          stockQty = convertUom(batchQty, bp.uom, bp.product.uom, UOMS);
+        } catch {
+          stockQty = batchQty;
+        }
+        const recvQty = Math.round(stockQty);
+        if (recvQty <= 0) continue;
+
+        const bpDest = await resolvePutawayDestination(
+          bp.productId,
+          bp.variantId,
+          landingWhId
+        );
+        let bpBin = bpDest?.binId
+          ? await db.bin.findUnique({ where: { id: bpDest.binId } })
+          : null;
+        if (!bpBin && bpDest?.warehouseId) {
+          bpBin = await pickBestBin(bpDest.warehouseId, bp.productId, {
+            allowEmptyBinFallback: !bpDest.fixedBin,
+          });
+        }
+        if (!bpBin) {
+          bpBin = await pickBinForReceive(
+            bpDest?.warehouseId ?? landingWhId,
+            bp.productId
+          );
+        }
+        if (!bpBin) {
+          return reply.code(409).send({
+            error: {
+              code: "no_byproduct_bin",
+              message: `No bin available to receive by-product ${bp.product.sku}. Configure putaway or add bin capacity.`,
+            },
+          });
+        }
+
+        await db.bin.update({
+          where: { id: bpBin.id },
+          data: {
+            qty: { increment: recvQty },
+            productId: bpBin.productId ?? bp.productId,
+          },
+        });
+        await db.stockLedger.create({
+          data: {
+            productId: bp.productId,
+            warehouseId: bpBin.warehouseId,
+            bin: `${bpBin.zone}/${bpBin.shelf}/${bpBin.bin}`,
+            txnType: "Production",
+            ref: po.orderNo,
+            qty: recvQty,
+            balance: bpBin.qty + recvQty,
+            date: new Date(),
+          },
+        });
+        await db.product.update({
+          where: { id: bp.productId },
+          data: { stockOnHand: { increment: recvQty } },
+        });
+        if (bp.variantId) {
+          await db.productVariant.update({
+            where: { id: bp.variantId },
+            data: { stockOnHand: { increment: recvQty } },
+          });
+        }
+        byproductPostings.push({
+          productId: bp.productId,
+          variantId: bp.variantId,
+          sku: bp.product.sku,
+          name: bp.product.name,
+          qty: recvQty,
+          uom: bp.product.uom,
+          bin: `${bpBin.zone}/${bpBin.shelf}/${bpBin.bin}`,
+          binId: bpBin.id,
         });
       }
 
@@ -2200,7 +2454,12 @@ export const mfgRoutes = async (app: FastifyInstance) => {
         }
       }
       await recordChange("ProductionOrder", id, "update", updated, req.user.sub);
-      return { productionOrder: updated, putaway, putawayTransferOrderId };
+      return {
+        productionOrder: updated,
+        putaway,
+        putawayTransferOrderId,
+        byproductPostings,
+      };
     }
   );
 

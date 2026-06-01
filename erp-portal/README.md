@@ -1,6 +1,6 @@
 # NovaERP — High-Performance Manufacturing ERP (Web Portal)
 
-A keyboard-first, scanner-first manufacturing ERP web portal built with React + TypeScript + Tailwind, applying the **Trust Blue Pay** design system. This is the React management portal slice of the multi-platform PRD (the full vision also includes Avalonia desktop + mobile and a Node.js backend).
+A keyboard-first, scanner-first manufacturing ERP web portal **and** warehouse mobile PWA built with React + TypeScript + Tailwind. Uses the **Trust Blue Pay** design system and is backed by a Fastify + Prisma API (`backend/`). The warehouse mobile app (`/m/*`) is packaged as a Capacitor Android APK (`mobile-erp/`).
 
 ## What's included
 
@@ -83,10 +83,30 @@ src/
     globals.css
 ```
 
-## Next steps (out of scope for this build)
+## Warehouse mobile build
 
-- **Avalonia Desktop / Mobile**: same tokens applied to a `.NET` app for warehouse/floor stations
-- **Node.js API + PostgreSQL + Redis** wired in place of mock data
-- **SQLite local cache + sync engine** with conflict resolution and delta sync
+The `/m/*` route subtree is the warehouse mobile PWA. It is packaged into an
+Android APK via `mobile-erp/` (Capacitor).
+
+```bash
+# 1. Set your LAN backend IP
+cp .env.mobile.example .env.mobile
+# edit .env.mobile → VITE_API_URL=http://<LAN-IP>:4000
+
+# 2. Build PWA + sync into Capacitor wrapper + compile debug APK
+cd ../mobile-erp
+npm run build:android
+
+# Or just refresh the www/ bundle without a full Gradle build:
+npm run build:mobile
+```
+
+Mobile screens: Picking, Packing, Transfers, GRN/Receiving, Cycle Count,
+Customer Returns, Scan Lookup, Task queue.
+
+## Next steps
+
+- **Postgres + Redis** for production (`DATABASE_URL` in `backend/.env`)
 - **CCAvenue** payment integration and **SMSIdea** SMS event hooks
-- **Auto-update** for desktop, **Android-first** mobile rollout
+- **iOS build** (requires Mac + Xcode; no `ios/` folder in Capacitor today)
+- **PWA push notifications** for task assignment

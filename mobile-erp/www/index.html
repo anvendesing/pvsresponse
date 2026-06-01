@@ -17,22 +17,9 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" crossorigin href="/assets/index-xDAGvseu.css">
-    <script>
-      // When the Capacitor WebView opens index.html, the URL is "/" (or
-      // index.html) - which would route us to the desktop dashboard
-      // login. We're a warehouse APK, so force the URL to /m/login
-      // BEFORE React Router boots. history.replaceState doesn't trigger
-      // a navigation, just updates the address so BrowserRouter reads
-      // the right initial location.
-      (function () {
-        var p = window.location.pathname || "/";
-        if (p === "/" || /\/index\.html$/.test(p)) {
-          history.replaceState({}, "", "/m/login");
-        }
-      })();
-    </script>
-    <script type="module" crossorigin src="/assets/index-BrVev0Cx.js"></script>
+    <script type="module" crossorigin src="/assets/index-BAhb-Rfz.js"></script>
+    <link rel="modulepreload" crossorigin href="/assets/vendor-react-B_Sejnuu.js">
+    <link rel="stylesheet" crossorigin href="/assets/index-CpLyBehc.css">
   </head>
   <body>
     <div id="root"></div>

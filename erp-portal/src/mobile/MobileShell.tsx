@@ -26,6 +26,7 @@ import { useDeviceWarehouse } from "./useDeviceWarehouse";
 const tabs = [
   { to: "/m/tasks", label: "Tasks", icon: ListIcon },
   { to: "/m/scan", label: "Scan", icon: ScanIcon },
+  { to: "/m/count", label: "Count", icon: CountIcon },
   { to: "/m/verify", label: "Verify", icon: VerifyIcon },
   { to: "/m/profile", label: "Profile", icon: UserIcon },
 ] as const;
@@ -118,7 +119,7 @@ export const MobileShell = () => {
       {/* Bottom tab nav */}
       {!onLoginRoute && (
         <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200 bg-white pb-[max(env(safe-area-inset-bottom),0.25rem)]">
-          <ul className="grid grid-cols-4">
+          <ul className="grid grid-cols-5">
             {tabs.map((t) => (
               <li key={t.to}>
                 <NavLink
@@ -186,6 +187,16 @@ function UserIcon(_: { active: boolean }) {
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="8" r="4" />
       <path d="M4 21c0-4 4-7 8-7s8 3 8 7" />
+    </svg>
+  );
+}
+function CountIcon(_: { active: boolean }) {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="7" height="7" rx="1" />
+      <rect x="14" y="3" width="7" height="7" rx="1" />
+      <rect x="3" y="14" width="7" height="7" rx="1" />
+      <path d="M14 17h7" /><path d="M17 14v7" />
     </svg>
   );
 }

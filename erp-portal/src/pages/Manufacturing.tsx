@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
   AlertTriangle,
   ArrowDownToLine,
@@ -11,6 +11,7 @@ import {
   Factory,
   MapPin,
   Network,
+  Package,
   PackageCheck,
   Pause,
   Play,
@@ -36,8 +37,6 @@ import { EmptyState } from "@/components/common/EmptyState";
 import type { Bom, ProductionOrder } from "@/data/types";
 import { cn } from "@/lib/cn";
 import { dd, num } from "@/lib/format";
-import { BomEditor } from "@/components/manufacturing/BomEditor";
-import { BomListPanel } from "@/components/manufacturing/BomListPanel";
 import { NewMoModal } from "@/components/manufacturing/NewMoModal";
 
 const statusTone = (s: ProductionOrder["status"]) => {
@@ -56,10 +55,10 @@ const statusTone = (s: ProductionOrder["status"]) => {
 };
 
 export const Manufacturing = () => {
+  const navigate = useNavigate();
   const liveMo = useApi(() => api.productionOrdersWithWO(), []);
   const liveBoms = useApi(() => api.boms(), []);
   const liveWorkers = useApi(() => api.workers(), []);
-  const liveProducts = useApi(() => api.products(), []);
   // Live per-WorkCenter rollup with machines + active orders. Drives
   // the right-rail "Production lines" panel; replaces the seeded mock
   // machine list that used to ship in this page.
@@ -69,17 +68,11 @@ export const Manufacturing = () => {
   const workOrders = liveMo.data?.workOrders ?? [];
   const boms = liveBoms.data ?? [];
   const workers = liveWorkers.data ?? [];
-  const products = liveProducts.data ?? [];
   const lines = liveLines.data?.lines ?? [];
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<"orders" | "productivity">("orders");
-  const [showBomList, setShowBomList] = useState(false);
   const [showNewMo, setShowNewMo] = useState(false);
-  const [bomEditing, setBomEditing] = useState<{
-    bom: Bom | null;
-    seedProductId?: string;
-  } | null>(null);
   const [okBanner, setOkBanner] = useState<string | null>(null);
   const [errBanner, setErrBanner] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -156,21 +149,111 @@ export const Manufacturing = () => {
     return Math.round((order.actualQty / order.plannedQty) * 100);
   }, [order]);
 
-  if (loading || errorObj || productionOrders.length === 0) {
+  const activeBoms = boms.filter((b) => b.active);
+  const isEmpty = !loading && !errorObj && productionOrders.length === 0;
+
+  const moToolbar = (
+    <Toolbar
+      left={<h2 className="text-h3 font-bold">Manufacturing</h2>}
+      right={
+        <>
+          <Button
+            variant="outline"
+            size="sm"
+            icon={<Network size={14} />}
+            onClick={() => navigate("/manufacturing/boms")}
+          >
+            Manage BOMs
+          </Button>
+          <Button
+            size="sm"
+            icon={<Plus size={14} />}
+            onClick={() => setShowNewMo(true)}
+            disabled={activeBoms.length === 0}
+            title={
+              activeBoms.length === 0
+                ? "Create an active BOM before starting a manufacturing order"
+                : undefined
+            }
+          >
+            New Order
+          </Button>
+        </>
+      }
+    />
+  );
+
+  const newMoModal = showNewMo ? (
+    <NewMoModal
+      boms={boms}
+      onClose={() => setShowNewMo(false)}
+      onCreated={(orderNo, productionOrderId) => {
+        setShowNewMo(false);
+        setSelectedId(productionOrderId);
+        setOkBanner(`MO ${orderNo} created.`);
+        void liveMo.refetch();
+      }}
+    />
+  ) : null;
+
+  if (loading || errorObj) {
     return (
-      <div className="h-full flex items-center justify-center">
-        <EmptyState
-          loading={loading}
-          error={errorObj}
-          empty={!loading && !errorObj && productionOrders.length === 0}
-          emptyTitle="No production orders"
-          emptyDescription="Create a Manufacturing Order or seed sample data via the backend."
-          onRetry={() => {
-            liveMo.refetch();
-            liveBoms.refetch();
-            liveWorkers.refetch();
-          }}
-        />
+      <div className="h-full flex flex-col">
+        {moToolbar}
+        <div className="flex-1 flex items-center justify-center">
+          <EmptyState
+            loading={loading}
+            error={errorObj}
+            onRetry={() => {
+              liveMo.refetch();
+              liveBoms.refetch();
+              liveWorkers.refetch();
+            }}
+          />
+        </div>
+        {newMoModal}
+      </div>
+    );
+  }
+
+  if (isEmpty) {
+    return (
+      <div className="h-full flex flex-col">
+        {moToolbar}
+        <div className="flex-1 flex items-center justify-center">
+          <EmptyState
+            empty
+            emptyTitle="No production orders"
+            emptyDescription={
+              activeBoms.length === 0
+                ? "You need at least one active BOM before you can create a manufacturing order."
+                : "Create your first manufacturing order from a BOM, or open New Order in the toolbar."
+            }
+            action={
+              <>
+                <Button
+                  size="sm"
+                  icon={<Plus size={14} />}
+                  onClick={() => setShowNewMo(true)}
+                  disabled={activeBoms.length === 0}
+                >
+                  New manufacturing order
+                </Button>
+                {activeBoms.length === 0 ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    icon={<Network size={14} />}
+                    onClick={() => navigate("/manufacturing/boms/new")}
+                  >
+                    Create BOM
+                  </Button>
+                ) : null}
+              </>
+            }
+          />
+        </div>
+        {newMoModal}
       </div>
     );
   }
@@ -331,7 +414,7 @@ export const Manufacturing = () => {
               variant="outline"
               size="sm"
               icon={<Network size={14} />}
-              onClick={() => setShowBomList(true)}
+              onClick={() => navigate("/manufacturing/boms")}
             >
               Manage BOMs
             </Button>
@@ -729,6 +812,40 @@ export const Manufacturing = () => {
                       )}
                     </div>
                   </div>
+                  {inventoryTrail.byproductsReleased.length > 0 && (
+                    <div className="px-4 py-3 border-t border-border">
+                      <div className="flex items-center gap-2 text-body-sm font-semibold text-ink mb-2">
+                        <Package size={16} className="text-primary shrink-0" />
+                        By-products released
+                      </div>
+                      <ul className="space-y-2 md:grid md:grid-cols-2 md:gap-3">
+                        {inventoryTrail.byproductsReleased.map((bp) => (
+                          <li
+                            key={`${bp.productId}-${bp.warehouseCode}-${bp.binPath}`}
+                            className="text-body-sm"
+                          >
+                            <span className="font-mono text-caption text-ink-muted">
+                              {bp.sku}
+                            </span>{" "}
+                            <span className="font-semibold">{bp.name}</span>
+                            <div className="text-caption text-primary mt-0.5 flex items-start gap-1 font-medium">
+                              <MapPin size={12} className="mt-0.5 shrink-0" />
+                              {locLabel(bp.warehouseCode, bp.warehouseKind, bp.binPath)}
+                            </div>
+                            <div className="text-caption tnum text-ink-muted">
+                              +{num(bp.qty)} · {bp.txnTypes.join(", ")}
+                            </div>
+                            <Link
+                              to={`/inventory?productId=${encodeURIComponent(bp.productId)}`}
+                              className="text-caption text-primary hover:underline mt-0.5 inline-block"
+                            >
+                              View in Inventory →
+                            </Link>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                   {inventoryTrail.transfers.length > 0 && (
                     <div className="px-4 py-3 bg-canvas">
                       <div className="text-caption font-semibold text-ink-muted uppercase tracking-wide mb-2">
@@ -871,23 +988,54 @@ export const Manufacturing = () => {
                   </div>
                 </div>
               )}
-              {requirements?.anyShortage && !requirements.allFullyIssued && (
-                <div className="px-4 py-2.5 bg-warning-soft border-b border-warning/30 flex items-start gap-2 text-body-sm text-[#8a6300]">
-                  <AlertTriangle size={14} className="mt-0.5 shrink-0" />
-                  <div>
-                    <span className="font-semibold">Stock shortage detected.</span>{" "}
-                    Shortage is what is still needed for this MO minus free bin qty (not full BOM vs bins after issue).
-                    <br />
-                    <strong>To resolve:</strong>{" "}
-                    {order.status === "planned" ? (
-                      <>
-                        use <strong>Release</strong> to create replenishment transfers, or{" "}
-                      </>
-                    ) : null}
-                    <strong>Inventory → Adjust</strong> on the short lines, then Refresh.
+              {requirements?.anyShortage && !requirements.allFullyIssued && (() => {
+                const topShort = requirements.lines
+                  .filter((l) => l.shortage > 0 && l.stillNeeded > 0)
+                  .sort((a, b) => b.shortage - a.shortage)[0];
+                return (
+                  <div className="px-4 py-2.5 bg-warning-soft border-b border-warning/30 flex items-start gap-3 text-body-sm text-[#8a6300]">
+                    <AlertTriangle size={14} className="mt-0.5 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <span className="font-semibold">Stock shortage detected.</span>{" "}
+                      Manufacturing uses <strong>In bins</strong> (physical bin qty), not the product counter alone.
+                      <br />
+                      <strong>To resolve:</strong> post a count correction for the short component (e.g. bulk{" "}
+                      <strong>AJWN</strong> in kg), then <strong>Refresh</strong> below.
+                      {order.status === "planned" && (
+                        <>
+                          {" "}
+                          Or use <strong>Release</strong> to pull from storage bins into the production line.
+                        </>
+                      )}
+                    </div>
+                    {topShort && (
+                      <div className="flex flex-col gap-1 shrink-0">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() =>
+                            navigate(
+                              `/inventory?adjust=1&from=mfg&mode=count&reason=${encodeURIComponent("Physical recount")}&productId=${encodeURIComponent(topShort.productId)}`
+                            )
+                          }
+                        >
+                          Count correction · {topShort.sku}
+                        </Button>
+                        <Button
+                          size="sm"
+                          onClick={() =>
+                            navigate(
+                              `/inventory?adjust=1&from=mfg&productId=${encodeURIComponent(topShort.productId)}&delta=${topShort.shortage}`
+                            )
+                          }
+                        >
+                          Add +{num(topShort.shortage, 2)} {topShort.uom}
+                        </Button>
+                      </div>
+                    )}
                   </div>
-                </div>
-              )}
+                );
+              })()}
               <div className="grid grid-cols-12 grid-header-cell text-caption">
                 <div className="col-span-2">SKU</div>
                 <div className="col-span-2">Component</div>
@@ -960,7 +1108,7 @@ export const Manufacturing = () => {
                             className="text-caption text-primary hover:underline whitespace-nowrap"
                             title="Open Inventory → Adjust with shortage qty prefilled"
                           >
-                            Adjust
+                            Add stock
                           </Link>
                         )}
                       </div>
@@ -1151,55 +1299,6 @@ export const Manufacturing = () => {
           )}
         </div>
       </div>
-
-      {showBomList && (
-        <BomListPanel
-          boms={boms}
-          products={products}
-          onClose={() => setShowBomList(false)}
-          onEdit={(b) => {
-            setBomEditing({ bom: b });
-            setShowBomList(false);
-          }}
-          onCreate={(seedProductId) => {
-            setBomEditing({ bom: null, seedProductId });
-            setShowBomList(false);
-          }}
-          onClone={async (b) => {
-            // Quick clone: bump revision, keep the same variant
-            // scope. The user can then tweak items in the editor or
-            // re-clone to other variants from inside it.
-            try {
-              const cloned = (await api.cloneBom(b.id)) as { id: string };
-              await liveBoms.refetch();
-              const fresh = await api.getBom(cloned.id);
-              setBomEditing({ bom: fresh });
-              setShowBomList(false);
-              setOkBanner(`Cloned BOM ${b.sku} - opened the new revision.`);
-            } catch (e) {
-              setErrBanner((e as Error).message);
-            }
-          }}
-          onChanged={() => {
-            void liveBoms.refetch();
-            setOkBanner("BOM updated.");
-          }}
-        />
-      )}
-
-      {bomEditing && (
-        <BomEditor
-          bom={bomEditing.bom}
-          seedProductId={bomEditing.seedProductId}
-          products={products}
-          onClose={() => setBomEditing(null)}
-          onSaved={(_id, message) => {
-            setBomEditing(null);
-            setOkBanner(message);
-            void liveBoms.refetch();
-          }}
-        />
-      )}
 
       {showNewMo && (
         <NewMoModal

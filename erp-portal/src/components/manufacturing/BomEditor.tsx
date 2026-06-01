@@ -17,8 +17,10 @@
 // what depends on this BOM before they break it.
 
 import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import {
   AlertTriangle,
+  ArrowLeft,
   Boxes,
   CheckCircle2,
   ChevronDown,
@@ -47,7 +49,7 @@ import {
   type WhereUsedRow,
 } from "@/lib/api";
 import { effectiveUom } from "@/data/types";
-import type { Bom, BomItem, Product } from "@/data/types";
+import type { Bom, BomByproductRow, BomItem, Product } from "@/data/types";
 import { cn } from "@/lib/cn";
 
 interface Props {
@@ -59,6 +61,8 @@ interface Props {
   // which variant this BOM applies to.
   seedVariantId?: string | null;
   products: Product[];
+  /** Full-page route vs centered modal overlay. */
+  variant?: "page" | "modal";
   onClose: () => void;
   onSaved: (bomId: string, message: string) => void;
 }
@@ -66,6 +70,7 @@ interface Props {
 // Working copy of the items list - mutable, validated client-side
 // before submit.
 type EditableItem = BomItem & { tempKey: string };
+type EditableByproduct = BomByproductRow & { tempKey: string };
 
 const fresh = (productId?: string, products?: Product[]): EditableItem => {
   const p = products?.find((x) => x.id === productId);
@@ -84,15 +89,34 @@ const fresh = (productId?: string, products?: Product[]): EditableItem => {
   };
 };
 
+const freshByproduct = (
+  productId?: string,
+  products?: Product[]
+): EditableByproduct => {
+  const p = products?.find((x) => x.id === productId);
+  return {
+    tempKey: Math.random().toString(36).slice(2),
+    productId,
+    variantId: null,
+    sku: p?.sku ?? "",
+    name: p?.name ?? "",
+    qty: 1,
+    uom: p?.uom ?? "pc",
+    costShare: 0,
+  };
+};
+
 export const BomEditor = ({
   bom,
   seedProductId,
   seedVariantId,
   products,
+  variant = "modal",
   onClose,
   onSaved,
 }: Props) => {
   const isNew = !bom;
+  const isPage = variant === "page";
 
   // Parent product - editable only when creating a new BOM. When
   // creating without a seed, prefer a product that has variants
@@ -219,6 +243,14 @@ export const BomEditor = ({
         tempKey: Math.random().toString(36).slice(2),
       }))
   );
+  const [byproducts, setByproducts] = useState<EditableByproduct[]>(
+    () =>
+      (bom?.byproducts ?? []).map((b) => ({
+        ...b,
+        tempKey: Math.random().toString(36).slice(2),
+      }))
+  );
+  const [bomTab, setBomTab] = useState<"consumed" | "released">("consumed");
 
   // Right-pane preview: which BOM are we visualising? When the root
   // BOM exists (edit mode) we always preview it. When the user clicks
@@ -236,6 +268,7 @@ export const BomEditor = ({
   const [search, setSearch] = useState("");
   const [pickerFor, setPickerFor] = useState<string | null>(null); // tempKey
   const [showAddRow, setShowAddRow] = useState(false);
+  const [showAddByproduct, setShowAddByproduct] = useState(false);
 
   // Load variant info whenever the parent product changes. Also
   // reset the selected variant scope when the user switches parent
@@ -368,6 +401,39 @@ export const BomEditor = ({
   const removeItem = (key: string) =>
     setItems((cur) => cur.filter((i) => i.tempKey !== key));
 
+  const addByproduct = (productId?: string) => {
+    setByproducts((cur) => [...cur, freshByproduct(productId, products)]);
+    setShowAddByproduct(false);
+  };
+
+  const updateByproduct = (key: string, patch: Partial<EditableByproduct>) => {
+    setByproducts((cur) =>
+      cur.map((b) => {
+        if (b.tempKey !== key) return b;
+        const next = { ...b, ...patch };
+        if (patch.productId) {
+          const p = products.find((x) => x.id === patch.productId);
+          if (p) {
+            next.sku = p.sku;
+            next.name = p.name;
+            next.uom = p.uom;
+            next.variantId = null;
+            next.variantSku = null;
+          }
+        }
+        return next;
+      })
+    );
+  };
+
+  const removeByproduct = (key: string) =>
+    setByproducts((cur) => cur.filter((b) => b.tempKey !== key));
+
+  const costShareTotal = useMemo(
+    () => byproducts.reduce((s, b) => s + (b.costShare ?? 0), 0),
+    [byproducts]
+  );
+
   const totalScrapWeighted = useMemo(() => {
     if (items.length === 0) return 0;
     return (
@@ -401,6 +467,28 @@ export const BomEditor = ({
       }
       if (it.productId) seen.add(it.productId);
     }
+    for (const bp of byproducts) {
+      if (!bp.productId) return "Pick a product for every released component.";
+      if (bp.productId === parentId) {
+        return "The main finished product cannot be a released by-product.";
+      }
+      if (!bp.qty || bp.qty <= 0) return `Qty must be > 0 for released ${bp.sku}.`;
+      if (!bp.uom) return `UoM is required for released ${bp.sku}.`;
+      if ((bp.costShare ?? 0) < 0 || (bp.costShare ?? 0) > 100) {
+        return `Cost share % out of range for ${bp.sku}.`;
+      }
+    }
+    const bpSeen = new Set<string>();
+    for (const bp of byproducts) {
+      const key = `${bp.productId}|${bp.variantId ?? ""}`;
+      if (bpSeen.has(key)) {
+        return `"${bp.sku}" appears twice in released components — merge the rows.`;
+      }
+      bpSeen.add(key);
+    }
+    if (costShareTotal > 100.0001) {
+      return `Total cost share is ${costShareTotal.toFixed(1)}% (max 100%).`;
+    }
     return null;
   };
 
@@ -422,6 +510,13 @@ export const BomEditor = ({
         qty: i.qty,
         uom: i.uom,
         scrapPct: i.scrapPct,
+      })),
+      byproducts: byproducts.map((b) => ({
+        productId: b.productId!,
+        variantId: b.variantId ?? null,
+        qty: b.qty,
+        uom: b.uom,
+        costShare: b.costShare ?? 0,
       })),
     };
     try {
@@ -489,19 +584,28 @@ export const BomEditor = ({
 
   // ---------------------------------------------------------------- render
 
-  return (
-    <div
-      className="fixed inset-0 z-[60] bg-ink/40 grid place-items-center"
-      onClick={onClose}
-    >
+  const editor = (
       <div
-        className="bg-surface w-[1100px] max-w-[95vw] h-[92vh] max-h-[92vh] rounded-lg elevation-3 overflow-hidden flex flex-col"
-        onClick={(e) => e.stopPropagation()}
+        className={cn(
+          "bg-surface overflow-hidden flex flex-col",
+          isPage
+            ? "h-full min-h-0 w-full"
+            : "w-[1100px] max-w-[95vw] h-[92vh] max-h-[92vh] rounded-lg elevation-3"
+        )}
       >
         {/* Header */}
-        <div className="px-5 py-3 border-b border-border flex items-center justify-between">
+        <div className="px-5 py-3 border-b border-border flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2 min-w-0">
-            <div className="h-9 w-9 grid place-items-center bg-primary-50 text-primary rounded-md">
+            {isPage && (
+              <Link
+                to="/manufacturing/boms"
+                className="h-9 w-9 grid place-items-center rounded-md text-ink-muted hover:bg-canvas shrink-0"
+                title="Back to BOM list"
+              >
+                <ArrowLeft size={18} />
+              </Link>
+            )}
+            <div className="h-9 w-9 grid place-items-center bg-primary-50 text-primary rounded-md shrink-0">
               <Network size={16} />
             </div>
             <div className="min-w-0">
@@ -534,15 +638,23 @@ export const BomEditor = ({
                 Clone…
               </Button>
             )}
-            <button
-              onClick={onClose}
-              className="h-9 w-9 grid place-items-center rounded-md text-ink-muted hover:bg-canvas"
-            >
-              <X size={18} />
-            </button>
+            {!isPage && (
+              <button
+                onClick={onClose}
+                className="h-9 w-9 grid place-items-center rounded-md text-ink-muted hover:bg-canvas"
+              >
+                <X size={18} />
+              </button>
+            )}
           </div>
         </div>
 
+        {/* Page mode: scroll settings + components; modal keeps flex split. */}
+        <div
+          className={cn(
+            isPage ? "flex-1 min-h-0 overflow-y-auto" : "flex-1 min-h-0 flex flex-col overflow-hidden"
+          )}
+        >
         {/* Variant scope strip.
             Always rendered in create mode so the concept is visible
             even before the user picks a variant-bearing parent. In
@@ -839,43 +951,127 @@ export const BomEditor = ({
         </div>
 
         {/* Body: split editor + preview */}
-        <div className="flex-1 grid grid-cols-12 min-h-0">
-          {/* Left: components */}
-          <div className="col-span-7 border-r border-border flex flex-col min-h-0">
+        <div
+          className={cn(
+            "grid grid-cols-12",
+            isPage ? "min-h-[22rem]" : "flex-1 min-h-0"
+          )}
+        >
+          {/* Left: consumed / released */}
+          <div
+            className={cn(
+              "col-span-7 border-r border-border flex flex-col",
+              !isPage && "min-h-0"
+            )}
+          >
+            <div className="px-4 py-2 border-b border-border flex items-center gap-2">
+              <button
+                type="button"
+                className={cn(
+                  "px-3 py-1.5 rounded-md text-body-sm font-semibold",
+                  bomTab === "consumed"
+                    ? "bg-primary text-white"
+                    : "text-ink-muted hover:bg-canvas"
+                )}
+                onClick={() => setBomTab("consumed")}
+              >
+                Consumed ({items.length})
+              </button>
+              <button
+                type="button"
+                className={cn(
+                  "px-3 py-1.5 rounded-md text-body-sm font-semibold",
+                  bomTab === "released"
+                    ? "bg-primary text-white"
+                    : "text-ink-muted hover:bg-canvas"
+                )}
+                onClick={() => setBomTab("released")}
+              >
+                Released ({byproducts.length})
+              </button>
+            </div>
             <div className="px-4 py-2 border-b border-border flex items-center justify-between">
               <div>
                 <div className="text-caption text-ink-muted uppercase font-semibold">
-                  Components ({items.length})
+                  {bomTab === "consumed"
+                    ? `Consumed components`
+                    : `Released (by-products)`}
                 </div>
                 <div className="text-caption text-ink-muted">
-                  Quantities entered for a batch of {num(outputQty)}{" "}
-                  {outputContext.uom}
+                  Per batch of {num(outputQty)} {outputContext.uom}
+                  {bomTab === "released" && byproducts.length > 0 && (
+                    <>
+                      {" "}
+                      · cost share{" "}
+                      <span
+                        className={cn(
+                          costShareTotal > 100 ? "text-danger font-semibold" : ""
+                        )}
+                      >
+                        {costShareTotal.toFixed(1)}%
+                      </span>
+                    </>
+                  )}
                 </div>
               </div>
-              <Button
-                size="sm"
-                variant="outline"
-                icon={<Plus size={14} />}
-                onClick={() => setShowAddRow(true)}
-              >
-                Add component
-              </Button>
+              {bomTab === "consumed" ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  icon={<Plus size={14} />}
+                  onClick={() => setShowAddRow(true)}
+                >
+                  Add component
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  icon={<Plus size={14} />}
+                  onClick={() => setShowAddByproduct(true)}
+                >
+                  Add released
+                </Button>
+              )}
             </div>
             {/* Two-area layout so the picker can grow to fill the
                 column when components list is short, instead of
                 being squeezed into a tiny strip below. */}
-            <div className="flex-1 min-h-0 flex flex-col">
+            <div
+              className={cn(
+                "flex flex-col",
+                !isPage && "flex-1 min-h-0"
+              )}
+            >
+              {bomTab === "released" && costShareTotal > 100 && (
+                <div className="mx-4 mt-2 px-3 py-2 rounded-md bg-danger/10 text-danger text-caption flex items-center gap-2">
+                  <AlertTriangle size={14} />
+                  Cost share total exceeds 100% — reduce shares before saving.
+                </div>
+              )}
               <div
                 className={cn(
-                  "overflow-y-auto",
-                  items.length === 0 ? "shrink-0" : "flex-1 min-h-0"
+                  isPage ? "" : "overflow-y-auto",
+                  !isPage &&
+                    ((bomTab === "consumed" ? items.length : byproducts.length) === 0
+                      ? "shrink-0"
+                      : "flex-1 min-h-0")
                 )}
               >
-                {items.length === 0 && !showAddRow ? (
+                {bomTab === "consumed" &&
+                items.length === 0 &&
+                !showAddRow ? (
                   <div className="p-8 text-center text-body-sm text-ink-muted">
                     No components yet. Click <strong>Add component</strong> to start.
                   </div>
-                ) : (
+                ) : bomTab === "released" &&
+                  byproducts.length === 0 &&
+                  !showAddByproduct ? (
+                  <div className="p-8 text-center text-body-sm text-ink-muted">
+                    No released components. Add by-products or co-products posted when
+                    the MO completes.
+                  </div>
+                ) : bomTab === "consumed" ? (
                   <div className="divide-y divide-border">
                     {items.map((it) => (
                       <ComponentRow
@@ -909,9 +1105,141 @@ export const BomEditor = ({
                       />
                     ))}
                   </div>
+                ) : (
+                  <div className="divide-y divide-border">
+                    {byproducts.map((bp) => {
+                      const bpProduct = products.find((p) => p.id === bp.productId);
+                      const variantOptions =
+                        bpProduct?.variants?.filter((v) => v.active) ?? [];
+                      return (
+                        <div
+                          key={bp.tempKey}
+                          className="px-4 py-3 grid grid-cols-12 gap-2 items-start"
+                        >
+                          <div className="col-span-5">
+                            <div className="text-body-sm font-semibold truncate">
+                              {bp.name || "Pick product"}
+                            </div>
+                            <div className="font-mono text-caption text-ink-muted">
+                              {bp.sku || "—"}
+                            </div>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="mt-1"
+                              onClick={() => setPickerFor(bp.tempKey)}
+                            >
+                              Change product
+                            </Button>
+                          </div>
+                          <div className="col-span-2">
+                            <label className="text-caption text-ink-muted">Qty</label>
+                            <Input
+                              size="sm"
+                              type="number"
+                              min={0}
+                              step="any"
+                              value={bp.qty}
+                              onChange={(e) =>
+                                updateByproduct(bp.tempKey, {
+                                  qty: parseFloat(e.target.value) || 0,
+                                })
+                              }
+                            />
+                          </div>
+                          <div className="col-span-2">
+                            <label className="text-caption text-ink-muted">UoM</label>
+                            <UomPicker
+                              value={bp.uom}
+                              onChange={(uom) => updateByproduct(bp.tempKey, { uom })}
+                            />
+                          </div>
+                          <div className="col-span-2">
+                            <label className="text-caption text-ink-muted">
+                              Cost %
+                            </label>
+                            <Input
+                              size="sm"
+                              type="number"
+                              min={0}
+                              max={100}
+                              step="0.1"
+                              value={bp.costShare}
+                              onChange={(e) =>
+                                updateByproduct(bp.tempKey, {
+                                  costShare: parseFloat(e.target.value) || 0,
+                                })
+                              }
+                            />
+                          </div>
+                          <div className="col-span-1 flex justify-end">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              icon={<Trash2 size={14} />}
+                              onClick={() => removeByproduct(bp.tempKey)}
+                              aria-label="Remove"
+                            />
+                          </div>
+                          {variantOptions.length > 0 && (
+                            <div className="col-span-12">
+                              <label className="text-caption text-ink-muted">
+                                Variant (optional)
+                              </label>
+                              <select
+                                className="mt-0.5 w-full rounded border border-border px-2 py-1.5 text-body-sm"
+                                value={bp.variantId ?? ""}
+                                onChange={(e) => {
+                                  const vid = e.target.value || null;
+                                  const v = variantOptions.find((x) => x.id === vid);
+                                  updateByproduct(bp.tempKey, {
+                                    variantId: vid,
+                                    variantSku: v?.sku ?? null,
+                                  });
+                                }}
+                              >
+                                <option value="">Any / product-level stock</option>
+                                {variantOptions.map((v) => (
+                                  <option key={v.id} value={v.id}>
+                                    {v.sku}
+                                    {v.size ? ` · ${v.size}` : ""}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+                          )}
+                          {pickerFor === bp.tempKey && (
+                            <div className="col-span-12 border-t border-border pt-2 space-y-2">
+                              <Input
+                                size="sm"
+                                iconLeft={<Search size={14} />}
+                                placeholder="Search by SKU or name…"
+                                value={search}
+                                onChange={(e) => setSearch(e.target.value)}
+                              />
+                              <ProductPickList
+                                products={products}
+                                search={search}
+                                excludeId={parentId}
+                                excludeIds={byproducts
+                                  .filter((x) => x.tempKey !== bp.tempKey)
+                                  .map((x) => x.productId)
+                                  .filter(Boolean) as string[]}
+                                onPick={(p) => {
+                                  updateByproduct(bp.tempKey, { productId: p.id });
+                                  setPickerFor(null);
+                                  setSearch("");
+                                }}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 )}
               </div>
-              {showAddRow && (
+              {showAddRow && bomTab === "consumed" && (
                 <div
                   className={cn(
                     "border-t border-border bg-canvas flex flex-col min-h-0",
@@ -947,7 +1275,13 @@ export const BomEditor = ({
                     <ProductPickList
                       products={products}
                       search={search}
-                      excludeId={parentId}
+                      excludeId={
+                        // For variant-level BOMs the parent product is a valid
+                        // consumed input (e.g. AJWN-100G-01 consumes 0.1 kg of
+                        // bulk AJWN). Only block self-reference on product-level
+                        // BOMs where it would be a true cycle.
+                        variantId ? undefined : parentId
+                      }
                       excludeIds={items
                         .map((i) => i.productId)
                         .filter(Boolean) as string[]}
@@ -960,11 +1294,65 @@ export const BomEditor = ({
                   </div>
                 </div>
               )}
+              {showAddByproduct && bomTab === "released" && (
+                <div
+                  className={cn(
+                    "border-t border-border bg-canvas flex flex-col min-h-0",
+                    byproducts.length === 0 ? "flex-1" : "max-h-[55%]"
+                  )}
+                >
+                  <div className="px-3 pt-3 pb-2 flex items-center gap-2 shrink-0">
+                    <div className="text-caption text-ink-muted uppercase font-semibold flex-1">
+                      Pick a product to add as released output
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setShowAddByproduct(false);
+                        setSearch("");
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                  <div className="px-3 pb-2 shrink-0">
+                    <Input
+                      size="sm"
+                      autoFocus
+                      iconLeft={<Search size={14} />}
+                      placeholder="Search by SKU or name…"
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                    />
+                  </div>
+                  <div className="flex-1 min-h-0 px-3 pb-3">
+                    <ProductPickList
+                      products={products}
+                      search={search}
+                      excludeId={parentId}
+                      excludeIds={byproducts
+                        .map((b) => b.productId)
+                        .filter(Boolean) as string[]}
+                      onPick={(p) => {
+                        addByproduct(p.id);
+                        setSearch("");
+                      }}
+                      fillHeight
+                    />
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
           {/* Right: live tree + where-used */}
-          <div className="col-span-5 flex flex-col min-h-0 bg-canvas">
+          <div
+            className={cn(
+              "col-span-5 flex flex-col bg-canvas",
+              !isPage && "min-h-0"
+            )}
+          >
             <div className="px-4 py-2 border-b border-border bg-surface flex items-center justify-between gap-3">
               <div className="min-w-0">
                 <div className="text-caption text-ink-muted uppercase font-semibold">
@@ -988,7 +1376,12 @@ export const BomEditor = ({
                 </span>
               </div>
             </div>
-            <div className="flex-1 min-h-0 overflow-y-auto p-3">
+            <div
+              className={cn(
+                "p-3",
+                isPage ? "min-h-[12rem]" : "flex-1 min-h-0 overflow-y-auto"
+              )}
+            >
               {!previewBomId ? (
                 <div className="text-body-sm text-ink-muted p-3 text-center">
                   Save the BOM to see the live multi-level explosion.
@@ -1032,9 +1425,10 @@ export const BomEditor = ({
             </div>
           </div>
         </div>
+        </div>
 
         {/* Footer */}
-        <div className="border-t border-border px-4 py-3 flex justify-end gap-2 bg-surface">
+        <div className="border-t border-border px-4 py-3 flex justify-end gap-2 bg-surface shrink-0">
           <Button variant="ghost" size="sm" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
@@ -1063,6 +1457,16 @@ export const BomEditor = ({
           />
         )}
       </div>
+  );
+
+  if (isPage) return editor;
+
+  return (
+    <div
+      className="fixed inset-0 z-[60] bg-ink/40 grid place-items-center"
+      onClick={onClose}
+    >
+      <div onClick={(e) => e.stopPropagation()}>{editor}</div>
     </div>
   );
 };

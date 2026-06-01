@@ -1,9 +1,10 @@
-// Side-panel that lists every BOM in the system grouped by parent
-// product type, with quick actions to edit or create. Opened from
-// the Manufacturing page toolbar via "Manage BOMs".
+// Lists every BOM grouped by product or type. Used as a full page at
+// /manufacturing/boms or historically as a drawer overlay.
 
 import { useMemo, useState } from "react";
+import { Link } from "react-router-dom";
 import {
+  ArrowLeft,
   Boxes,
   ChevronDown,
   ChevronRight,
@@ -25,6 +26,8 @@ import { cn } from "@/lib/cn";
 interface Props {
   boms: Bom[];
   products: Product[];
+  /** Full-page route vs legacy drawer overlay. */
+  variant?: "page" | "drawer";
   onClose: () => void;
   onEdit: (bom: Bom) => void;
   onCreate: (seedProductId?: string) => void;
@@ -56,12 +59,14 @@ type GroupMode = "product" | "type";
 export const BomListPanel = ({
   boms,
   products,
+  variant = "drawer",
   onClose,
   onEdit,
   onCreate,
   onClone,
   onChanged,
 }: Props) => {
+  const isPage = variant === "page";
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   // Default to product grouping - the portfolio of BOMs grows
@@ -176,36 +181,45 @@ export const BomListPanel = ({
     }
   };
 
-  return (
+  const panel = (
     <div
-      className="fixed inset-0 z-50 bg-ink/40 grid place-items-end"
-      onClick={onClose}
+      className={cn(
+        "bg-surface overflow-hidden flex flex-col",
+        isPage ? "h-full min-h-0 w-full" : "w-full max-w-2xl h-full elevation-3"
+      )}
     >
-      <div
-        className="bg-surface w-full max-w-2xl h-full overflow-hidden flex flex-col elevation-3"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="px-5 py-3 border-b border-border flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="h-9 w-9 grid place-items-center bg-primary-50 text-primary rounded-md">
+        <div className="px-5 py-3 border-b border-border flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            {isPage && (
+              <Link
+                to="/manufacturing"
+                className="h-9 w-9 grid place-items-center rounded-md text-ink-muted hover:bg-canvas shrink-0"
+                title="Back to Manufacturing"
+              >
+                <ArrowLeft size={18} />
+              </Link>
+            )}
+            <div className="h-9 w-9 grid place-items-center bg-primary-50 text-primary rounded-md shrink-0">
               <Network size={16} />
             </div>
-            <div>
+            <div className="min-w-0">
               <div className="text-caption text-ink-muted uppercase font-semibold">
                 Bills of material
               </div>
-              <div className="text-body-sm">
+              <div className="text-body-sm truncate">
                 {boms.length} BOM{boms.length === 1 ? "" : "s"} across the catalog. Multi-level
                 supported via parent-child product links.
               </div>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="h-9 w-9 grid place-items-center rounded-md text-ink-muted hover:bg-canvas"
-          >
-            <X size={18} />
-          </button>
+          {!isPage && (
+            <button
+              onClick={onClose}
+              className="h-9 w-9 grid place-items-center rounded-md text-ink-muted hover:bg-canvas shrink-0"
+            >
+              <X size={18} />
+            </button>
+          )}
         </div>
 
         <div className="px-4 py-3 border-b border-border flex items-center gap-2 bg-canvas">
@@ -391,8 +405,13 @@ export const BomListPanel = ({
                               <div className="text-caption text-ink-muted mt-0.5 flex items-center gap-3 flex-wrap">
                                 <span>
                                   <Boxes size={10} className="inline" />{" "}
-                                  {b.items.length} component
-                                  {b.items.length === 1 ? "" : "s"}
+                                  {b.items.length} consumed
+                                  {(b.byproducts?.length ?? 0) > 0 && (
+                                    <>
+                                      {" "}
+                                      · {b.byproducts!.length} released
+                                    </>
+                                  )}
                                 </span>
                                 {subCount > 0 && (
                                   <span className="text-primary">
@@ -440,7 +459,17 @@ export const BomListPanel = ({
             })
           )}
         </div>
-      </div>
+    </div>
+  );
+
+  if (isPage) return panel;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-ink/40 grid place-items-end"
+      onClick={onClose}
+    >
+      <div onClick={(e) => e.stopPropagation()}>{panel}</div>
     </div>
   );
 };

@@ -906,16 +906,32 @@ export const catalogRoutes = async (app: FastifyInstance) => {
       const id = (req.params as { id: string }).id;
       const bins = await db.bin.findMany({
         where: { productId: id },
-        select: { qty: true, reservedQty: true, zone: true, shelf: true, bin: true, warehouse: { select: { code: true } } },
+        select: {
+          id: true,
+          qty: true,
+          reservedQty: true,
+          zone: true,
+          shelf: true,
+          bin: true,
+          warehouseId: true,
+          warehouse: { select: { id: true, code: true, name: true } },
+        },
+        orderBy: [{ warehouse: { code: "asc" } }, { zone: "asc" }, { shelf: "asc" }, { bin: "asc" }],
       });
       const total = bins.reduce((s, b) => s + b.qty, 0);
-      const free  = bins.reduce((s, b) => s + (b.qty - b.reservedQty), 0);
+      const free = bins.reduce((s, b) => s + (b.qty - b.reservedQty), 0);
       return {
         total,
         free,
         bins: bins.map((b) => ({
+          binId: b.id,
+          warehouseId: b.warehouseId,
           warehouse: b.warehouse.code,
+          warehouseName: b.warehouse.name,
           location: `${b.zone}/${b.shelf}/${b.bin}`,
+          zone: b.zone,
+          shelf: b.shelf,
+          bin: b.bin,
           qty: b.qty,
           reserved: b.reservedQty,
           free: b.qty - b.reservedQty,

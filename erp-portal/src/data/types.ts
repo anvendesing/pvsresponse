@@ -230,6 +230,18 @@ export interface DispatchOrder {
   createdAt?: string;
 }
 
+export interface BomByproductRow {
+  id?: string;
+  productId?: string;
+  variantId?: string | null;
+  sku: string;
+  name: string;
+  qty: number;
+  uom: string;
+  costShare: number;
+  variantSku?: string | null;
+}
+
 export interface BomItem {
   // BomItem id - present when the row came from the API; absent when
   // the editor is composing a new row in memory.
@@ -261,6 +273,7 @@ export interface Bom {
   variantLabel?: string | null;
   revision: string;
   items: BomItem[];
+  byproducts?: BomByproductRow[];
   outputQty: number;
   active: boolean;
   // Optional defaults that flow into a new MO's station / machine

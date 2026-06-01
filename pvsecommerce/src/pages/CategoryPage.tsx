@@ -21,9 +21,13 @@ const productInStock = (p: { stockOnHand: number; variants: { stockOnHand: numbe
 export const CategoryPage = () => {
   const { slug } = useParams<{ slug: string }>();
   const navigate = useNavigate();
-  const { bySlug, categories } = useCategories();
+  const {
+    bySlug,
+    categories,
+    loading: categoriesLoading,
+  } = useCategories();
   const cat = slug ? bySlug.get(slug) : undefined;
-  const { products, loading, error } = useCatalog();
+  const { products, loading: productsLoading, error } = useCatalog();
   const [showInStock, setShowInStock] = useState(true);
   const [showOutOfStock, setShowOutOfStock] = useState(false);
   const [page, setPage] = useState(1);
@@ -52,6 +56,38 @@ export const CategoryPage = () => {
     currentPage * PAGE_SIZE
   );
 
+  // Categories load async from /v1/storefront-mock/categories. Until that
+  // first response lands, bySlug is empty for any deep-linked slug — show
+  // a skeleton instead of flashing the "not found" error.
+  if (!cat && categoriesLoading) {
+    return (
+      <div className="listing-page">
+        <div className="listing-row">
+          <aside className="listing-sidebar">
+            <div className="sidebar-block-title">Categories</div>
+            <ul className="sidebar-category-links">
+              {[0, 1, 2, 3, 4].map((i) => (
+                <li key={i}>
+                  <span className="muted">Loading…</span>
+                </li>
+              ))}
+            </ul>
+          </aside>
+          <div className="listing-grid-area">
+            <div className="listing-toolbar">
+              <h1 className="listing-grid-title">&nbsp;</h1>
+            </div>
+            <div className="listing-products-grid">
+              {[0, 1, 2, 3, 4, 5].map((i) => (
+                <div key={i} className="product-card" />
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (!cat) {
     return (
       <div className="listing-page">
@@ -61,10 +97,46 @@ export const CategoryPage = () => {
             <p className="muted" style={{ marginTop: "0.5rem" }}>
               We don't carry "{slug}".
             </p>
+            {categories.length > 0 && (
+              <>
+                <p
+                  className="muted"
+                  style={{ marginTop: "1.25rem", fontSize: "0.85rem" }}
+                >
+                  Try one of these instead:
+                </p>
+                <div
+                  style={{
+                    display: "flex",
+                    gap: "0.5rem",
+                    flexWrap: "wrap",
+                    justifyContent: "center",
+                    marginTop: "0.65rem",
+                  }}
+                >
+                  {categories.map((c) => (
+                    <Link
+                      key={c.id}
+                      to={`/category/${c.slug}`}
+                      className="btn"
+                      style={{
+                        padding: "0.4rem 0.85rem",
+                        fontSize: "0.85rem",
+                        background: "var(--neutral-white)",
+                        border: "1px solid var(--neutral-border, #e5e7eb)",
+                        color: "var(--color-ink, #111)",
+                      }}
+                    >
+                      {c.name}
+                    </Link>
+                  ))}
+                </div>
+              </>
+            )}
             <button
               type="button"
               className="btn btn-green"
-              style={{ marginTop: "1rem" }}
+              style={{ marginTop: "1.25rem" }}
               onClick={() => navigate("/")}
             >
               Back home
@@ -135,7 +207,7 @@ export const CategoryPage = () => {
             </div>
           )}
 
-          {loading ? (
+          {productsLoading ? (
             <div className="listing-products-grid">
               {[0, 1, 2, 3, 4, 5].map((i) => (
                 <div key={i} className="product-card" />

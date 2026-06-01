@@ -16,10 +16,12 @@ out/
 .env
 .env.local
 .env.*.local
+.env.mobile
 # Keep example files (no real secrets) so new team members can copy them
 !.env.example
 !.env.*.example
 !.env.deploy.example
+!.env.mobile.example
 
 # ── Database ──────────────────────────────────────────────────────────────────
 *.db

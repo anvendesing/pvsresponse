@@ -9,6 +9,7 @@ import {
   Factory,
   KanbanSquare,
   LayoutDashboard,
+  Network,
   Package,
   PackageCheck,
   Receipt,
@@ -44,6 +45,7 @@ const NAV_ROLES: Record<string, string[]> = {
   transfers:     ["admin", "supervisor", "warehouse"],
   "warehouse-audit": ["admin", "warehouse"],
   manufacturing: ["admin", "supervisor"],
+  boms:          ["admin", "supervisor"],
   productivity:  ["admin", "supervisor"],
   transport:     ["admin", "supervisor", "warehouse"],
   billing:       ["admin", "billing"],
@@ -78,7 +80,9 @@ const ALL_ITEMS = [
   { id: "inventory", label: "Inventory", icon: Boxes, path: "/inventory" },
   { id: "warehouse", label: "Warehouse", icon: Warehouse, path: "/warehouse" },
   { id: "transfers", label: "Transfers", icon: ArrowRightLeft, path: "/transfers" },
-  { id: "manufacturing", label: "Manufacturing", icon: Factory, path: "/manufacturing" },
+  // `end` = exact path only (avoids /manufacturing also matching /manufacturing/boms)
+  { id: "manufacturing", label: "Manufacturing", icon: Factory, path: "/manufacturing", end: true },
+  { id: "boms", label: "BOMs", icon: Network, path: "/manufacturing/boms" },
   { id: "productivity", label: "Productivity", icon: Users, path: "/productivity" },
   { id: "transport", label: "Transport", icon: Truck, path: "/transport" },
   { id: "billing", label: "Billing", icon: Receipt, path: "/billing" },
@@ -114,10 +118,12 @@ export const LeftNavigation = ({ collapsed }: { collapsed: boolean }) => {
       <div className="flex-1 overflow-y-auto py-2">
         {items.map((item) => {
           const Icon = item.icon;
+          const exactOnly = "end" in item && item.end === true;
           return (
             <NavLink
               key={item.id}
               to={item.path}
+              end={exactOnly}
               onClick={(e) => {
                 e.preventDefault();
                 handleNav(item);

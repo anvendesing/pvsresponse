@@ -8,6 +8,7 @@ import { Inventory } from "./pages/Inventory";
 import { Warehouse } from "./pages/Warehouse";
 import { Transfers } from "./pages/Transfers";
 import { Manufacturing } from "./pages/Manufacturing";
+import { Boms } from "./pages/Boms";
 import { Procurement } from "./pages/Procurement";
 import { Productivity } from "./pages/Productivity";
 import { Billing } from "./pages/Billing";
@@ -25,6 +26,7 @@ import { Reports } from "./pages/Reports";
 import { WarehouseAudit } from "./pages/WarehouseAudit";
 import { Approvals } from "./pages/Approvals";
 import { Settings } from "./pages/Settings";
+import { PutawayRules } from "./pages/PutawayRules";
 import { PublicQuote } from "./pages/PublicQuote";
 import { PublicInvoice } from "./pages/PublicInvoice";
 import { PublicSalesOrder } from "./pages/PublicSalesOrder";
@@ -44,6 +46,9 @@ import { MobileVerify } from "./mobile/screens/MobileVerify";
 import { MobileLocation } from "./mobile/screens/MobileLocation";
 import { MobileBin } from "./mobile/screens/MobileBin";
 import { MobileProfile } from "./mobile/screens/MobileProfile";
+import { MobileGrnList, MobileGrnReceive } from "./mobile/screens/MobileGrn";
+import { MobileCount } from "./mobile/screens/MobileCount";
+import { MobileReturnList, MobileReturnDetail } from "./mobile/screens/MobileReturn";
 import { Store } from "./pages/Store";
 
 const App = () => {
@@ -85,6 +90,14 @@ const App = () => {
         <Route path="/m/loc/:code" element={<MobileLocation />} />
         <Route path="/m/bin/:binId" element={<MobileBin />} />
         <Route path="/m/profile" element={<MobileProfile />} />
+        {/* GRN / receiving */}
+        <Route path="/m/grn" element={<MobileGrnList />} />
+        <Route path="/m/grn/:poId" element={<MobileGrnReceive />} />
+        {/* Bin cycle count / stock adjustment */}
+        <Route path="/m/count" element={<MobileCount />} />
+        {/* Returns processing */}
+        <Route path="/m/returns" element={<MobileReturnList />} />
+        <Route path="/m/returns/:id" element={<MobileReturnDetail />} />
       </Route>
       <Route
         element={
@@ -112,9 +125,13 @@ const App = () => {
         <Route path="/inventory"      element={<RequireRole roles={["supervisor","warehouse","procurement"]}><Inventory /></RequireRole>} />
         <Route path="/warehouse"      element={<RequireRole roles={["supervisor","warehouse"]}><Warehouse /></RequireRole>} />
         <Route path="/transfers"      element={<RequireRole roles={["supervisor","warehouse"]}><Transfers /></RequireRole>} />
+        <Route path="/putaway-rules"  element={<RequireRole roles={["admin"]}><PutawayRules /></RequireRole>} />
         <Route path="/warehouse-audit" element={<RequireRole roles={["warehouse"]}><WarehouseAudit /></RequireRole>} />
 
         <Route path="/manufacturing"  element={<RequireRole roles={["supervisor"]}><Manufacturing /></RequireRole>} />
+        <Route path="/manufacturing/boms/new" element={<RequireRole roles={["supervisor"]}><Boms /></RequireRole>} />
+        <Route path="/manufacturing/boms/:bomId" element={<RequireRole roles={["supervisor"]}><Boms /></RequireRole>} />
+        <Route path="/manufacturing/boms" element={<RequireRole roles={["supervisor"]}><Boms /></RequireRole>} />
         <Route path="/productivity"   element={<RequireRole roles={["supervisor"]}><Productivity /></RequireRole>} />
         <Route path="/transport"      element={<RequireRole roles={["supervisor","warehouse"]}><Transport /></RequireRole>} />
 

@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { AlertTriangle, Loader2, PackageOpen } from "lucide-react";
 import { Button } from "./Button";
 
@@ -8,6 +9,8 @@ interface Props {
   emptyTitle?: string;
   emptyDescription?: string;
   onRetry?: () => void;
+  /** Optional buttons shown below the empty-state message (e.g. "Create first record"). */
+  action?: ReactNode;
 }
 
 export const EmptyState = ({
@@ -17,6 +20,7 @@ export const EmptyState = ({
   emptyTitle = "No data yet",
   emptyDescription = "Add your first record using the actions above.",
   onRetry,
+  action,
 }: Props) => {
   if (loading) {
     return (
@@ -51,6 +55,7 @@ export const EmptyState = ({
         <PackageOpen size={32} />
         <div className="text-h3 font-semibold text-ink">{emptyTitle}</div>
         <div className="text-body max-w-md text-center">{emptyDescription}</div>
+        {action && <div className="flex flex-wrap items-center justify-center gap-2 mt-2">{action}</div>}
       </div>
     );
   }

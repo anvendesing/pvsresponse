@@ -28,6 +28,8 @@ import { useApi } from "@/hooks/useApi";
 import { cn } from "@/lib/cn";
 import { EmptyState } from "@/components/common/EmptyState";
 import { BulkOrderExportModal } from "@/components/sales/BulkOrderExportModal";
+import { InventoryLocationsPanel } from "@/components/inventory/InventoryLocationsPanel";
+import { MapPin } from "lucide-react";
 
 const txTone = (t: StockLedgerEntry["txnType"]) => {
   switch (t) {
@@ -48,7 +50,25 @@ const txTone = (t: StockLedgerEntry["txnType"]) => {
 
 export const Inventory = () => {
   const [searchParams, setSearchParams] = useSearchParams();
-  const [tab, setTab] = useState<"ledger" | "valuation" | "batches">("ledger");
+  const tabParam = searchParams.get("tab");
+  const [tab, setTab] = useState<"ledger" | "locations" | "valuation" | "batches">(
+    () =>
+      tabParam === "ledger" || tabParam === "valuation" || tabParam === "batches"
+        ? tabParam
+        : "locations"
+  );
+  const locationProductId = searchParams.get("productId") ?? undefined;
+
+  useEffect(() => {
+    if (
+      tabParam === "locations" ||
+      tabParam === "ledger" ||
+      tabParam === "valuation" ||
+      tabParam === "batches"
+    ) {
+      setTab(tabParam);
+    }
+  }, [tabParam]);
   const [q, setQ] = useState("");
   const [exportOpen, setExportOpen] = useState(false);
   const [adjustOpen, setAdjustOpen] = useState(false);
@@ -57,11 +77,14 @@ export const Inventory = () => {
     warehouseId?: string;
     delta?: number;
     fromManufacturing?: boolean;
+    mode?: "delta" | "count";
+    reason?: string;
   } | null>(null);
 
-  // Deep-link from Manufacturing shortage rows: /inventory?adjust=1&productId=…&delta=…
+  // Deep-link from Manufacturing: /inventory?adjust=1&productId=…&delta=…&mode=count
   useEffect(() => {
     if (searchParams.get("adjust") !== "1") return;
+    const modeParam = searchParams.get("mode");
     setAdjustPrefill({
       productId: searchParams.get("productId") ?? undefined,
       warehouseId: searchParams.get("warehouseId") ?? undefined,
@@ -69,14 +92,14 @@ export const Inventory = () => {
         ? Number(searchParams.get("delta"))
         : undefined,
       fromManufacturing: searchParams.get("from") === "mfg",
+      mode: modeParam === "count" ? "count" : "delta",
+      reason: searchParams.get("reason") ?? undefined,
     });
     setAdjustOpen(true);
     const next = new URLSearchParams(searchParams);
-    next.delete("adjust");
-    next.delete("productId");
-    next.delete("warehouseId");
-    next.delete("delta");
-    next.delete("from");
+    for (const k of ["adjust", "productId", "warehouseId", "delta", "from", "mode", "reason"]) {
+      next.delete(k);
+    }
     setSearchParams(next, { replace: true });
   }, [searchParams, setSearchParams]);
 
@@ -229,23 +252,38 @@ export const Inventory = () => {
   ];
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col overflow-hidden">
       <Toolbar
+        className="shrink-0"
         left={
           <>
             <h2 className="text-h3 font-bold mr-2">Inventory</h2>
             <div className="flex items-center gap-1 ml-2">
-              {(["ledger", "valuation", "batches"] as const).map((t) => (
+              {(
+                  [
+                    { id: "locations" as const, label: "Locations", icon: MapPin },
+                    { id: "ledger" as const, label: "Ledger" },
+                    { id: "valuation" as const, label: "Valuation" },
+                    { id: "batches" as const, label: "Batches" },
+                  ] as const
+              ).map((t) => (
                 <button
-                  key={t}
-                  onClick={() => setTab(t)}
-                  className={`h-7 px-3 rounded-md text-caption font-semibold capitalize transition-colors ${
-                    tab === t
+                  key={t.id}
+                  onClick={() => {
+                    setTab(t.id);
+                    const next = new URLSearchParams(searchParams);
+                    if (t.id === "locations") next.delete("tab");
+                    else next.set("tab", t.id);
+                    setSearchParams(next, { replace: true });
+                  }}
+                  className={`h-7 px-3 rounded-md text-caption font-semibold capitalize transition-colors inline-flex items-center gap-1 ${
+                    tab === t.id
                       ? "bg-primary text-white"
                       : "bg-canvas text-ink-muted hover:text-primary"
                   }`}
                 >
-                  {t}
+                  {"icon" in t && t.icon ? <t.icon size={12} /> : null}
+                  {t.label}
                 </button>
               ))}
             </div>
@@ -284,7 +322,7 @@ export const Inventory = () => {
         }
       />
 
-      <div className="p-4 grid grid-cols-2 md:grid-cols-4 gap-3 bg-canvas border-b border-border">
+      <div className="p-4 grid grid-cols-2 md:grid-cols-4 gap-3 bg-canvas border-b border-border shrink-0">
         <Kpi
           label="Stock Value"
           value={inr(totalValue)}
@@ -352,6 +390,13 @@ export const Inventory = () => {
             )}
           </div>
         </>
+      )}
+
+      {tab === "locations" && (
+        <InventoryLocationsPanel
+          seedProductId={locationProductId}
+          products={products.map((p) => ({ id: p.id, sku: p.sku, name: p.name }))}
+        />
       )}
 
       {tab === "valuation" && (
@@ -449,6 +494,8 @@ const AdjustStockModal = ({
     warehouseId?: string;
     delta?: number;
     fromManufacturing?: boolean;
+    mode?: "delta" | "count";
+    reason?: string;
   } | null;
   onClose: () => void;
   onSaved: () => void;
@@ -462,18 +509,32 @@ const AdjustStockModal = ({
   const [productId, setProductId] = useState(prefill?.productId ?? "");
   const [warehouseId, setWarehouseId] = useState(defaultWh);
   const [binId, setBinId] = useState("");
-  const [mode, setMode] = useState<"delta" | "count">("delta");
+  const [mode, setMode] = useState<"delta" | "count">(
+    prefill?.mode ?? (prefill?.fromManufacturing ? "count" : "delta")
+  );
   const [amount, setAmount] = useState(
-    prefill?.delta != null && prefill.delta > 0 ? String(prefill.delta) : ""
+    prefill?.mode === "count"
+      ? ""
+      : prefill?.delta != null && prefill.delta > 0
+        ? String(prefill.delta)
+        : ""
   );
   const [reason, setReason] = useState(
-    prefill?.fromManufacturing ? "Mfg replenishment" : ADJUST_REASONS[0]
+    prefill?.reason ??
+      (prefill?.fromManufacturing ? "Mfg replenishment" : ADJUST_REASONS[0])
   );
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [bins, setBins] = useState<BinRow[]>([]);
   const [binsLoading, setBinsLoading] = useState(false);
+
+  // Default warehouse once the list loads (modal can open before warehouses fetch).
+  useEffect(() => {
+    if (warehouseId || warehouses.length === 0) return;
+    const wh = warehouses.find((w) => w.code === "WH-MAIN") ?? warehouses[0];
+    if (wh) setWarehouseId(wh.id);
+  }, [warehouses, warehouseId]);
 
   useEffect(() => {
     if (!warehouseId) {
@@ -515,7 +576,7 @@ const AdjustStockModal = ({
   );
 
   const parsed = Number(amount);
-  const countBase = binId ? binQty : whTotalInBins;
+  const countBase = binQty;
   const delta =
     mode === "count"
       ? Number.isFinite(parsed)
@@ -525,20 +586,34 @@ const AdjustStockModal = ({
   const previewBin = binId ? binQty + (Number.isFinite(delta) ? delta : 0) : null;
   const previewWh = whTotalInBins + (Number.isFinite(delta) ? delta : 0);
 
+  const binChoices = useMemo(() => {
+    const holding = productBins.holding;
+    const empty = productBins.empty;
+    // Any other empty bin in the warehouse (not yet in empty list filter)
+    const otherEmpty = bins.filter(
+      (b) =>
+        !b.productSku &&
+        (b.qty ?? 0) === 0 &&
+        !empty.some((e) => e.id === b.id)
+    );
+    return [...holding, ...empty, ...otherEmpty];
+  }, [productBins, bins]);
+
   const submit = async () => {
     setError(null);
     if (!productId) return setError("Pick a product.");
     if (!warehouseId) return setError("Pick a warehouse.");
-    if (!binId && productBins.holding.length === 0 && productBins.empty.length === 0 && bins.length > 0) {
-      return setError("Pick a bin (empty slot) or create bins in Warehouse first.");
+    if (!binId) {
+      return setError(
+        binChoices.length === 0
+          ? "No bins in this warehouse. Create bins under Warehouse first."
+          : "Select the exact bin where this stock lives."
+      );
     }
     if (!Number.isFinite(parsed) || amount.trim() === "") return setError("Enter a quantity.");
     if (delta === 0) return setError("No change — quantity already matches.");
-    if (binId && previewBin != null && previewBin < 0) {
+    if (previewBin != null && previewBin < 0) {
       return setError(`Bin would go negative (${previewBin}).`);
-    }
-    if (!binId && delta < 0 && previewWh < 0) {
-      return setError(`Not enough stock in this warehouse (${whTotalInBins} in bins).`);
     }
     setBusy(true);
     try {
@@ -546,9 +621,9 @@ const AdjustStockModal = ({
       await api.adjustStock({
         productId,
         warehouseId,
+        binId,
         qty: delta,
         reason: fullReason,
-        ...(binId ? { binId } : {}),
       });
       onSaved();
     } catch (e) {
@@ -564,7 +639,7 @@ const AdjustStockModal = ({
           <div>
             <div className="text-h3 font-bold">Adjust bin stock</div>
             <div className="text-caption text-ink-muted">
-              Manufacturing reads <strong>In bins</strong> (physical bin qty), not the product counter.
+              Pick the exact bin, then enter qty. Manufacturing reads <strong>bin qty</strong>, not the product counter.
             </div>
           </div>
           <button onClick={onClose} className="h-9 w-9 grid place-items-center rounded-md text-ink-muted hover:bg-canvas shrink-0">
@@ -608,6 +683,7 @@ const AdjustStockModal = ({
               }}
               className="h-10 px-2 rounded-md border border-border bg-surface text-body"
             >
+              <option value="">Select warehouse…</option>
               {warehouses.map((w) => (
                 <option key={w.id} value={w.id}>
                   {w.code} · {w.name}
@@ -617,50 +693,79 @@ const AdjustStockModal = ({
           </label>
 
           {productId && warehouseId && (
-            <div className="rounded-md border border-border bg-canvas px-3 py-2 text-body-sm space-y-1">
-              <div className="flex justify-between">
-                <span className="text-ink-muted">In bins (this warehouse)</span>
-                <span className="tnum font-semibold">{num(whTotalInBins)}</span>
-              </div>
-              <div className="flex justify-between text-caption">
-                <span className="text-ink-muted">Product counter (all warehouses)</span>
-                <span className="tnum">{selected?.stockOnHand ?? 0}</span>
-              </div>
-            </div>
-          )}
-
-          {productId && warehouseId && (
             <label className="flex flex-col gap-1.5">
-              <span className="text-caption font-medium">Target bin</span>
+              <span className="text-caption font-medium">
+                Bin <span className="text-danger">*</span>
+              </span>
               {binsLoading ? (
                 <div className="text-caption text-ink-muted py-2">Loading bins…</div>
               ) : (
                 <select
                   value={binId}
                   onChange={(e) => setBinId(e.target.value)}
-                  className="h-10 px-2 rounded-md border border-border bg-surface text-body"
+                  className={cn(
+                    "h-10 px-2 rounded-md border bg-surface text-body",
+                    !binId ? "border-warning" : "border-border"
+                  )}
                 >
-                  <option value="">Auto (largest bin or first empty)</option>
+                  <option value="">Select bin (required)…</option>
                   {productBins.holding.map((b) => (
                     <option key={b.id} value={b.id}>
-                      {b.zone}/{b.shelf}/{b.bin} — qty {b.qty ?? 0}
+                      {b.zone}/{b.shelf}/{b.bin} — holds {b.qty ?? 0} {selected?.sku ?? ""}
                     </option>
                   ))}
                   {productBins.empty.map((b) => (
                     <option key={b.id} value={b.id}>
-                      {b.zone}/{b.shelf}/{b.bin} — empty (assign product here)
+                      {b.zone}/{b.shelf}/{b.bin} — empty slot
                     </option>
                   ))}
+                  {bins
+                    .filter(
+                      (b) =>
+                        !productBins.holding.some((h) => h.id === b.id) &&
+                        !productBins.empty.some((e) => e.id === b.id) &&
+                        !b.productSku &&
+                        (b.qty ?? 0) === 0
+                    )
+                    .map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.zone}/{b.shelf}/{b.bin} — empty slot
+                      </option>
+                    ))}
                 </select>
               )}
-              {!binsLoading && productBins.holding.length === 0 && productBins.empty.length === 0 && (
+              {!binsLoading && binChoices.length === 0 && (
                 <div className="text-caption text-danger">
                   No bins in this warehouse. Create bins under <strong>Warehouse</strong> first.
+                </div>
+              )}
+              {!binsLoading && binChoices.length > 0 && !binId && (
+                <div className="text-caption text-[#8a6300]">
+                  Choose where the physical stock sits — MO release reads this bin qty.
                 </div>
               )}
             </label>
           )}
 
+          {productId && warehouseId && binId && (
+            <div className="rounded-md border border-border bg-canvas px-3 py-2 text-body-sm space-y-1">
+              <div className="flex justify-between">
+                <span className="text-ink-muted">This bin now</span>
+                <span className="tnum font-semibold">{num(binQty)}</span>
+              </div>
+              <div className="flex justify-between text-caption">
+                <span className="text-ink-muted">All bins in warehouse (this SKU)</span>
+                <span className="tnum">{num(whTotalInBins)}</span>
+              </div>
+              <div className="flex justify-between text-caption">
+                <span className="text-ink-muted">Product counter (system-wide)</span>
+                <span className="tnum">{selected?.stockOnHand ?? 0}</span>
+              </div>
+            </div>
+          )}
+
+          {productId && warehouseId && binId && (
+            <>
           <div className="flex rounded-md border border-border overflow-hidden w-max">
             <button
               type="button"
@@ -674,7 +779,7 @@ const AdjustStockModal = ({
               onClick={() => setMode("count")}
               className={cn("px-3 h-8 text-body-sm", mode === "count" ? "bg-primary text-white" : "bg-surface text-ink-muted")}
             >
-              Set {binId ? "bin" : "warehouse"} total
+              Set bin total (count)
             </button>
           </div>
 
@@ -683,9 +788,7 @@ const AdjustStockModal = ({
               label={
                 mode === "delta"
                   ? "Change (+ add / − remove)"
-                  : binId
-                    ? `New qty in ${selectedBin?.zone}/${selectedBin?.shelf}/${selectedBin?.bin}`
-                    : "New total in this warehouse"
+                  : `New qty in ${selectedBin?.zone}/${selectedBin?.shelf}/${selectedBin?.bin}`
               }
               type="number"
               value={amount}
@@ -706,26 +809,18 @@ const AdjustStockModal = ({
 
           <Input label="Note (optional)" value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. MO-2026-0042 shortage" />
 
-          {productId && Number.isFinite(delta) && delta !== 0 && (
+          {Number.isFinite(delta) && delta !== 0 && (
             <div className="rounded-md bg-canvas border border-border px-3 py-2 text-body-sm">
-              {binId ? (
-                <span className="tnum">
-                  Bin qty: {binQty}{" "}
-                  <span className={cn("font-semibold", delta > 0 ? "text-success" : "text-danger")}>
-                    {delta > 0 ? `+${delta}` : delta}
-                  </span>{" "}
-                  → <strong>{previewBin}</strong>
-                </span>
-              ) : (
-                <span className="tnum">
-                  WH bins total: {whTotalInBins}{" "}
-                  <span className={cn("font-semibold", delta > 0 ? "text-success" : "text-danger")}>
-                    {delta > 0 ? `+${delta}` : delta}
-                  </span>{" "}
-                  → <strong>{previewWh}</strong>
-                </span>
-              )}
+              <span className="tnum">
+                {selectedBin?.zone}/{selectedBin?.shelf}/{selectedBin?.bin}: {binQty}{" "}
+                <span className={cn("font-semibold", delta > 0 ? "text-success" : "text-danger")}>
+                  {delta > 0 ? `+${delta}` : delta}
+                </span>{" "}
+                → <strong>{previewBin}</strong>
+              </span>
             </div>
+          )}
+            </>
           )}
 
           {error && <div className="text-body-sm text-danger">{error}</div>}
@@ -735,8 +830,8 @@ const AdjustStockModal = ({
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button loading={busy} onClick={submit}>
-            Post to bin
+          <Button loading={busy} onClick={submit} disabled={!productId || !warehouseId || !binId}>
+            Post to selected bin
           </Button>
         </div>
       </div>

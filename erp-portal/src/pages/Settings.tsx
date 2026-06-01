@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   AlertTriangle,
   ArrowRightLeft,
@@ -48,53 +49,109 @@ import { useBrand } from "@/hooks/useBrand";
 import { UserManager } from "@/components/settings/UserManager";
 import { CategoryManager } from "@/components/settings/CategoryManager";
 
-const SECTIONS = [
-  { id: "company", label: "Company", icon: Building },
-  { id: "warehouses", label: "Warehouses", icon: WarehouseIcon },
-  { id: "production", label: "Production lines", icon: Factory },
-  { id: "putaway", label: "Putaway rules", icon: ArrowRightLeft },
-  { id: "stockrules", label: "Stock rules", icon: Gauge },
-  { id: "categories", label: "Categories", icon: Tags },
-  { id: "users", label: "Users & Roles", icon: Users },
-  { id: "security", label: "Security", icon: Shield },
-  { id: "scanner", label: "Scanner", icon: ScanLine },
-  { id: "sms", label: "SMS (SMSIdea)", icon: MessageSquare },
-  { id: "payment", label: "Payment (CCAvenue)", icon: Key },
-  { id: "sync", label: "Sync & Offline", icon: Wifi },
-  { id: "backup", label: "Backup", icon: Database },
-  { id: "notifications", label: "Notifications", icon: Bell },
-  { id: "appearance", label: "Appearance", icon: Palette },
-  { id: "mobile", label: "Mobile Apps", icon: Smartphone },
-  { id: "lang", label: "Language", icon: Globe },
+type SettingsSection = { id: string; label: string; icon: typeof Building };
+
+const SECTION_GROUPS: { heading: string; sections: SettingsSection[] }[] = [
+  {
+    heading: "General",
+    sections: [{ id: "company", label: "Company", icon: Building }],
+  },
+  {
+    heading: "Warehouse & production",
+    sections: [
+      { id: "warehouses", label: "Warehouses", icon: WarehouseIcon },
+      { id: "putaway", label: "Putaway rules", icon: ArrowRightLeft },
+      { id: "stockrules", label: "Stock rules", icon: Gauge },
+      { id: "production", label: "Production lines", icon: Factory },
+    ],
+  },
+  {
+    heading: "Catalog & access",
+    sections: [
+      { id: "categories", label: "Categories", icon: Tags },
+      { id: "users", label: "Users & Roles", icon: Users },
+      { id: "security", label: "Security", icon: Shield },
+    ],
+  },
+  {
+    heading: "Integrations",
+    sections: [
+      { id: "scanner", label: "Scanner", icon: ScanLine },
+      { id: "sms", label: "SMS (SMSIdea)", icon: MessageSquare },
+      { id: "payment", label: "Payment (CCAvenue)", icon: Key },
+      { id: "sync", label: "Sync & Offline", icon: Wifi },
+      { id: "backup", label: "Backup", icon: Database },
+    ],
+  },
+  {
+    heading: "Preferences",
+    sections: [
+      { id: "notifications", label: "Notifications", icon: Bell },
+      { id: "appearance", label: "Appearance", icon: Palette },
+      { id: "mobile", label: "Mobile Apps", icon: Smartphone },
+      { id: "lang", label: "Language", icon: Globe },
+    ],
+  },
 ];
 
+const SECTIONS = SECTION_GROUPS.flatMap((g) => g.sections);
+
+const SECTION_IDS = new Set(SECTIONS.map((s) => s.id));
+
+const sectionFromQuery = (raw: string | null) =>
+  raw && SECTION_IDS.has(raw) ? raw : null;
+
 export const Settings = () => {
-  const [active, setActive] = useState("company");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [active, setActive] = useState(
+    () => sectionFromQuery(searchParams.get("section")) ?? "company"
+  );
+
+  // Deep link: /settings?section=putaway
+  useEffect(() => {
+    const fromUrl = sectionFromQuery(searchParams.get("section"));
+    if (fromUrl && fromUrl !== active) setActive(fromUrl);
+  }, [searchParams]);
+
+  const selectSection = (id: string) => {
+    setActive(id);
+    const next = new URLSearchParams(searchParams);
+    if (id === "company") next.delete("section");
+    else next.set("section", id);
+    setSearchParams(next, { replace: true });
+  };
 
   return (
     <div className="h-full flex flex-col">
       <Toolbar left={<h2 className="text-h3 font-bold">Settings</h2>} />
       <div className="flex-1 grid grid-cols-12 min-h-0 bg-canvas">
-        <aside className="col-span-3 bg-surface border-r border-border overflow-y-auto p-2">
-          {SECTIONS.map((s) => {
-            const Icon = s.icon;
-            return (
-              <button
-                key={s.id}
-                onClick={() => setActive(s.id)}
-                className={cn(
-                  "w-full flex items-center gap-2 px-3 h-9 rounded-md text-body-sm font-medium transition-colors",
-                  active === s.id
-                    ? "bg-primary text-white"
-                    : "text-ink hover:bg-canvas hover:text-primary"
-                )}
-              >
-                <Icon size={16} />
-                <span className="flex-1 text-left">{s.label}</span>
-                <ChevronRight size={14} className={active === s.id ? "" : "text-ink-muted"} />
-              </button>
-            );
-          })}
+        <aside className="col-span-3 bg-surface border-r border-border overflow-y-auto p-2 min-h-0">
+          {SECTION_GROUPS.map((group) => (
+            <div key={group.heading} className="mb-2">
+              <div className="px-3 py-1.5 text-caption font-semibold uppercase tracking-wide text-ink-muted">
+                {group.heading}
+              </div>
+              {group.sections.map((s) => {
+                const Icon = s.icon;
+                return (
+                  <button
+                    key={s.id}
+                    onClick={() => selectSection(s.id)}
+                    className={cn(
+                      "w-full flex items-center gap-2 px-3 h-9 rounded-md text-body-sm font-medium transition-colors",
+                      active === s.id
+                        ? "bg-primary text-white"
+                        : "text-ink hover:bg-canvas hover:text-primary"
+                    )}
+                  >
+                    <Icon size={16} />
+                    <span className="flex-1 text-left">{s.label}</span>
+                    <ChevronRight size={14} className={active === s.id ? "" : "text-ink-muted"} />
+                  </button>
+                );
+              })}
+            </div>
+          ))}
         </aside>
 
         <section className="col-span-9 overflow-y-auto p-4 space-y-4">
@@ -2316,7 +2373,7 @@ const MachinesCard = ({
 const binPath = (b: { zone: string; shelf: string; bin: string }) =>
   `${b.zone}/${b.shelf}/${b.bin}`;
 
-const PutawayRulesManager = () => {
+export const PutawayRulesManager = () => {
   const [rules, setRules] = useState<PutawayRuleRow[]>([]);
   const [warehouses, setWarehouses] = useState<WarehouseRow[]>([]);
   const [products, setProducts] = useState<Array<{ id: string; sku: string; name: string }>>([]);
@@ -2389,7 +2446,7 @@ const PutawayRulesManager = () => {
       setWhBins(
         bins.map((b) => ({
           id: b.id,
-          label: `${binPath(b)}${b.qty > 0 ? ` (${b.qty})` : " (empty)"}`,
+          label: `${binPath(b)}${(b.qty ?? 0) > 0 ? ` (${b.qty})` : " (empty)"}`,
         }))
       );
     }).catch(() => setWhBins([]));
@@ -2700,7 +2757,7 @@ const StockRulesManager = () => {
       setAllBins(
         bins.map((b) => ({
           id: b.id,
-          label: `${b.warehouseCode ?? ""} · ${binPath(b)} (qty ${b.qty})`,
+          label: `${b.warehouse ?? ""} · ${binPath(b)} (qty ${b.qty})`,
         }))
       );
     } catch (e) {
