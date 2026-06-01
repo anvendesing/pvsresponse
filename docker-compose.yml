@@ -13,12 +13,26 @@
 #     Survives `docker compose down`. Drop the volume with
 #     `docker volume rm pvsresponse_novaerp_db` to wipe all data.
 #
-# Quick start on a fresh VPS:
+# Quick start (dev — local build):
 #     cp .env.deploy.example .env
 #     # edit .env: set JWT_SECRET to something long & random
-#     docker compose pull
 #     docker compose up -d --build
-#     # wait ~30s, then hit http://<VPS_IP>/
+#     # http://localhost/
+#
+# Quick start (VPS — pull prebuilt images from GHCR):
+#     cp .env.deploy.example .env                  # set JWT_SECRET, etc.
+#     export REGISTRY_OWNER=<github user/org, lowercase>
+#     export IMAGE_TAG=latest                       # or sha-<short> / v1.2.3
+#     docker compose pull
+#     docker compose up -d --no-build
+#     # http://<VPS_IP>/
+#
+# When REGISTRY_OWNER is unset (dev), the image: lines below stay as
+# bare local tags (novaerp-backend:latest …). When it's set (VPS),
+# bash-style substitution prepends ghcr.io/<owner>/ automatically, so
+# `docker compose pull` works without needing -f docker-compose.prod.yml.
+# The overlay file is still useful for forcing pull_policy=always; see
+# docker-compose.prod.yml for that and rollback examples.
 #
 # Postgres upgrade path: see DEPLOYMENT.md "Switching to Postgres".
 # =====================================================================
@@ -30,7 +44,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    image: novaerp-backend:latest
+    image: ${REGISTRY_OWNER:+ghcr.io/${REGISTRY_OWNER}/}novaerp-backend:${IMAGE_TAG:-latest}
     restart: unless-stopped
     environment:
       NODE_ENV: production
@@ -70,7 +84,7 @@ services:
         # Empty = same-origin. The browser hits /v1/* on the nginx
         # in this same container; nginx upstream forwards to backend.
         VITE_API_URL: ${VITE_API_URL:-}
-    image: novaerp-web:latest
+    image: ${REGISTRY_OWNER:+ghcr.io/${REGISTRY_OWNER}/}novaerp-web:${IMAGE_TAG:-latest}
     restart: unless-stopped
     depends_on:
       backend:
@@ -94,7 +108,7 @@ services:
       args:
         VITE_API_URL: ${VITE_API_URL:-}
         VITE_MOCK_STOREFRONT_TOKEN: ${VITE_MOCK_STOREFRONT_TOKEN:-}
-    image: novaerp-shop:latest
+    image: ${REGISTRY_OWNER:+ghcr.io/${REGISTRY_OWNER}/}novaerp-shop:${IMAGE_TAG:-latest}
     restart: unless-stopped
     depends_on:
       backend:
