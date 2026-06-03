@@ -241,56 +241,80 @@ export const MobilePack = () => {
             !!d.productCode && d.productCode.trim().toUpperCase() !== productExpected;
           const shortPack = d.qty < it.qtyPicked;
           const showReason = productMismatch || shortPack || it.qtyPicked === 0;
+          // Once qtyPacked > 0 the item is confirmed — all inputs lock.
           const confirmed = it.qtyPacked > 0;
           return (
             <div
               key={it.id}
               className={[
-                "rounded-2xl bg-white p-4 ring-1 shadow-sm",
-                confirmed ? "ring-emerald-300" : "ring-slate-200",
+                "rounded-2xl p-4 ring-1 shadow-sm",
+                confirmed
+                  ? "bg-emerald-50 ring-emerald-300"
+                  : "bg-white ring-slate-200",
               ].join(" ")}
             >
-              <div className="flex items-baseline justify-between gap-2">
+              {/* Header row */}
+              <div className="flex items-center justify-between gap-2">
                 <span className="font-mono text-sm font-semibold text-[#003087]">{sku}</span>
-                <span className="text-xs text-slate-500">
-                  picked {it.qtyPicked} {uom}
-                </span>
+                {confirmed ? (
+                  <span className="rounded-full bg-emerald-500 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
+                    ✓ Packed {it.qtyPacked} {uom}
+                  </span>
+                ) : (
+                  <span className="text-xs text-slate-500">
+                    picked {it.qtyPicked} {uom}
+                  </span>
+                )}
               </div>
               <div className="mt-1 truncate text-sm text-slate-900">{it.product?.name}</div>
 
+              {/* Inputs — disabled once confirmed */}
               <div className="mt-3 flex items-stretch gap-2">
-                <div className="flex flex-1 items-stretch overflow-hidden rounded-xl border border-slate-300">
+                <div
+                  className={[
+                    "flex flex-1 items-stretch overflow-hidden rounded-xl border",
+                    confirmed ? "border-emerald-200 bg-emerald-50" : "border-slate-300",
+                  ].join(" ")}
+                >
                   <input
                     value={d.productCode}
+                    disabled={confirmed}
                     onChange={(e) =>
                       setDraft((prev) => ({
                         ...prev,
                         [it.id]: { ...prev[it.id], productCode: e.target.value },
                       }))
                     }
-                    placeholder="scan product"
+                    placeholder={confirmed ? "—" : "scan product"}
                     autoCapitalize="characters"
                     autoCorrect="off"
-                    className="flex-1 bg-white px-3 py-2 font-mono text-sm focus:outline-none"
+                    className="flex-1 bg-transparent px-3 py-2 font-mono text-sm focus:outline-none disabled:cursor-not-allowed disabled:text-slate-400"
                   />
                   <button
                     type="button"
+                    disabled={confirmed}
                     onClick={() => setScanFor(it.id)}
-                    className="bg-[#003087] px-3 text-xs font-semibold text-white"
+                    className="bg-[#003087] px-3 text-xs font-semibold text-white disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     Scan
                   </button>
                 </div>
-                <div className="flex items-stretch overflow-hidden rounded-xl border border-slate-300">
+                <div
+                  className={[
+                    "flex items-stretch overflow-hidden rounded-xl border",
+                    confirmed ? "border-emerald-200 bg-emerald-50" : "border-slate-300",
+                  ].join(" ")}
+                >
                   <button
                     type="button"
+                    disabled={confirmed}
                     onClick={() =>
                       setDraft((p) => ({
                         ...p,
                         [it.id]: { ...p[it.id], qty: Math.max(0, p[it.id].qty - 1) },
                       }))
                     }
-                    className="px-3 text-xl text-slate-600"
+                    className="px-3 text-xl text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     −
                   </button>
@@ -299,6 +323,7 @@ export const MobilePack = () => {
                     inputMode="decimal"
                     step="any"
                     min={0}
+                    disabled={confirmed}
                     value={d.qty}
                     onChange={(e) =>
                       setDraft((p) => ({
@@ -306,10 +331,11 @@ export const MobilePack = () => {
                         [it.id]: { ...p[it.id], qty: parseFloat(e.target.value) || 0 },
                       }))
                     }
-                    className="w-16 bg-white text-center text-base font-semibold focus:outline-none"
+                    className="w-16 bg-transparent text-center text-base font-semibold focus:outline-none disabled:cursor-not-allowed disabled:text-slate-400"
                   />
                   <button
                     type="button"
+                    disabled={confirmed}
                     onClick={() =>
                       setDraft((p) => ({
                         ...p,
@@ -319,7 +345,7 @@ export const MobilePack = () => {
                         },
                       }))
                     }
-                    className="px-3 text-xl text-slate-600"
+                    className="px-3 text-xl text-slate-600 disabled:opacity-40 disabled:cursor-not-allowed"
                   >
                     +
                   </button>
@@ -356,19 +382,22 @@ export const MobilePack = () => {
               <div className="mt-3 flex items-center justify-between">
                 <div className="text-xs text-slate-500">
                   {confirmed
-                    ? `confirmed ${it.qtyPacked} ${uom}`
-                    : `pending ${d.qty}/${it.qtyPicked} ${uom}`}
+                    ? `Packed ${it.qtyPacked} of ${it.qtyPicked} ${uom}`
+                    : `Pending · ${d.qty}/${it.qtyPicked} ${uom}`}
                 </div>
+                {/* Disabled "Packed ✓" once confirmed; active "Confirm" otherwise */}
                 <button
                   type="button"
-                  disabled={busy}
+                  disabled={confirmed || busy}
                   onClick={() => void scanLine(it)}
                   className={[
-                    "rounded-xl px-4 py-2 text-sm font-semibold text-white disabled:opacity-50",
-                    confirmed ? "bg-slate-500" : "bg-emerald-500",
+                    "rounded-xl px-4 py-2 text-sm font-semibold text-white transition-colors",
+                    confirmed
+                      ? "bg-emerald-400 cursor-not-allowed opacity-70"
+                      : "bg-emerald-500 active:bg-emerald-600 disabled:opacity-50",
                   ].join(" ")}
                 >
-                  {confirmed ? "Update" : "Confirm"}
+                  {confirmed ? "Packed ✓" : "Confirm"}
                 </button>
               </div>
             </div>

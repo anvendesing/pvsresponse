@@ -35,6 +35,8 @@ export interface ResolvedPrice {
   minQty?: number; // for tier overrides
   multiplier?: number; // for formula
   basisPrice?: number; // the upstream value used by the formula
+  validFrom?: Date | null; // from the matched PriceListItem row
+  validUntil?: Date | null; // from the matched PriceListItem row
 }
 
 export const resolveEffectivePrice = async (input: {
@@ -104,7 +106,8 @@ export const resolveEffectivePrice = async (input: {
   if (priceList) {
     // 1. Look for explicit override rows. Prefer exact variant match;
     //    fall back to variantId=null. Within matches, pick the highest
-    //    minQty that is still <= qty.
+    //    minQty that is still <= qty, and the most recently effective
+    //    revision (newest validFrom that is still <= now).
     const candidates = await db.priceListItem.findMany({
       where: {
         priceListId: priceList.id,
@@ -114,11 +117,19 @@ export const resolveEffectivePrice = async (input: {
           ...(input.variantId ? [{ variantId: input.variantId }] : []),
           { variantId: null },
         ],
+        // Only rows whose validity window covers today.
+        AND: [
+          { OR: [{ validFrom: null }, { validFrom: { lte: now } }] },
+          { OR: [{ validUntil: null }, { validUntil: { gte: now } }] },
+        ],
       },
       orderBy: [
-        // Variant-specific overrides outrank parent-level overrides
+        // Variant-specific overrides outrank parent-level overrides.
         { variantId: "desc" },
+        // Bigger tier threshold outranks smaller.
         { minQty: "desc" },
+        // Most recently effective revision wins.
+        { validFrom: "desc" },
       ],
     });
     if (candidates.length > 0) {
@@ -128,6 +139,8 @@ export const resolveEffectivePrice = async (input: {
         origin: best.minQty > 1 ? "list_override_tier" : "list_override",
         priceListCode: priceList.code,
         minQty: best.minQty,
+        validFrom: best.validFrom,
+        validUntil: best.validUntil,
       };
     }
 
@@ -270,6 +283,8 @@ export const pricingRoutes = async (app: FastifyInstance) => {
           price: z.number().nonnegative(),
           minQty: z.number().positive().default(1),
           notes: z.string().nullable().optional(),
+          validFrom: z.string().datetime().nullable().optional(),
+          validUntil: z.string().datetime().nullable().optional(),
         })
       )
       .optional(),
@@ -288,43 +303,59 @@ export const pricingRoutes = async (app: FastifyInstance) => {
       });
     }
     for (const item of body.upsert ?? []) {
+      const validFromDate = item.validFrom ? new Date(item.validFrom) : null;
+      const validUntilDate = item.validUntil ? new Date(item.validUntil) : null;
+
       if (item.id) {
+        // Existing row — update in place. Never create a duplicate.
         await db.priceListItem.update({
           where: { id: item.id },
           data: {
             price: item.price,
             minQty: item.minQty,
             notes: item.notes ?? null,
+            validFrom: validFromDate,
+            validUntil: validUntilDate,
           },
         });
       } else {
-        // Manual upsert because Prisma's composite-unique where doesn't
-        // accept a nullable variantId in its type.
-        const existing = await db.priceListItem.findFirst({
-          where: {
-            priceListId: id,
-            productId: item.productId,
-            variantId: item.variantId ?? null,
-            minQty: item.minQty,
-          },
-        });
-        if (existing) {
-          await db.priceListItem.update({
-            where: { id: existing.id },
-            data: { price: item.price, notes: item.notes ?? null },
-          });
-        } else {
-          await db.priceListItem.create({
-            data: {
+        // New row — always create. Revisions intentionally stack for the
+        // same (product, variant, minQty). The resolver picks the right one
+        // by date window. For the no-revision base case (the main grid save)
+        // we still de-duplicate by falling back to a findFirst so we don't
+        // create duplicate open-ended rows on repeated saves.
+        const isDateBound = validFromDate !== null || validUntilDate !== null;
+        if (!isDateBound) {
+          const existing = await db.priceListItem.findFirst({
+            where: {
               priceListId: id,
               productId: item.productId,
               variantId: item.variantId ?? null,
-              price: item.price,
               minQty: item.minQty,
-              notes: item.notes ?? null,
+              validFrom: null,
+              validUntil: null,
             },
           });
+          if (existing) {
+            await db.priceListItem.update({
+              where: { id: existing.id },
+              data: { price: item.price, notes: item.notes ?? null },
+            });
+            continue;
+          }
         }
+        await db.priceListItem.create({
+          data: {
+            priceListId: id,
+            productId: item.productId,
+            variantId: item.variantId ?? null,
+            price: item.price,
+            minQty: item.minQty,
+            notes: item.notes ?? null,
+            validFrom: validFromDate,
+            validUntil: validUntilDate,
+          },
+        });
       }
     }
     const fresh = await db.priceList.findUnique({

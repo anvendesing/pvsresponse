@@ -506,6 +506,8 @@ export interface PriceListItemRow {
   price: number;
   minQty: number;
   notes?: string | null;
+  validFrom?: string | null;
+  validUntil?: string | null;
   product?: {
     id: string;
     sku: string;
@@ -3059,6 +3061,8 @@ export const api = {
         price: number;
         minQty?: number;
         notes?: string | null;
+        validFrom?: string | null;
+        validUntil?: string | null;
       }[];
       remove?: string[];
     }

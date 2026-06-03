@@ -529,13 +529,20 @@ model PriceListItem {
   // Multiple rows with different minQty values create a quantity-break ladder.
   minQty       Float    @default(1)
   notes        String?
+  // Scheduled price revisions: null means "no bound" (always applies).
+  // Multiple rows for the same (priceList, product, variant, minQty) can
+  // exist with different windows — the resolver picks the one whose window
+  // covers "now" and was most recently effective (newest validFrom).
+  validFrom    DateTime?
+  validUntil   DateTime?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   priceList    PriceList @relation(fields: [priceListId], references: [id], onDelete: Cascade)
   product      Product   @relation(fields: [productId], references: [id])
   variant      ProductVariant? @relation(fields: [variantId], references: [id])
 
-  @@unique([priceListId, productId, variantId, minQty])
+  // No longer unique: revisions intentionally stack for the same SKU/tier.
+  @@index([priceListId, productId, variantId, minQty])
   @@index([priceListId])
   @@index([productId])
 }

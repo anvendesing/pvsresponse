@@ -29,7 +29,8 @@ COPY . .
 # Prisma needs the schema present before generate; copy the whole
 # tree first (cheap on alpine) then run.
 RUN npx prisma generate \
- && npm run build
+ && npm run build \
+ && npx tsc -p tsconfig.ops.json
 
 FROM node:${NODE_VERSION} AS runtime
 WORKDIR /app

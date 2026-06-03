@@ -64,19 +64,21 @@ export const Dashboard = () => {
 
   if (loading || errorObj) {
     return (
-      <div className="p-6">
-        <EmptyState
-          loading={loading}
-          error={errorObj}
-          onRetry={() => {
-            live.refetch();
-            liveTrend.refetch();
-            liveSplit.refetch();
-            liveSales.refetch();
-            liveStations.refetch();
-            liveWorkers.refetch();
-          }}
-        />
+      <div className="h-full overflow-y-auto">
+        <div className="p-6">
+          <EmptyState
+            loading={loading}
+            error={errorObj}
+            onRetry={() => {
+              live.refetch();
+              liveTrend.refetch();
+              liveSplit.refetch();
+              liveSales.refetch();
+              liveStations.refetch();
+              liveWorkers.refetch();
+            }}
+          />
+        </div>
       </div>
     );
   }
@@ -98,6 +100,7 @@ export const Dashboard = () => {
   const lowStock = live.data?.lowStock ?? 0;
 
   return (
+    <div className="h-full overflow-y-auto">
     <div className="p-6 space-y-6 max-w-[1600px] mx-auto">
       <div className="flex items-end justify-between flex-wrap gap-4">
         <div>
@@ -443,6 +446,7 @@ export const Dashboard = () => {
           </div>
         </Card>
       </div>
+    </div>
     </div>
   );
 };

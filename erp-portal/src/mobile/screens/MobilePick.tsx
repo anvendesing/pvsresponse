@@ -161,8 +161,12 @@ export const MobilePick = () => {
     );
   }
 
-  const allConfirmed = pl.items.every((i) => i.qtyPicked > 0 || i.qtyToPick === 0);
-  const remaining = pl.items.filter((i) => i.qtyPicked === 0 && i.qtyToPick > 0).length;
+  // An item is "done" when it has been picked OR there was nothing to pick.
+  // We only count items with qtyToPick > 0 as "requiring" a scan.
+  const pickableItems = pl.items.filter((i) => i.qtyToPick > 0);
+  const pickedCount = pickableItems.filter((i) => i.qtyPicked > 0).length;
+  const allConfirmed = pickableItems.length > 0 && pickedCount === pickableItems.length;
+  const remaining = pickableItems.length - pickedCount;
   // Once a pick crosses into 'picked' or 'cancelled' nothing on this
   // page can do useful work - scans, resets, releases all 409 with
   // bad_state. Detect the locked state once so we can disable line
@@ -304,8 +308,13 @@ export const MobilePick = () => {
         </div>
       )}
 
-      <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
-        Lines (in walk order)
+      <div className="mb-2 flex items-center justify-between">
+        <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+          Lines (in walk order)
+        </span>
+        <span className="text-xs font-semibold text-slate-600">
+          {pickedCount}/{pickableItems.length} picked
+        </span>
       </div>
 
       <div className="space-y-2">
@@ -315,30 +324,33 @@ export const MobilePick = () => {
           const binLabel = it.bin
             ? `${it.bin.zone}/${it.bin.shelf}/${it.bin.bin}`
             : "no bin";
+          // An item with qtyToPick === 0 has nothing to pick; treat as N/A.
+          const skipped = it.qtyToPick === 0;
+          // done = this specific item has been picked (qtyPicked > 0).
           const done = it.qtyPicked > 0;
           const stale = staleItemIds.includes(it.id);
           // Lines turn into static cards once the pick is locked; no
           // point letting the worker drill into a scan form they
           // can't submit.
-          const RowEl: React.ElementType = locked ? "div" : Link;
-          const rowProps: Record<string, unknown> = locked
-            ? {}
-            : { to: `/m/picks/${pl.id}/line/${it.id}` };
+          const RowEl: React.ElementType = locked || skipped ? "div" : Link;
+          const rowProps: Record<string, unknown> =
+            locked || skipped ? {} : { to: `/m/picks/${pl.id}/line/${it.id}` };
           return (
             <RowEl
               key={it.id}
               {...rowProps}
               className={[
                 "flex items-stretch overflow-hidden rounded-xl ring-1 transition",
-                locked
-                  ? "bg-white ring-slate-200 opacity-90"
+                locked || skipped
+                  ? "bg-white ring-slate-200 opacity-80"
                   : stale
                     ? "bg-amber-50 ring-amber-300"
                     : done
-                      ? "bg-emerald-50 ring-emerald-200"
-                      : "bg-white ring-slate-200",
+                      ? "bg-emerald-50 ring-emerald-300"
+                      : "bg-white ring-slate-200 active:bg-slate-50",
               ].join(" ")}
             >
+              {/* Left colour strip — unique per status so there's no ambiguity */}
               <div
                 className={[
                   "flex w-2 flex-shrink-0",
@@ -346,7 +358,9 @@ export const MobilePick = () => {
                     ? "bg-amber-500"
                     : done
                       ? "bg-emerald-500"
-                      : "bg-amber-400",
+                      : skipped
+                        ? "bg-slate-300"
+                        : "bg-amber-400",
                 ].join(" ")}
               />
               <div className="min-w-0 flex-1 px-3 py-3">
@@ -354,34 +368,50 @@ export const MobilePick = () => {
                   <span className="truncate font-mono text-sm font-semibold text-[#003087]">
                     {sku}
                   </span>
-                  <span className="text-xs text-slate-500">
+                  <span
+                    className={[
+                      "text-xs font-semibold",
+                      done ? "text-emerald-700" : "text-slate-500",
+                    ].join(" ")}
+                  >
                     {it.qtyPicked}/{it.qtyToPick} {uom}
                   </span>
                 </div>
                 <div className="mt-0.5 truncate text-sm text-slate-800">
                   {it.product?.name ?? "—"}
                 </div>
-                <div className="mt-1 flex items-center gap-2 text-[11px] text-slate-500">
-                  <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono">
+                <div className="mt-1.5 flex items-center gap-2 flex-wrap">
+                  <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-500">
                     {binLabel}
                   </span>
                   {stale ? (
-                    <span className="rounded bg-amber-200 px-1.5 py-0.5 font-semibold text-amber-900">
-                      stale - reset needed
+                    <span className="rounded-full bg-amber-200 px-2 py-0.5 text-[11px] font-semibold text-amber-900">
+                      ⚠ stale — reset needed
                     </span>
                   ) : done ? (
-                    <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-emerald-700">
-                      confirmed
+                    <span className="rounded-full bg-emerald-500 px-2 py-0.5 text-[11px] font-bold text-white">
+                      ✓ Picked
+                    </span>
+                  ) : skipped ? (
+                    <span className="rounded-full bg-slate-200 px-2 py-0.5 text-[11px] text-slate-500">
+                      N/A
                     </span>
                   ) : (
-                    <span className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-800">
-                      pending
+                    <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-800">
+                      Pending
                     </span>
                   )}
                 </div>
               </div>
-              {!locked && (
-                <div className="flex items-center px-3 text-slate-400">›</div>
+              {!locked && !skipped && (
+                <div
+                  className={[
+                    "flex items-center px-3 text-lg font-bold",
+                    done ? "text-emerald-400" : "text-slate-400",
+                  ].join(" ")}
+                >
+                  ›
+                </div>
               )}
             </RowEl>
           );
@@ -402,8 +432,8 @@ export const MobilePick = () => {
       <div className="fixed inset-x-0 bottom-[calc(72px+env(safe-area-inset-bottom))] z-30 border-t border-slate-200 bg-white px-4 py-3 shadow-[0_-4px_12px_-8px_rgba(0,0,0,0.15)]">
         <div className="mb-2 text-xs text-slate-500">
           {remaining === 0
-            ? "All lines confirmed - ready to complete the pick."
-            : `${remaining} line${remaining === 1 ? "" : "s"} still need a scan.`}
+            ? `All ${pickableItems.length} line${pickableItems.length === 1 ? "" : "s"} picked — ready to complete.`
+            : `${pickedCount} of ${pickableItems.length} picked · ${remaining} line${remaining === 1 ? "" : "s"} still need a scan.`}
         </div>
         <div className="flex gap-2">
           <button

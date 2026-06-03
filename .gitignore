@@ -27,7 +27,8 @@ out/
 *.db
 *.db-shm
 *.db-wal
-# SQLite WAL files are transient; the named Docker volume holds the real data
+*.db-journal
+# SQLite WAL/journal files are transient; the named Docker volume holds the real data
 prisma/dev.db
 prisma/test.db
 
@@ -50,6 +51,12 @@ coverage/
 
 # ── Prisma generated (regenerated at `prisma generate`) ──────────────────────
 node_modules/.prisma/
+# Nested node_modules (e.g. backend/node_modules/.prisma/) also generated
+**/node_modules/.prisma/
+
+# ── TypeScript incremental build info (local-only, auto-regenerated) ─────────
+tsconfig.tsbuildinfo
+*.tsbuildinfo
 
 # ── Mobile / Avalonia ─────────────────────────────────────────────────────────
 mobile/**/bin/
