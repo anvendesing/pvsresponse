@@ -12,6 +12,7 @@
     "prisma:reset": "prisma migrate reset --force",
     "studio": "prisma studio",
     "db:seed": "tsx prisma/seed.ts",
+    "db:seed-stock": "tsx src/scripts/seed-opening-stock.ts",
     "db:sync-stock": "node dist/scripts/sync-stock-from-bins.js",
     "db:sync-stock:dev": "tsx src/scripts/sync-stock-from-bins.ts",
     "db:import-catalog": "node dist/scripts/import-catalog.js",
