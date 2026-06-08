@@ -228,7 +228,7 @@ export const PackingSlipEditor = ({ packingSlipId, onClose, onChanged }: Props) 
         id?: string;
         invoiceNo?: string;
       };
-      setOkBanner(`Invoice ${inv.invoiceNo} generated · ${inr(total)}`);
+      setOkBanner(`Invoice ${inv.invoiceNo} generated · ${inr(billingTotals.grandTotal)}`);
       onChanged?.();
       if (inv.id) {
         onClose();
@@ -670,7 +670,7 @@ export const PackingSlipEditor = ({ packingSlipId, onClose, onChanged }: Props) 
                   disabled={busy}
                   title="Settle the pre-generated invoice and decrement stock for this legacy packed slip."
                 >
-                  {busy ? "…" : `Settle invoice ${inr(total)}`}
+                  {busy ? "…" : `Settle invoice ${inr(billingTotals.grandTotal)}`}
                 </Button>
               )}
             </div>
