@@ -130,7 +130,7 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
     // the variant SKU on each row.
     const variantByIdAcrossProducts = new Map<
       string,
-      { id: string; sku: string; size: string | null; uom: string; packSize: number }
+      { id: string; sku: string; size: string | null; uom: string | null; packSize: number }
     >();
     for (const p of products) {
       for (const v of p.variants) {

@@ -2543,6 +2543,7 @@ export const mfgRoutes = async (app: FastifyInstance) => {
         bin: string;
         qty: number;
         productId: string | null;
+        variantId: string | null;
       } | null = null;
 
       if (directPost && dest) {
