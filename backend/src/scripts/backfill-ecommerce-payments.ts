@@ -1,10 +1,14 @@
-// One-shot backfill: ecommerce prepaid invoices were marked status='paid'
-// at checkout but no CustomerPayment row was written, so AR statements
-// showed a debit with no matching credit. Creates payment + allocation
-// for each affected invoice.
+/**
+ * One-shot backfill: ecommerce prepaid invoices were marked status='paid'
+ * at checkout but no CustomerPayment row was written, so AR statements
+ * showed a debit with no matching credit. Creates payment + allocation
+ * for each affected invoice.
+ *
+ *   docker compose exec backend node dist/scripts/backfill-ecommerce-payments.js
+ */
 
-import { db } from "../src/db.js";
-import { nextPaymentNo } from "../src/routes/customer-payments.js";
+import { db } from "../db.js";
+import { nextPaymentNo } from "../routes/customer-payments.js";
 
 const main = async () => {
   const invoices = await db.invoice.findMany({
