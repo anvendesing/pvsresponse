@@ -29,6 +29,7 @@ interface ShelfResult {
     capacity: number;
     batch: string | null;
     product?: { sku: string; name: string; uom?: string } | null;
+    variant?: { sku: string; size?: string | null; uom?: string | null } | null;
   }[];
 }
 interface BinResult {
@@ -155,7 +156,7 @@ export const MobileLocation = () => {
                 </div>
                 <div className="text-xs text-slate-500">
                   {b.product
-                    ? `${b.product.sku} · ${b.qty} ${b.product.uom ?? "u"}`
+                    ? `${b.variant?.sku ?? b.product.sku}${b.variant?.size ? ` · ${b.variant.size}` : ""} · ${b.qty} ${b.variant?.uom ?? b.product.uom ?? "u"}`
                     : "empty"}
                 </div>
               </div>

@@ -804,7 +804,7 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
   // with the new product/qty. Two ledger rows + one BinCount with
   // productIdBefore != productIdAfter capture the swap.
   //
-  // Body: { productId, qty, reasonCode, remarks?, batch?, clientOpId? }
+  // Body: { productId, variantId?, qty, reasonCode, remarks?, batch?, clientOpId? }
   app.post(
     "/bins/:id/reassign",
     { preHandler: [app.authenticate] },
@@ -813,6 +813,7 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
       const body = z
         .object({
           productId: z.string().min(1),
+          variantId: z.string().min(1).nullable().optional(),
           qty: z.number().nonnegative(),
           reasonCode: z.enum(RECOUNT_REASONS),
           remarks: z.string().max(500).nullable().optional(),
@@ -832,7 +833,25 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
           error: { code: "product_not_found", message: "productId is unknown." },
         });
       }
-      if (bin.reservedQty > 0 && bin.productId && bin.productId !== newProduct.id) {
+      const newVariantId = body.variantId ?? null;
+      if (newVariantId) {
+        const variant = await db.productVariant.findFirst({
+          where: { id: newVariantId, productId: body.productId },
+          select: { id: true },
+        });
+        if (!variant) {
+          return reply.code(400).send({
+            error: {
+              code: "variant_not_found",
+              message: "variantId does not belong to productId.",
+            },
+          });
+        }
+      }
+      const sameAssignment =
+        bin.productId === newProduct.id &&
+        (bin.variantId ?? null) === newVariantId;
+      if (bin.reservedQty > 0 && bin.productId && !sameAssignment) {
         return reply.code(409).send({
           error: {
             code: "bin_reserved",
@@ -860,9 +879,11 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
       const before = bin.qty ?? 0;
       const after = Math.round(body.qty);
       const oldProductId = bin.productId;
+      const oldVariantId = bin.variantId ?? null;
       const newProductId = newProduct.id;
       const flagged =
         oldProductId !== newProductId ||
+        oldVariantId !== newVariantId ||
         isVariance(before, after);
 
       const result = await db.$transaction(async (tx) => {
@@ -872,6 +893,7 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
           await tx.stockLedger.create({
             data: {
               productId: oldProductId,
+              variantId: oldVariantId,
               warehouseId: bin.warehouseId,
               bin: `${bin.zone}/${bin.shelf}/${bin.bin}`,
               txnType: "Adjust",
@@ -885,6 +907,7 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
           where: { id },
           data: {
             productId: newProductId,
+            variantId: newVariantId,
             qty: after,
             batch: body.batch ?? null,
           },
@@ -892,6 +915,7 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
         await tx.stockLedger.create({
           data: {
             productId: newProductId,
+            variantId: newVariantId,
             warehouseId: bin.warehouseId,
             bin: `${bin.zone}/${bin.shelf}/${bin.bin}`,
             txnType: "Adjust",
@@ -914,25 +938,22 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
             flagged,
           },
         });
-        // Bin reassign moves units from one product to another. The
-        // OLD product loses `before` units; the NEW product gains
-        // `after` units. Stay variant-aware on whichever side has a
-        // variantId tag (typically neither at this point — reassign
-        // is for parent-only flows — but keep the column honest).
-        if (oldProductId && oldProductId !== newProductId) {
+        if (oldProductId && before > 0) {
           await recomputeStockOnHand(
             tx as unknown as typeof db,
             oldProductId,
-            null,
+            oldVariantId,
             -before
           );
         }
-        await recomputeStockOnHand(
-          tx as unknown as typeof db,
-          newProductId,
-          null,
-          after
-        );
+        if (after > 0) {
+          await recomputeStockOnHand(
+            tx as unknown as typeof db,
+            newProductId,
+            newVariantId,
+            after
+          );
+        }
 
         if (body.clientOpId) {
           await tx.auditLog.create({
@@ -945,7 +966,9 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
                 before,
                 after,
                 oldProductId,
+                oldVariantId,
                 newProductId,
+                newVariantId,
                 reason: body.reasonCode,
               }),
             },

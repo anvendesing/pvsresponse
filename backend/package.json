@@ -31,6 +31,7 @@
     "db:wipe": "tsx prisma/wipe.ts",
     "db:import-pricelists": "tsx scripts/import-pricelists.ts",
     "labels:bins": "tsx scripts/generate-bin-labels-pdf.ts",
+    "labels:test": "tsx scripts/generate-test-labels-pdf.ts",
     "setup": "prisma generate && prisma migrate dev --name init && tsx prisma/seed.ts && tsx scripts/import-pricelists.ts",
     "lint": "tsc --noEmit"
   },

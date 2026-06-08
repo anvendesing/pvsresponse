@@ -3549,6 +3549,7 @@ export const api = {
     binId: string,
     body: {
       productId: string;
+      variantId?: string | null;
       qty: number;
       reasonCode:
         | "physical_match"

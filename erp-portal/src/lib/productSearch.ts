@@ -112,4 +112,56 @@ export const searchProductsForSale = (
   };
 };
 
+/**
+ * Bin assign / warehouse mobile search: variant rows for multi-variant
+ * products, standalone row when a product has no variants. Parent-only
+ * rows are omitted so operators pick the exact sellable SKU.
+ */
+export const searchProductsForBinAssign = (
+  products: Product[],
+  rawTerm: string,
+  opts: { limit?: number } = {}
+): ProductSearchResult => {
+  const term = rawTerm.trim().toLowerCase();
+  if (term.length < 2) {
+    return { hits: [], totalMatches: 0, truncated: false };
+  }
+
+  const limit = opts.limit ?? 12;
+  const all: ProductSearchHit[] = [];
+
+  for (const p of products) {
+    const baseHit = productMatchesTerm(p, term);
+    const variants = p.variants ?? [];
+
+    for (const v of variants) {
+      if (variantMatchesTerm(v, term) || baseHit) {
+        all.push({
+          product: p,
+          variant: v,
+          label: variantLabel(v),
+          price: effectivePrice(p, v),
+          rowKind: "variant",
+        });
+      }
+    }
+
+    if (variants.length === 0 && baseHit) {
+      all.push({
+        product: p,
+        variant: null,
+        label: p.type,
+        price: p.sellingPrice,
+        rowKind: "standalone",
+      });
+    }
+  }
+
+  return {
+    hits: all.slice(0, limit),
+    totalMatches: all.length,
+    truncated: all.length > limit,
+  };
+};
+
 export { variantLabel, effectivePrice };

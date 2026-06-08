@@ -16,6 +16,17 @@ import {
   encodeShelf,
 } from "../lib/codes.js";
 
+const variantSelect = {
+  id: true,
+  sku: true,
+  barcode: true,
+  size: true,
+  color: true,
+  grade: true,
+  uom: true,
+  stockOnHand: true,
+} as const;
+
 // Reusable selection for picks/packs surfaced on /me/tasks. Kept tiny
 // because the mobile screen only needs counts + identifiers; the
 // detail page hits /pick-lists/:id directly.
@@ -239,6 +250,7 @@ export const locationsRoutes = async (app: FastifyInstance) => {
             },
             include: {
               product: { select: { id: true, sku: true, name: true, uom: true } },
+              variant: { select: variantSelect },
             },
             orderBy: { bin: "asc" },
           });
@@ -260,7 +272,9 @@ export const locationsRoutes = async (app: FastifyInstance) => {
               reservedQty: b.reservedQty,
               capacity: b.capacity,
               batch: b.batch,
+              variantId: b.variantId,
               product: b.product,
+              variant: b.variant,
             })),
           };
         }
@@ -283,6 +297,7 @@ export const locationsRoutes = async (app: FastifyInstance) => {
                 stockOnHand: true,
               },
             },
+            variant: { select: variantSelect },
             warehouse: { select: { id: true, code: true, name: true } },
           },
         });
@@ -328,7 +343,9 @@ export const locationsRoutes = async (app: FastifyInstance) => {
             reservedQty: bin.reservedQty,
             capacity: bin.capacity,
             batch: bin.batch,
+            variantId: bin.variantId,
             product: bin.product,
+            variant: bin.variant,
           },
           recentMoves,
           recentCounts,

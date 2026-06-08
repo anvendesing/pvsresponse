@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api, ApiError, auth } from "../../lib/api";
+import type { Product } from "../../data/types";
+import { searchProductsForBinAssign } from "../../lib/productSearch";
+import { variantAttrs } from "../../lib/variantAttrs";
 import { newClientOpId } from "../clientOpId";
 
 // =====================================================================
@@ -27,12 +30,23 @@ interface BinDetail {
     reservedQty: number;
     capacity: number;
     batch: string | null;
+    variantId?: string | null;
     product: {
       id: string;
       sku: string;
       name: string;
       uom?: string;
       stockOnHand?: number;
+    } | null;
+    variant: {
+      id: string;
+      sku: string;
+      barcode: string | null;
+      size: string | null;
+      color: string | null;
+      grade: string | null;
+      uom: string | null;
+      stockOnHand: number;
     } | null;
   };
   recentMoves: { id: string; date: string; txnType: string; ref: string; qty: number; balance: number }[];
@@ -48,11 +62,13 @@ interface BinDetail {
   }[];
 }
 
-interface ProductLite {
-  id: string;
+interface BinAssignPick {
+  productId: string;
+  variantId: string | null;
   sku: string;
   name: string;
-  uom?: string;
+  uom: string;
+  variantLabel?: string;
 }
 
 const REASON_LABELS: Record<string, string> = {
@@ -134,6 +150,9 @@ export const MobileBin = () => {
 
   const b = data.bin;
   const free = b.qty - b.reservedQty;
+  const variant = b.variant;
+  const sellUom = variant?.uom ?? b.product?.uom ?? "pcs";
+  const attrs = variant ? variantAttrs(variant) : "";
 
   return (
     <div className="px-4 pt-4 pb-6">
@@ -155,31 +174,55 @@ export const MobileBin = () => {
         <div className="mt-1 text-[11px] font-mono text-slate-400">{b.code}</div>
 
         <div className="mt-4 grid grid-cols-3 gap-2">
-          <Stat label="Qty" value={b.qty} accent />
-          <Stat label="Reserved" value={b.reservedQty} />
-          <Stat label="Free" value={free} accent />
+          <Stat label="Qty" value={b.qty} suffix={sellUom} accent />
+          <Stat label="Reserved" value={b.reservedQty} suffix={sellUom} />
+          <Stat label="Free" value={free} suffix={sellUom} accent />
         </div>
 
         <div className="mt-4 rounded-xl bg-slate-50 p-3">
           {b.product ? (
             <>
               <div className="text-xs uppercase tracking-wider text-slate-500">
-                Current product
+                {variant ? "Current variant" : "Current product"}
               </div>
-              <div className="mt-1 flex items-baseline justify-between">
+              <div className="mt-1 flex items-baseline justify-between gap-2">
                 <span className="font-mono text-sm font-semibold text-[#003087]">
-                  {b.product.sku}
+                  {variant ? variant.sku : b.product.sku}
                 </span>
-                <span className="text-xs text-slate-500">
-                  SOH {b.product.stockOnHand ?? 0} {b.product.uom ?? ""}
+                <span
+                  className="shrink-0 text-right text-xs text-slate-500"
+                  title="System-wide on-hand total across all bins (not this bin only)"
+                >
+                  {variant ? "Variant SOH" : "Product SOH"}{" "}
+                  {variant
+                    ? variant.stockOnHand
+                    : b.product.stockOnHand ?? 0}{" "}
+                  {sellUom}
                 </span>
               </div>
-              <div className="text-sm text-slate-900">{b.product.name}</div>
+              {variant && attrs && (
+                <div className="text-sm font-medium text-slate-800">{attrs}</div>
+              )}
+              <div className="text-sm text-slate-900">
+                {b.product.name}
+                {variant && (
+                  <span className="text-slate-500"> · {b.product.sku}</span>
+                )}
+              </div>
+              {variant?.barcode && (
+                <div className="mt-0.5 font-mono text-[11px] text-slate-500">
+                  {variant.barcode}
+                </div>
+              )}
               {b.batch && (
                 <div className="mt-1 text-[11px] text-slate-500">
                   batch {b.batch}
                 </div>
               )}
+              <div className="mt-2 text-[10px] leading-snug text-slate-400">
+                Qty / Reserved / Free above = this bin only. SOH = catalog
+                total{variant ? " for this variant" : ""} system-wide.
+              </div>
             </>
           ) : (
             <div className="text-sm text-slate-500">Bin is empty.</div>
@@ -290,7 +333,7 @@ export const MobileBin = () => {
         <RecountModal
           binId={b.id}
           currentQty={b.qty}
-          uom={b.product?.uom ?? "pcs"}
+          uom={sellUom}
           onClose={() => setShowRecount(false)}
           onSuccess={() => {
             setShowRecount(false);
@@ -301,7 +344,7 @@ export const MobileBin = () => {
       {showReassign && (
         <ReassignModal
           binId={b.id}
-          currentProductSku={b.product?.sku ?? null}
+          currentProductSku={variant?.sku ?? b.product?.sku ?? null}
           onClose={() => setShowReassign(false)}
           onSuccess={() => {
             setShowReassign(false);
@@ -316,10 +359,12 @@ export const MobileBin = () => {
 const Stat = ({
   label,
   value,
+  suffix,
   accent,
 }: {
   label: string;
   value: number;
+  suffix?: string;
   accent?: boolean;
 }) => (
   <div className={[
@@ -329,7 +374,12 @@ const Stat = ({
     <div className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">
       {label}
     </div>
-    <div className="text-lg font-bold tabular-nums">{value}</div>
+    <div className="text-lg font-bold tabular-nums leading-tight">{value}</div>
+    {suffix && (
+      <div className="text-[9px] font-medium uppercase tracking-wide text-slate-400">
+        {suffix}
+      </div>
+    )}
   </div>
 );
 
@@ -507,8 +557,8 @@ const ReassignModal = ({
   onSuccess: () => void;
 }) => {
   const [search, setSearch] = useState("");
-  const [results, setResults] = useState<ProductLite[]>([]);
-  const [picked, setPicked] = useState<ProductLite | null>(null);
+  const [results, setResults] = useState<BinAssignPick[]>([]);
+  const [picked, setPicked] = useState<BinAssignPick | null>(null);
   const [qty, setQty] = useState<number>(0);
   const [reason, setReason] = useState<keyof typeof REASON_LABELS>("product_swap");
   const [remarks, setRemarks] = useState("");
@@ -525,15 +575,22 @@ const ReassignModal = ({
         return;
       }
       api
-        .products({ q: search.trim(), limit: 8 })
+        .products({ q: search.trim(), limit: 50 })
         .then((rows) => {
           if (cancelled) return;
+          const { hits } = searchProductsForBinAssign(
+            rows as Product[],
+            search.trim(),
+            { limit: 12 }
+          );
           setResults(
-            (rows as unknown as ProductLite[]).map((p) => ({
-              id: p.id,
-              sku: p.sku,
-              name: p.name,
-              uom: p.uom,
+            hits.map((h) => ({
+              productId: h.product.id,
+              variantId: h.variant?.id ?? null,
+              sku: h.variant?.sku ?? h.product.sku,
+              name: h.product.name,
+              uom: h.variant?.uom ?? h.product.uom,
+              variantLabel: h.variant ? h.label : undefined,
             }))
           );
         })
@@ -551,7 +608,8 @@ const ReassignModal = ({
     setError(null);
     try {
       await api.reassignBin(binId, {
-        productId: picked.id,
+        productId: picked.productId,
+        variantId: picked.variantId,
         qty,
         reasonCode: reason as Parameters<typeof api.reassignBin>[1]["reasonCode"],
         remarks: remarks.trim() || null,
@@ -587,22 +645,27 @@ const ReassignModal = ({
               autoFocus
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search SKU or product name"
+              placeholder="Search variant SKU, barcode, or product name"
               className="mb-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-sm"
             />
             <div className="mb-3 max-h-60 space-y-1 overflow-y-auto">
               {results.map((p) => (
                 <button
-                  key={p.id}
+                  key={`${p.productId}-${p.variantId ?? "parent"}`}
                   type="button"
                   onClick={() => setPicked(p)}
-                  className="flex w-full items-baseline justify-between rounded-xl border border-slate-200 bg-white px-3 py-2 text-left hover:bg-slate-50"
+                  className="flex w-full items-baseline justify-between gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-left hover:bg-slate-50"
                 >
-                  <div>
-                    <div className="font-mono text-xs text-[#003087]">{p.sku}</div>
-                    <div className="text-sm text-slate-900">{p.name}</div>
+                  <div className="min-w-0">
+                    <div className="font-mono text-xs font-semibold text-[#003087]">
+                      {p.sku}
+                    </div>
+                    <div className="truncate text-sm text-slate-900">{p.name}</div>
+                    {p.variantLabel && (
+                      <div className="text-[11px] text-slate-500">{p.variantLabel}</div>
+                    )}
                   </div>
-                  <span className="text-xs text-slate-400">{p.uom ?? ""}</span>
+                  <span className="shrink-0 text-xs text-slate-400">{p.uom}</span>
                 </button>
               ))}
               {!results.length && search && (
@@ -616,6 +679,9 @@ const ReassignModal = ({
           <div className="mb-3 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
             <div className="font-mono text-xs text-emerald-800">{picked.sku}</div>
             <div className="text-sm font-semibold">{picked.name}</div>
+            {picked.variantLabel && (
+              <div className="text-xs text-emerald-700">{picked.variantLabel}</div>
+            )}
             <button
               type="button"
               onClick={() => setPicked(null)}

@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import type { Product } from "../../data/types";
 import { api, auth } from "../../lib/api";
+import { searchProductsForBinAssign } from "../../lib/productSearch";
+import { variantAttrs } from "../../lib/variantAttrs";
 
 // =====================================================================
 // /m/count — bin cycle count / stock adjustment
@@ -31,14 +34,26 @@ interface ResolvedBin {
   warehouseCode: string;
   warehouseName: string;
   product?: { id: string; sku: string; name: string; uom: string } | null;
+  variant?: {
+    id: string;
+    sku: string;
+    barcode: string | null;
+    size: string | null;
+    color: string | null;
+    grade: string | null;
+    uom: string | null;
+    stockOnHand: number;
+  } | null;
   qty?: number;
 }
 
-interface ResolvedProduct {
-  id: string;
+interface BinAssignPick {
+  productId: string;
+  variantId: string | null;
   sku: string;
   name: string;
   uom: string;
+  variantLabel?: string;
 }
 
 type RecountReason = "physical_match" | "damage" | "found_elsewhere" | "product_swap" | "spillage" | "expired" | "other";
@@ -72,7 +87,8 @@ export const MobileCount = () => {
 
   // Reassign state
   const [newProductCode, setNewProductCode] = useState("");
-  const [newProduct, setNewProduct] = useState<ResolvedProduct | null>(null);
+  const [reassignResults, setReassignResults] = useState<BinAssignPick[]>([]);
+  const [newProduct, setNewProduct] = useState<BinAssignPick | null>(null);
   const [reassignQty, setReassignQty] = useState("");
   const [reassignReason, setReassignReason] = useState<RecountReason>("product_swap");
   const [reassignRemarks, setReassignRemarks] = useState("");
@@ -100,9 +116,32 @@ export const MobileCount = () => {
         `${import.meta.env.VITE_API_URL}/v1/locations/scan?code=${encodeURIComponent(c)}`,
         { headers: { Authorization: `Bearer ${auth.token()}` } }
       ).then((r) => r.json());
-      if (resp.kind === "bin") {
-        setBin(resp as ResolvedBin);
-        setRecountQty(String(resp.qty ?? ""));
+      if (resp.kind === "bin" && resp.bin) {
+        const b = resp.bin as {
+          id: string;
+          zone: string;
+          shelf: string;
+          bin: string;
+          code: string;
+          qty: number;
+          product?: ResolvedBin["product"];
+          variant?: ResolvedBin["variant"];
+        };
+        const wh = resp.warehouse as { id: string; code: string; name: string };
+        setBin({
+          binId: b.id,
+          location: `${b.zone}/${b.shelf}/${b.bin}`,
+          zone: b.zone,
+          shelf: b.shelf,
+          bin: b.bin,
+          warehouseId: wh.id,
+          warehouseCode: wh.code,
+          warehouseName: wh.name,
+          product: b.product ?? null,
+          variant: b.variant ?? null,
+          qty: b.qty,
+        });
+        setRecountQty(String(b.qty ?? ""));
         setMode("recount");
       } else {
         setBinError("That code didn't resolve to a bin. Try a bin location like A/1/1.");
@@ -114,25 +153,39 @@ export const MobileCount = () => {
     }
   }, []);
 
-  const lookupProduct = useCallback(async (code: string) => {
-    const c = code.trim();
-    if (!c) return;
-    try {
-      const resp = await fetch(
-        `${import.meta.env.VITE_API_URL}/v1/products/by-sku/${encodeURIComponent(c)}`,
-        { headers: { Authorization: `Bearer ${auth.token()}` } }
-      ).then((r) => r.json());
-      if (resp?.id) setNewProduct(resp as ResolvedProduct);
-      else setNewProduct(null);
-    } catch {
-      setNewProduct(null);
-    }
-  }, []);
-
   useEffect(() => {
-    if (newProductCode.length > 1) void lookupProduct(newProductCode);
-    else setNewProduct(null);
-  }, [newProductCode, lookupProduct]);
+    let cancelled = false;
+    const t = setTimeout(() => {
+      const q = newProductCode.trim();
+      if (q.length < 2) {
+        setReassignResults([]);
+        return;
+      }
+      api
+        .products({ q, limit: 50 })
+        .then((rows) => {
+          if (cancelled) return;
+          const { hits } = searchProductsForBinAssign(rows as Product[], q, {
+            limit: 8,
+          });
+          setReassignResults(
+            hits.map((h) => ({
+              productId: h.product.id,
+              variantId: h.variant?.id ?? null,
+              sku: h.variant?.sku ?? h.product.sku,
+              name: h.product.name,
+              uom: h.variant?.uom ?? h.product.uom,
+              variantLabel: h.variant ? h.label : undefined,
+            }))
+          );
+        })
+        .catch(() => undefined);
+    }, 200);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [newProductCode]);
 
   const doRecount = async () => {
     if (!bin) return;
@@ -161,7 +214,8 @@ export const MobileCount = () => {
     setSuccess(null);
     try {
       await api.reassignBin(bin.binId, {
-        productId: newProduct.id,
+        productId: newProduct.productId,
+        variantId: newProduct.variantId,
         qty: Number(reassignQty),
         reasonCode: reassignReason,
         remarks: reassignRemarks || undefined,
@@ -293,18 +347,40 @@ export const MobileCount = () => {
               </div>
               <div className="px-4 py-3 space-y-0.5 text-sm">
                 <div className="flex justify-between">
-                  <span className="text-slate-500">Product</span>
-                  <span className="font-mono font-semibold">{bin.product?.sku ?? "Empty"}</span>
+                  <span className="text-slate-500">
+                    {bin.variant ? "Variant" : "Product"}
+                  </span>
+                  <span className="font-mono font-semibold">
+                    {bin.variant?.sku ?? bin.product?.sku ?? "Empty"}
+                  </span>
                 </div>
+                {bin.variant && variantAttrs(bin.variant) && (
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Size / pack</span>
+                    <span className="truncate ml-4">{variantAttrs(bin.variant)}</span>
+                  </div>
+                )}
                 {bin.product?.name && (
                   <div className="flex justify-between">
                     <span className="text-slate-500">Name</span>
                     <span className="truncate ml-4">{bin.product.name}</span>
                   </div>
                 )}
+                {bin.variant && (
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Variant SOH</span>
+                    <span className="font-semibold tabular-nums">
+                      {bin.variant.stockOnHand}{" "}
+                      {bin.variant.uom ?? bin.product?.uom ?? "pcs"}
+                    </span>
+                  </div>
+                )}
                 <div className="flex justify-between">
-                  <span className="text-slate-500">Qty on record</span>
-                  <span className="font-semibold">{bin.qty ?? 0}</span>
+                  <span className="text-slate-500">Qty in bin</span>
+                  <span className="font-semibold tabular-nums">
+                    {bin.qty ?? 0}{" "}
+                    {bin.variant?.uom ?? bin.product?.uom ?? "pcs"}
+                  </span>
                 </div>
               </div>
               {/* Sub-mode tabs */}
@@ -391,18 +467,57 @@ export const MobileCount = () => {
             <div className="space-y-3">
               <div>
                 <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-slate-500">
-                  New product SKU
+                  New variant / product
                 </label>
                 <input
                   type="text"
                   value={newProductCode}
-                  onChange={(e) => setNewProductCode(e.target.value)}
-                  placeholder="Type SKU or scan"
+                  onChange={(e) => {
+                    setNewProductCode(e.target.value);
+                    setNewProduct(null);
+                  }}
+                  placeholder="Search variant SKU, barcode, or name"
                   className="w-full h-10 rounded-xl border border-slate-300 px-3 text-sm"
                 />
+                {!newProduct && reassignResults.length > 0 && (
+                  <div className="mt-2 max-h-40 space-y-1 overflow-y-auto">
+                    {reassignResults.map((p) => (
+                      <button
+                        key={`${p.productId}-${p.variantId ?? "p"}`}
+                        type="button"
+                        onClick={() => {
+                          setNewProduct(p);
+                          setNewProductCode(p.sku);
+                          setReassignResults([]);
+                        }}
+                        className="flex w-full items-baseline justify-between gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-left text-sm"
+                      >
+                        <div className="min-w-0">
+                          <div className="font-mono text-xs font-semibold text-[#003087]">
+                            {p.sku}
+                          </div>
+                          <div className="truncate text-slate-800">{p.name}</div>
+                          {p.variantLabel && (
+                            <div className="text-[11px] text-slate-500">{p.variantLabel}</div>
+                          )}
+                        </div>
+                        <span className="shrink-0 text-xs text-slate-400">{p.uom}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
                 {newProduct && (
-                  <div className="mt-1 text-xs text-emerald-700 font-semibold">
-                    ✓ {newProduct.sku} — {newProduct.name}
+                  <div className="mt-2 rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+                    <div className="font-mono font-semibold">{newProduct.sku}</div>
+                    <div>{newProduct.name}</div>
+                    {newProduct.variantLabel && <div>{newProduct.variantLabel}</div>}
+                    <button
+                      type="button"
+                      className="mt-1 underline"
+                      onClick={() => setNewProduct(null)}
+                    >
+                      change
+                    </button>
                   </div>
                 )}
               </div>

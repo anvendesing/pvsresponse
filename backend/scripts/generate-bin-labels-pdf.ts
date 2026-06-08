@@ -119,21 +119,28 @@ function drawLabel(
       lineBreak: false,
     });
 
-  const barTop = y + pad + 10;
-  const barMaxH = LABEL_H - pad * 2 - 28;
+  const HEADER_H = 12;
+  const CODE_H = 14;
+  const BAR_CODE_GAP = 5;
+  const barTop = y + pad + HEADER_H;
+  const codeTop = y + LABEL_H - pad - CODE_H;
+  const barMaxH = Math.max(8, codeTop - BAR_CODE_GAP - barTop);
+
   doc.image(png, x + pad, barTop, {
     fit: [innerW, barMaxH],
     align: "center",
-    valign: "center",
+    valign: "top",
   });
 
   doc
     .font("Helvetica")
-    .fontSize(6.5)
+    .fontSize(label.code.length > 22 ? 5 : 6.5)
     .fillColor("#333333")
-    .text(label.code, x + pad, y + LABEL_H - pad - 14, {
+    .text(label.code, x + pad, codeTop, {
       width: innerW,
+      height: CODE_H,
       align: "center",
+      ellipsis: true,
     });
 }
 
