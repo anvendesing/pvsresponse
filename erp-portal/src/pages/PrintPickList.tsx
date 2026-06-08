@@ -236,14 +236,15 @@ export const PrintPickList = () => {
                         {it.qtyToPick}
                       </td>
                       <td
-                        className={`py-2 pr-2 text-right tabular-nums ${
-                          short ? "text-amber-700 font-semibold" : ""
+                        className={`py-2 pr-2 text-right tabular-nums min-w-[3rem] ${
+                          short && it.qtyPicked > 0 ? "text-amber-700 font-semibold" : ""
                         }`}
                       >
-                        {it.qtyPicked}
-                        {short && (
-                          <span className="ml-1 text-xs">(-{it.qtyToPick - it.qtyPicked})</span>
-                        )}
+                        {/* Paper pick lists: leave Picked blank until the
+                            warehouse writes a qty by hand. Showing "0
+                            (-40)" clutters the printout and duplicates
+                            what To pick already states. */}
+                        {it.qtyPicked > 0 ? it.qtyPicked : ""}
                       </td>
                       <td
                         className={`py-2 text-right tabular-nums ${

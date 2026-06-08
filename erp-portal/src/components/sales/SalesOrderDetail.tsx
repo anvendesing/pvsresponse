@@ -5,11 +5,12 @@
 // here, which used to confuse operators by letting them issue a
 // zero-line invoice or double-bill an already-fulfilled SO.
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   CheckCircle2,
   ListChecks,
+  Lock,
   Package,
   PackageCheck,
   PauseCircle,
@@ -28,6 +29,8 @@ import {
 } from "@/lib/api";
 import { dt, dd, inr } from "@/lib/format";
 import { cn } from "@/lib/cn";
+import { resolveBillingTotals } from "@/lib/billingTotals";
+import { BillingTotalsBreakdown } from "@/components/billing/BillingTotalsBreakdown";
 import { PickListEditor } from "./PickListEditor";
 import { PackingSlipEditor } from "./PackingSlipEditor";
 import { ShareDocumentMenu } from "@/components/common/ShareDocumentMenu";
@@ -142,6 +145,63 @@ export const SalesOrderDetail = ({ salesOrderId, onClose, onChanged }: Props) =>
     }
   };
 
+  const reserveStock = async () => {
+    if (!so) return;
+    setBusy(true);
+    setError(null);
+    setOkBanner(null);
+    try {
+      const result = await api.reserveSalesOrder(so.id);
+      const totalReserved = result.reserved.reduce((s, r) => s + r.reserved, 0);
+      const totalShort = result.reserved.reduce((s, r) => s + r.short, 0);
+      setOkBanner(
+        totalShort > 0
+          ? `Reserved ${totalReserved} units across ${result.reserved.length} lines (short ${totalShort} — see flagged lines below).`
+          : `Reserved ${totalReserved} units across ${result.reserved.length} lines.`
+      );
+      await refresh();
+      onChanged?.();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Reservation summary per line — used to render the Resv column and
+  // decide whether to show the "Reserve stock" CTA.
+  const lineReservation = useMemo(() => {
+    const map = new Map<string, { reserved: number; outstanding: number }>();
+    for (const it of so?.items ?? []) {
+      const reserved = (it.reservations ?? []).reduce((s, r) => s + r.qty, 0);
+      const outstanding = Math.max(
+        0,
+        Math.round(it.qtyOrdered - it.qtyInvoiced - it.qtyCancelled)
+      );
+      map.set(it.id, { reserved, outstanding });
+    }
+    return map;
+  }, [so]);
+
+  const totalReserved = useMemo(
+    () =>
+      Array.from(lineReservation.values()).reduce((s, l) => s + l.reserved, 0),
+    [lineReservation]
+  );
+  const totalOutstanding = useMemo(
+    () =>
+      Array.from(lineReservation.values()).reduce((s, l) => s + l.outstanding, 0),
+    [lineReservation]
+  );
+  // True iff the SO is in a state where reservations are meaningful
+  // and at least one line has outstanding qty that isn't fully
+  // reserved (the user-visible "should we offer the Reserve button"
+  // signal).
+  const reservable =
+    !!so &&
+    (so.status === "confirmed" || so.status === "partially_invoiced") &&
+    totalOutstanding > totalReserved;
+
   return (
     <div className="fixed inset-0 z-50 bg-ink/40 grid place-items-end" onClick={onClose}>
       <div
@@ -226,6 +286,18 @@ export const SalesOrderDetail = ({ salesOrderId, onClose, onChanged }: Props) =>
                   label="Invoice"
                 />
                 <div className="flex-1" />
+                {reservable && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    icon={<Lock size={14} />}
+                    onClick={reserveStock}
+                    disabled={busy}
+                    title={`Hard-reserve ${totalOutstanding - totalReserved} more unit(s) on bins so the warehouse view shows them as Reserved.`}
+                  >
+                    Reserve stock
+                  </Button>
+                )}
                 {!openPickList && !openPackingSlip && (
                   <Button
                     size="sm"
@@ -271,12 +343,44 @@ export const SalesOrderDetail = ({ salesOrderId, onClose, onChanged }: Props) =>
                   <div className="text-caption text-ink-muted">{dt(so.orderDate)}</div>
                 </Card>
                 <Card label="Total">
-                  <div className="font-bold tnum text-h3 text-primary">{inr(so.total)}</div>
-                  <div className="text-caption text-ink-muted">
-                    Sub {inr(so.subTotal)} · Tax {inr(so.tax)}
-                  </div>
+                  {(() => {
+                    const totals = resolveBillingTotals({
+                      subTotal: so.subTotal,
+                      tax: so.tax,
+                      transportCharge: so.transportCharge,
+                      transportTax: so.transportTax,
+                      total: so.total,
+                    });
+                    return (
+                      <>
+                        <div className="font-bold tnum text-h3 text-primary">
+                          {inr(totals.grandTotal)}
+                        </div>
+                        <BillingTotalsBreakdown totals={totals} variant="inline" />
+                      </>
+                    );
+                  })()}
                 </Card>
               </section>
+
+              {(so.dispatchOption || (so.transportCharge ?? 0) > 0) && (
+                <section className="rounded-md border border-border bg-canvas px-4 py-3 text-body-sm">
+                  <div className="text-caption text-ink-muted uppercase font-semibold mb-1">
+                    Dispatch
+                  </div>
+                  <div className="font-medium">
+                    {so.dispatchOption?.name ?? "—"}
+                  </div>
+                  {(so.transportCharge ?? 0) > 0 && (
+                    <div className="text-caption text-ink-muted mt-0.5">
+                      Transport {inr(so.transportCharge ?? 0)}
+                      {(so.transportTax ?? 0) > 0 && (
+                        <> + GST {inr(so.transportTax ?? 0)}</>
+                      )}
+                    </div>
+                  )}
+                </section>
+              )}
 
               <section>
                 <div className="flex items-center justify-between mb-2">
@@ -309,15 +413,31 @@ export const SalesOrderDetail = ({ salesOrderId, onClose, onChanged }: Props) =>
               )}
 
               <section>
-                <div className="text-caption text-ink-muted uppercase font-semibold mb-2">
-                  Lines
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-caption text-ink-muted uppercase font-semibold">
+                    Lines
+                  </div>
+                  {(so.status === "confirmed" ||
+                    so.status === "partially_invoiced" ||
+                    so.status === "on_hold") && (
+                    <div className="text-caption text-ink-muted tnum flex items-center gap-1">
+                      <Lock size={12} className="opacity-70" />
+                      Reserved {totalReserved} / {totalOutstanding} outstanding
+                    </div>
+                  )}
                 </div>
                 <div className="border border-border rounded-md overflow-hidden">
                   <div className="grid grid-cols-12 grid-header-cell text-caption">
-                    <div className="col-span-5">Product</div>
+                    <div className="col-span-4">Product</div>
                     <div className="col-span-1 text-right">Ord</div>
                     <div className="col-span-1 text-right">Inv</div>
                     <div className="col-span-1 text-right">Rem</div>
+                    <div
+                      className="col-span-1 text-right"
+                      title="Bin units hard-reserved against this line. Goes up at SO confirm and shifts to pick-list reservation at pick→picked."
+                    >
+                      Resv
+                    </div>
                     <div className="col-span-1 text-right">Stock</div>
                     <div className="col-span-1 text-right">Rate</div>
                     <div className="col-span-2 text-right">Subtotal</div>
@@ -328,12 +448,25 @@ export const SalesOrderDetail = ({ salesOrderId, onClose, onChanged }: Props) =>
                       it.qtyOrdered - it.qtyInvoiced - it.qtyCancelled
                     );
                     const stock = it.variant?.stockOnHand ?? it.product?.stockOnHand ?? 0;
+                    const lr = lineReservation.get(it.id);
+                    const reserved = lr?.reserved ?? 0;
+                    const reservationTitle =
+                      (it.reservations ?? []).length > 0
+                        ? (it.reservations ?? [])
+                            .map(
+                              (r) =>
+                                `${r.qty} on ${r.bin?.warehouse?.code ?? "?"} · ${r.bin?.zone}/${r.bin?.shelf}/${r.bin?.bin}`
+                            )
+                            .join("\n")
+                        : remaining > 0
+                          ? "No bin reservation yet. Confirm or click 'Reserve stock' to lock units."
+                          : "";
                     return (
                       <div
                         key={it.id}
                         className="grid grid-cols-12 grid-cell items-center !py-2 text-body-sm"
                       >
-                        <div className="col-span-5">
+                        <div className="col-span-4">
                           <div className="font-semibold">
                             {it.product?.name ?? it.productId}
                           </div>
@@ -344,6 +477,21 @@ export const SalesOrderDetail = ({ salesOrderId, onClose, onChanged }: Props) =>
                         <div className="col-span-1 text-right tnum">{it.qtyOrdered}</div>
                         <div className="col-span-1 text-right tnum">{it.qtyInvoiced}</div>
                         <div className="col-span-1 text-right tnum font-semibold">{remaining}</div>
+                        <div
+                          className={cn(
+                            "col-span-1 text-right tnum",
+                            remaining === 0
+                              ? "text-ink-muted"
+                              : reserved >= remaining
+                                ? "text-success"
+                                : reserved > 0
+                                  ? "text-warning"
+                                  : "text-danger"
+                          )}
+                          title={reservationTitle}
+                        >
+                          {reserved}
+                        </div>
                         <div
                           className={cn(
                             "col-span-1 text-right tnum",
@@ -526,6 +674,28 @@ export const SalesOrderDetail = ({ salesOrderId, onClose, onChanged }: Props) =>
                   disabled={busy}
                 >
                   Close
+                </Button>
+              )}
+              {so.status === "partially_invoiced" && (
+                /*
+                 * Partial fulfilment endpoint. When picking finished
+                 * short (warehouse shortage / damaged stock), the
+                 * un-invoiced remainder otherwise hangs on the
+                 * customer's open AR as a future commitment. Closing
+                 * accepts the shortfall: the backend bumps
+                 * qtyCancelled on every line so soCommitment goes to
+                 * 0 and the customer's Open Balance now matches the
+                 * invoiced amount only.
+                 */
+                <Button
+                  size="sm"
+                  variant="outline"
+                  icon={<ListChecks size={14} />}
+                  onClick={() => transition("close")}
+                  disabled={busy}
+                  title="Accept what was actually invoiced and cancel the un-invoiced remainder. The customer's open AR will drop to the issued invoice total."
+                >
+                  Close (accept shortfall)
                 </Button>
               )}
               <div className="flex-1" />

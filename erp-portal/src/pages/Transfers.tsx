@@ -1,12 +1,15 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import {
+  AlertTriangle,
   ArrowRightLeft,
   CheckCircle2,
   ChevronRight,
   Clock,
   Package,
   Plus,
+  ShieldCheck,
   Truck,
+  UserCheck,
   X,
   XCircle,
 } from "lucide-react";
@@ -16,7 +19,7 @@ import { DataTable, type Column } from "@/components/common/DataTable";
 import { Input } from "@/components/common/Input";
 import { Kpi } from "@/components/common/Kpi";
 import { Toolbar } from "@/components/common/Toolbar";
-import { api, type TransferOrderRow, type TransferOrderItem } from "@/lib/api";
+import { api, auth, type TransferOrderRow, type TransferOrderItem } from "@/lib/api";
 import { useApi } from "@/hooks/useApi";
 import { cn } from "@/lib/cn";
 
@@ -75,10 +78,12 @@ const DetailSlideOver = ({
   order,
   onClose,
   onCancel,
+  onUpdated,
 }: {
   order: TransferOrderRow;
   onClose: () => void;
   onCancel: (id: string) => Promise<void>;
+  onUpdated: (next: TransferOrderRow) => void;
 }) => {
   const [cancelling, setCancelling] = useState(false);
 
@@ -90,6 +95,10 @@ const DetailSlideOver = ({
   };
 
   const canCancel = order.status === "draft" || order.status === "ready";
+  const currentRole = auth.user()?.role ?? "";
+  const isAdminOrSupervisor = currentRole === "admin" || currentRole === "supervisor";
+  const canAdminControl =
+    isAdminOrSupervisor && order.status !== "done" && order.status !== "cancelled";
 
   return (
     <div
@@ -143,21 +152,239 @@ const DetailSlideOver = ({
           <MetaRow label="Linked MO" text={order.productionOrder?.orderNo ?? "—"} />
           <MetaRow label="Picked by" text={order.pickedBy ? `${order.pickedBy.name} · ${fmtDate(order.pickedAt)}` : "—"} />
           <MetaRow label="Dropped by" text={order.droppedBy ? `${order.droppedBy.name} · ${fmtDate(order.droppedAt)}` : "—"} />
-          {order.notes && <div className="col-span-2 text-ink-muted italic">{order.notes}</div>}
+          {order.notes && (
+            <div className="col-span-2 text-ink-muted italic whitespace-pre-wrap">{order.notes}</div>
+          )}
         </div>
 
-        {/* Items */}
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
-          <p className="text-caption font-semibold text-ink-muted uppercase tracking-wide">
-            Items ({order.items.length})
-          </p>
-          {order.items.length === 0 && (
-            <p className="text-caption text-ink-muted">No items.</p>
+        <div className="flex-1 overflow-y-auto">
+          {isAdminOrSupervisor && (
+            <AdminControls
+              order={order}
+              disabled={!canAdminControl}
+              onUpdated={onUpdated}
+            />
           )}
-          {order.items.map((item) => (
-            <ItemCard key={item.id} item={item} />
-          ))}
+
+          {/* Items */}
+          <div className="px-5 py-4 space-y-3">
+            <p className="text-caption font-semibold text-ink-muted uppercase tracking-wide">
+              Items ({order.items.length})
+            </p>
+            {order.items.length === 0 && (
+              <p className="text-caption text-ink-muted">No items.</p>
+            )}
+            {order.items.map((item) => (
+              <ItemCard key={item.id} item={item} />
+            ))}
+          </div>
         </div>
+      </div>
+    </div>
+  );
+};
+
+// ─── Admin controls (assign + status override) ────────────────────────────────
+
+type TOStatus = TransferOrderRow["status"];
+
+const AdminControls = ({
+  order,
+  disabled,
+  onUpdated,
+}: {
+  order: TransferOrderRow;
+  disabled: boolean;
+  onUpdated: (next: TransferOrderRow) => void;
+}) => {
+  // Lazy-load the worker list on first mount so the dropdown is ready
+  // when an admin opens the slide-over.
+  const [workers, setWorkers] = useState<
+    Array<{ id: string; username: string; name: string; role: string }>
+  >([]);
+  const [workersErr, setWorkersErr] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .transferOrderWorkers()
+      .then((rows) => {
+        if (!cancelled) setWorkers(rows);
+      })
+      .catch((e: unknown) => {
+        if (!cancelled) setWorkersErr((e as Error).message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Assignment
+  const [assignSel, setAssignSel] = useState<string>(order.assignedTo?.id ?? "");
+  useEffect(() => {
+    setAssignSel(order.assignedTo?.id ?? "");
+  }, [order.assignedTo?.id]);
+  const [assigning, setAssigning] = useState(false);
+  const [assignErr, setAssignErr] = useState<string | null>(null);
+
+  const handleAssign = async () => {
+    setAssignErr(null);
+    setAssigning(true);
+    try {
+      const next = await api.assignTransferOrder(
+        order.id,
+        assignSel === "" ? null : assignSel
+      );
+      onUpdated(next);
+    } catch (e) {
+      setAssignErr((e as Error).message);
+    } finally {
+      setAssigning(false);
+    }
+  };
+
+  // Status override
+  const [overrideStatus, setOverrideStatus] = useState<TOStatus>(order.status);
+  const [overrideReason, setOverrideReason] = useState("");
+  const [overriding, setOverriding] = useState(false);
+  const [overrideErr, setOverrideErr] = useState<string | null>(null);
+
+  const handleOverride = async () => {
+    setOverrideErr(null);
+    if (overrideStatus === order.status) {
+      setOverrideErr("Pick a different status to override to.");
+      return;
+    }
+    if (overrideReason.trim().length < 3) {
+      setOverrideErr("Enter a short reason (3+ characters) for the audit log.");
+      return;
+    }
+    if (
+      !confirm(
+        `Manually set ${order.transferNo} to "${statusLabel[overrideStatus]}"?\n\nThis is a metadata-only override — it will NOT move any stock.`
+      )
+    ) {
+      return;
+    }
+    setOverriding(true);
+    try {
+      const next = await api.setTransferOrderStatus(
+        order.id,
+        overrideStatus,
+        overrideReason.trim()
+      );
+      onUpdated(next);
+      setOverrideReason("");
+    } catch (e) {
+      setOverrideErr((e as Error).message);
+    } finally {
+      setOverriding(false);
+    }
+  };
+
+  return (
+    <div className="px-5 py-4 border-b border-border bg-primary-50/40 space-y-4">
+      <div className="flex items-center gap-2">
+        <ShieldCheck size={14} className="text-primary" />
+        <span className="text-caption font-semibold text-primary uppercase tracking-wide">
+          Admin controls
+        </span>
+      </div>
+
+      {disabled && (
+        <p className="text-caption text-ink-muted">
+          This transfer is {statusLabel[order.status].toLowerCase()} — assignment and
+          status override are locked. Use Cancel TO if you need to reverse a stuck flow.
+        </p>
+      )}
+
+      {/* Assignment */}
+      <div className="space-y-1.5">
+        <label className="text-caption font-medium text-ink flex items-center gap-1">
+          <UserCheck size={12} /> Assigned to
+        </label>
+        <div className="flex items-center gap-2">
+          <select
+            value={assignSel}
+            onChange={(e) => setAssignSel(e.target.value)}
+            disabled={disabled || assigning}
+            className="flex-1 border border-border rounded-md px-2 h-9 text-body-sm bg-surface text-ink focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-canvas disabled:text-ink-muted"
+          >
+            <option value="">— Unassigned —</option>
+            {workers.map((w) => (
+              <option key={w.id} value={w.id}>
+                {w.name} ({w.role})
+              </option>
+            ))}
+            {/* Keep the current assignee visible even if they're no longer in
+                the active workers list (e.g. role changed, deactivated). */}
+            {order.assignedTo &&
+              !workers.some((w) => w.id === order.assignedTo!.id) && (
+                <option value={order.assignedTo.id}>
+                  {order.assignedTo.name} (current)
+                </option>
+              )}
+          </select>
+          <Button
+            size="sm"
+            onClick={handleAssign}
+            disabled={
+              disabled ||
+              assigning ||
+              (assignSel === (order.assignedTo?.id ?? ""))
+            }
+          >
+            {assigning ? "Saving…" : "Update"}
+          </Button>
+        </div>
+        {workersErr && (
+          <p className="text-caption text-danger">Could not load workers: {workersErr}</p>
+        )}
+        {assignErr && <p className="text-caption text-danger">{assignErr}</p>}
+      </div>
+
+      {/* Manual status override */}
+      <div className="space-y-1.5">
+        <label className="text-caption font-medium text-ink flex items-center gap-1">
+          <AlertTriangle size={12} className="text-warning" /> Status override (backup)
+        </label>
+        <p className="text-caption text-ink-muted leading-snug">
+          Use only when the normal pick / drop flow can't be completed.
+          This changes the status field for record-keeping —
+          <span className="font-semibold"> it does not move stock</span>.
+        </p>
+        <div className="grid grid-cols-2 gap-2">
+          <select
+            value={overrideStatus}
+            onChange={(e) => setOverrideStatus(e.target.value as TOStatus)}
+            disabled={disabled || overriding}
+            className="border border-border rounded-md px-2 h-9 text-body-sm bg-surface text-ink focus:outline-none focus:ring-1 focus:ring-primary disabled:bg-canvas"
+          >
+            {(Object.keys(statusLabel) as TOStatus[]).map((s) => (
+              <option key={s} value={s}>
+                {statusLabel[s]}
+              </option>
+            ))}
+          </select>
+          <Input
+            size="md"
+            placeholder="Reason (audited)…"
+            value={overrideReason}
+            onChange={(e) => setOverrideReason(e.target.value)}
+            disabled={disabled || overriding}
+          />
+        </div>
+        <div className="flex justify-end">
+          <Button
+            size="sm"
+            variant="outline"
+            icon={<ShieldCheck size={13} />}
+            onClick={handleOverride}
+            disabled={disabled || overriding || overrideStatus === order.status}
+          >
+            {overriding ? "Applying…" : "Apply override"}
+          </Button>
+        </div>
+        {overrideErr && <p className="text-caption text-danger">{overrideErr}</p>}
       </div>
     </div>
   );
@@ -657,6 +884,13 @@ export const Transfers = () => {
           order={selected}
           onClose={() => setSelected(null)}
           onCancel={handleCancel}
+          onUpdated={(next) => {
+            // Reflect the change in the slide-over immediately and
+            // refresh the list so the row's Status / Assigned cells
+            // re-render without needing a full reload.
+            setSelected(next);
+            refresh();
+          }}
         />
       )}
 

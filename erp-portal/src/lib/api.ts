@@ -257,6 +257,27 @@ export interface StatementEntry {
 
 export interface CustomerStatement {
   customer: CustomerRow & { openBalance: number; availableCredit: number | null };
+  breakdown?: {
+    invoiceRemainder: number;
+    openSOCommitment: number;
+    unallocatedAdvance: number;
+  };
+  /**
+   * Every SO that's still padding the customer's open AR — covers
+   * 'partially_invoiced' as well as 'confirmed' / 'on_hold' SOs that
+   * have an issued invoice but a remaining qty (warehouse shortfall
+   * cases). Each entry is actionable from the AR drawer banner.
+   */
+  partiallyInvoicedSOs?: {
+    id: string;
+    soNo: string;
+    status: string;
+    total: number;
+    invoicedFraction: number;
+    remainingCommitment: number;
+    remainingQty: number;
+    hasIssuedInvoice: boolean;
+  }[];
   entries: StatementEntry[];
 }
 
@@ -332,6 +353,17 @@ export interface InventoryLocationBinRow {
   qty: number;
   reserved: number;
   free: number;
+  /**
+   * Variant attribution of *this specific bin*. NULL means the bin
+   * stores the parent product in bulk form (e.g. drum of CAOL bulk
+   * castor oil). The InventoryLocationsPanel chip uses this rather
+   * than the parent-product-level `matchedVariant` so each bin shows
+   * its own SKU instead of one variant being painted across all bins.
+   */
+  variantId?: string | null;
+  variantSku?: string | null;
+  variantSize?: string | null;
+  variantUom?: string | null;
 }
 
 export interface InventoryLocationMatch {
@@ -543,23 +575,33 @@ interface Raw {
 // caller injects when iterating warehouses; fall back to the raw cuid only
 // if the code wasn't supplied. The `warehouseName` is used by the UI tree
 // label so users see "Main Warehouse · WH-MAIN" instead of a cuid.
-const adaptBin = (r: Raw): Bin => ({
-  id: r.id as string,
-  warehouse:
-    (r.warehouseCode as string) ??
-    (r.warehouse as string) ??
-    (r.warehouseId as string),
-  warehouseName: (r.warehouseName as string) ?? undefined,
-  zone: r.zone as string,
-  shelf: r.shelf as string,
-  bin: r.bin as string,
-  capacity: r.capacity as number,
-  occupied: r.occupied as number,
-  qty: r.qty as number,
-  batch: (r.batch as string) ?? undefined,
-  productSku: ((r.product as Raw | null)?.sku as string) ?? undefined,
-  productName: ((r.product as Raw | null)?.name as string) ?? undefined,
-});
+const adaptBin = (r: Raw): Bin => {
+  const product = r.product as Raw | null;
+  const variant = r.variant as Raw | null;
+  return {
+    id: r.id as string,
+    warehouse:
+      (r.warehouseCode as string) ??
+      (r.warehouse as string) ??
+      (r.warehouseId as string),
+    warehouseName: (r.warehouseName as string) ?? undefined,
+    zone: r.zone as string,
+    shelf: r.shelf as string,
+    bin: r.bin as string,
+    capacity: r.capacity as number,
+    occupied: r.occupied as number,
+    qty: r.qty as number,
+    batch: (r.batch as string) ?? undefined,
+    productId: (r.productId as string | null) ?? null,
+    productSku: (product?.sku as string) ?? undefined,
+    productName: (product?.name as string) ?? undefined,
+    variantId: (r.variantId as string | null) ?? null,
+    variantSku: (variant?.sku as string | null) ?? null,
+    variantSize: (variant?.size as string | null) ?? null,
+    variantUom: (variant?.uom as string | null) ?? null,
+    variantPackSize: (variant?.packSize as number | null) ?? null,
+  };
+};
 
 const adaptVendor = (r: Raw): Vendor => ({
   id: r.id as string,
@@ -603,6 +645,7 @@ const adaptProductionOrder = (r: Raw): ProductionOrder => {
   return {
     id: r.id as string,
     orderNo: r.orderNo as string,
+    bomId: (r.bomId as string) ?? (bom?.id as string) ?? undefined,
     product: (product?.name as string) ?? "—",
     sku: (product?.sku as string) ?? "",
     plannedQty: r.plannedQty as number,
@@ -681,6 +724,8 @@ const adaptLedger = (r: Raw): StockLedgerEntry => ({
   date: r.date as string,
   product: ((r.product as Raw | null)?.name as string) ?? "",
   sku: ((r.product as Raw | null)?.sku as string) ?? "",
+  variantSku: ((r.variant as Raw | null)?.sku as string) ?? null,
+  variantSize: ((r.variant as Raw | null)?.size as string) ?? null,
   txnType: r.txnType as StockLedgerEntry["txnType"],
   ref: r.ref as string,
   qty: r.qty as number,
@@ -747,7 +792,15 @@ export interface MoInventoryTrail {
     productId: string;
     sku: string;
     name: string;
+    /** Effective uom of the FG row — variant uom when BOM is variant-scoped, else the parent's bulk uom. */
     uom: string;
+    /** Parent product's bulk uom (kg / L). Always populated. */
+    parentUom?: string;
+    variantId?: string | null;
+    variantSku?: string | null;
+    variantSize?: string | null;
+    variantUom?: string | null;
+    variantPackSize?: number | null;
   };
   productionLineWarehouse: {
     code: string;
@@ -758,6 +811,11 @@ export interface MoInventoryTrail {
     productId: string;
     sku: string;
     name: string;
+    variantId?: string | null;
+    variantSku?: string | null;
+    variantSize?: string | null;
+    variantUom?: string | null;
+    variantPackSize?: number | null;
     warehouseCode: string;
     warehouseName: string;
     warehouseKind: string;
@@ -770,6 +828,11 @@ export interface MoInventoryTrail {
     productId: string;
     sku: string;
     name: string;
+    variantId?: string | null;
+    variantSku?: string | null;
+    variantSize?: string | null;
+    variantUom?: string | null;
+    variantPackSize?: number | null;
     warehouseCode: string;
     warehouseName: string;
     warehouseKind: string;
@@ -782,6 +845,11 @@ export interface MoInventoryTrail {
     productId: string;
     sku: string;
     name: string;
+    variantId?: string | null;
+    variantSku?: string | null;
+    variantSize?: string | null;
+    variantUom?: string | null;
+    variantPackSize?: number | null;
     warehouseCode: string;
     warehouseName: string;
     warehouseKind: string;
@@ -810,6 +878,36 @@ export interface MoInventoryTrail {
     }>;
   }>;
   hasActivity: boolean;
+}
+
+export interface UomNormalizationResult {
+  dryRun: boolean;
+  appliedAt?: string;
+  summary: {
+    products: { total: number; willUpdate: number; unchanged: number; skipped: number };
+    variants: { total: number; willUpdate: number; unchanged: number; skipped: number };
+  };
+  products: Array<{
+    id: string;
+    sku: string;
+    name: string;
+    type: string;
+    currentUom: string;
+    canonical: string | null;
+    category: string | null;
+    targetUom: string | null;
+    action: "update" | "noop" | "skip";
+    reason?: string;
+  }>;
+  variants: Array<{
+    id: string;
+    sku: string;
+    productSku: string;
+    currentUom: string | null;
+    targetUom: string;
+    action: "update" | "noop";
+    active: boolean;
+  }>;
 }
 
 export interface MoRequirements {
@@ -981,7 +1079,10 @@ export interface PublicQuotePayload {
   notes?: string | null;
   subTotal: number;
   tax: number;
+  transportCharge?: number;
+  transportTax?: number;
   total: number;
+  dispatchOption?: { code: string; name: string; category: string } | null;
   createdAt: string;
   customer: {
     name: string;
@@ -1106,6 +1207,8 @@ export interface InvoiceDetail {
   date: string;
   amount: number;
   tax: number;
+  transportCharge?: number;
+  transportTax?: number;
   status: "draft" | "issued" | "paid" | "partial" | "overdue";
   paymentMode: "cash" | "card" | "upi" | "credit" | "split";
   notes?: string | null;
@@ -1124,6 +1227,8 @@ export interface PublicInvoicePayload {
   notes?: string | null;
   tax: number;
   amount: number;
+  transportCharge?: number;
+  transportTax?: number;
   createdAt: string;
   customer: {
     name: string;
@@ -1144,6 +1249,8 @@ export interface PublicSalesOrderPayload {
   notes?: string | null;
   subTotal: number;
   tax: number;
+  transportCharge?: number;
+  transportTax?: number;
   total: number;
   createdAt: string;
   quoteNo?: string | null;
@@ -1286,7 +1393,11 @@ export interface QuoteRow {
   validUntil: string;
   subTotal: number;
   tax: number;
+  transportCharge?: number;
+  transportTax?: number;
   total: number;
+  dispatchOptionId?: string | null;
+  dispatchOption?: DispatchOptionRow | null;
   paymentTerms?: string | null;
   notes?: string | null;
   acceptedAt?: string | null;
@@ -1319,6 +1430,20 @@ export interface QuoteRow {
   } | null;
 }
 
+export interface SalesOrderReservationRow {
+  id: string;
+  binId: string;
+  qty: number;
+  createdAt: string;
+  bin?: {
+    id: string;
+    zone: string;
+    shelf: string;
+    bin: string;
+    warehouse?: { id: string; code: string; name: string } | null;
+  } | null;
+}
+
 export interface SalesOrderItemRow {
   id: string;
   productId: string;
@@ -1337,6 +1462,11 @@ export interface SalesOrderItemRow {
     grade?: string | null;
     stockOnHand: number;
   } | null;
+  // Hard-reservation rows for this line. Sum of qty == bin units
+  // currently locked against this SO line. Empty array on SOs that
+  // pre-date the reservation feature, until the operator clicks
+  // "Reserve stock" on the SO detail panel.
+  reservations?: SalesOrderReservationRow[];
 }
 
 export interface SalesOrderRow {
@@ -1353,7 +1483,11 @@ export interface SalesOrderRow {
   orderDate: string;
   subTotal: number;
   tax: number;
+  transportCharge?: number;
+  transportTax?: number;
   total: number;
+  dispatchOptionId?: string | null;
+  dispatchOption?: DispatchOptionRow | null;
   notes?: string | null;
   customer: {
     id: string;
@@ -1515,6 +1649,12 @@ export interface PackingSlipRow {
     soNo: string;
     status: string;
     customerId: string;
+    subTotal?: number;
+    tax?: number;
+    total?: number;
+    transportCharge?: number;
+    transportTax?: number;
+    dispatchOption?: { id: string; name: string; code: string } | null;
     customer?: {
       id: string;
       name: string;
@@ -1528,6 +1668,9 @@ export interface PackingSlipRow {
     id: string;
     invoiceNo: string;
     amount: number;
+    tax?: number;
+    transportCharge?: number;
+    transportTax?: number;
     status: string;
     date: string;
   } | null;
@@ -1556,6 +1699,8 @@ export interface QuoteCreatePayload {
   validUntil?: string;
   paymentTerms?: string | null;
   notes?: string | null;
+  dispatchOptionId?: string | null;
+  transportCharge?: number;
   items: {
     productId: string;
     variantId?: string | null;
@@ -1571,9 +1716,33 @@ export interface QuoteUpdatePayload {
   validUntil?: string;
   paymentTerms?: string | null;
   notes?: string | null;
+  dispatchOptionId?: string | null;
+  transportCharge?: number;
   reason?: string;
   items?: QuoteCreatePayload["items"];
 }
+
+export interface DispatchOptionRow {
+  id: string;
+  code: string;
+  name: string;
+  category: string;
+  description?: string | null;
+  defaultCharge: number;
+  active?: boolean;
+  sortOrder?: number;
+}
+
+export const DISPATCH_CATEGORY_LABELS: Record<string, string> = {
+  door_to_door: "Door-to-Door Delivery",
+  bulk_carrier: "Bulk Carriers (LTL / FTL)",
+  company_vehicle: "Company Vehicle",
+  rtc_cargo: "RTC / State Transport Cargo",
+  bus_cargo: "Private Bus Cargo",
+  railway: "Railway Parcel / Freight",
+  courier: "Courier & Express Parcel",
+  customer_pickup: "Customer Pick-up / Ex-works",
+};
 
 // Settings · Company profile (singleton)
 export interface CompanyProfile {
@@ -1659,6 +1828,14 @@ export const api = {
   ): Promise<Product> => fetcher<Product>(`/products/${id}`, { method: "PATCH", body }),
   deleteProduct: (id: string): Promise<{ ok: boolean }> =>
     fetcher<{ ok: boolean }>(`/products/${id}`, { method: "DELETE" }),
+  // Bulk-coerce all product/variant UoMs to the house pattern: parents
+  // in bulk units (kg/L), variants in pieces. Always returns a
+  // structured plan; pass `apply: true` to actually run the updates.
+  normalizeProductUoms: (apply = false) =>
+    fetcher<UomNormalizationResult>("/products/normalize-uoms", {
+      method: "POST",
+      body: { apply },
+    }),
   productCategories: (opts?: { active?: boolean }) =>
     fetcher<import("@/data/types").ProductCategory[]>("/categories", {
       query: opts?.active ? { active: "1" } : undefined,
@@ -1690,6 +1867,44 @@ export const api = {
     }),
   deleteProductCategory: (id: string) =>
     fetcher<{ deleted: true }>(`/categories/${id}`, { method: "DELETE" }),
+
+  dispatchOptions: () => fetcher<DispatchOptionRow[]>("/dispatch-options"),
+  settingsDispatchOptions: () =>
+    fetcher<DispatchOptionRow[]>("/settings/dispatch-options"),
+  dispatchCategories: () =>
+    fetcher<{ code: string; label: string }[]>("/settings/dispatch-categories"),
+  createDispatchOption: (body: {
+    code: string;
+    name: string;
+    category: string;
+    description?: string | null;
+    defaultCharge?: number;
+    active?: boolean;
+    sortOrder?: number;
+  }) =>
+    fetcher<DispatchOptionRow>("/settings/dispatch-options", {
+      method: "POST",
+      body,
+    }),
+  updateDispatchOption: (
+    id: string,
+    body: Partial<{
+      code: string;
+      name: string;
+      category: string;
+      description: string | null;
+      defaultCharge: number;
+      active: boolean;
+      sortOrder: number;
+    }>
+  ) =>
+    fetcher<DispatchOptionRow>(`/settings/dispatch-options/${id}`, {
+      method: "PATCH",
+      body,
+    }),
+  deleteDispatchOption: (id: string) =>
+    fetcher<{ ok: true }>(`/settings/dispatch-options/${id}`, { method: "DELETE" }),
+
   uploadCategoryImage: async (categoryId: string, file: File): Promise<{ imageUrl: string }> => {
     const token = auth.token();
     const form = new FormData();
@@ -1750,6 +1965,11 @@ export const api = {
     fetcher(`/products/${productId}/variants/${variantId}/adjust-stock`, { method: "POST", body: { newQty } }),
   adjustStock: (body: {
     productId: string;
+    // Variant SKU this adjustment targets. Required when the parent
+    // product has variants (each variant lives in its own bin family
+    // with its own UoM); omit only for products without variants or
+    // for genuine bulk-only adjustments under the parent SKU.
+    variantId?: string | null;
     warehouseId: string;
     qty: number;
     reason: string;
@@ -2178,9 +2398,44 @@ export const api = {
     }),
   logOutput: (
     id: string,
-    body: { goodQty?: number; scrapQty?: number; reworkQty?: number }
+    body: {
+      goodQty?: number;
+      scrapQty?: number;
+      reworkQty?: number;
+      // Optional per-batch byproduct yields. Each entry posts to
+      // inventory immediately (StockLedger + Bin update). Once any
+      // byproduct is logged this way, /complete skips its auto-yield
+      // path so the released components don't get double-posted.
+      byproducts?: Array<{ bomByproductId: string; qty: number }>;
+    }
   ) =>
-    fetcher<Raw>(`/production-orders/${id}/log-output`, {
+    fetcher<
+      Raw & {
+        byproductPostings?: Array<{
+          bomByproductId: string;
+          productId: string;
+          variantId: string | null;
+          sku: string;
+          name: string;
+          qty: number;
+          uom: string;
+          bin: string;
+        }>;
+      }
+    >(`/production-orders/${id}/log-output`, {
+      method: "POST",
+      body,
+    }),
+  adjustOutput: (
+    id: string,
+    body: {
+      actualQty: number;
+      scrapQty: number;
+      reworkQty: number;
+      reason?: string;
+    }
+  ) =>
+    fetcher<Raw>(`/production-orders/${id}/adjust-output`, {
       method: "POST",
       body,
     }),
@@ -2331,10 +2586,40 @@ export const api = {
       method: "POST",
       body: { lines },
     }),
-  dropTransferOrder: (id: string, lines: Array<{ itemId: string; qtyDropped: number; toBinId: string }>) =>
+  // `toBinId` is optional: when null/omitted the backend auto-picks a bin
+  // in the destination warehouse (consolidates onto an existing product
+  // bin, else the least-occupied empty bin). A 409 is returned if the
+  // destination warehouse has no bins at all.
+  dropTransferOrder: (
+    id: string,
+    lines: Array<{ itemId: string; qtyDropped: number; toBinId: string | null }>
+  ) =>
     fetcher<TransferOrderRow>(`/transfer-orders/${id}/drop`, {
       method: "POST",
       body: { lines },
+    }),
+  // Admin / supervisor: list users that can be assigned to a TO.
+  transferOrderWorkers: () =>
+    fetcher<Array<{ id: string; username: string; name: string; role: string }>>(
+      "/transfer-orders/workers"
+    ),
+  // Admin / supervisor: assign (or unassign, pass null) the TO to a user.
+  assignTransferOrder: (id: string, assignedToId: string | null, note?: string | null) =>
+    fetcher<TransferOrderRow>(`/transfer-orders/${id}/assign`, {
+      method: "POST",
+      body: { assignedToId, note: note ?? null },
+    }),
+  // Admin / supervisor: manual status override ("backup" path for stuck
+  // transfer orders). Pure metadata change — does NOT move stock. Use
+  // pick/drop/cancel for flows that should update bin quantities.
+  setTransferOrderStatus: (
+    id: string,
+    status: "draft" | "ready" | "in_transit" | "done" | "cancelled",
+    reason: string
+  ) =>
+    fetcher<TransferOrderRow>(`/transfer-orders/${id}/status`, {
+      method: "POST",
+      body: { status, reason },
     }),
 
   // Procurement: vendors, POs, GRNs.
@@ -2764,6 +3049,20 @@ export const api = {
       "/reports/attendance-heatmap",
       { query: { days } }
     ),
+  attendanceDay: (date: string) =>
+    fetcher<{
+      date: string;
+      presentCount: number;
+      workers: Array<{
+        workerId: string;
+        empNo: string;
+        name: string;
+        shift: string;
+        station: string;
+        inAt: string | null;
+        outAt: string | null;
+      }>;
+    }>("/reports/attendance-day", { query: { date } }),
   punchWorker: (body: { empNo: string; direction: "in" | "out" | "break" }) =>
     fetcher<Raw>("/workers/punch", { method: "POST", body }),
 
@@ -2873,6 +3172,18 @@ export const api = {
     fetcher<SalesOrderRow>(`/sales-orders/${id}/resume`, { method: "POST", body: {} }),
   closeSalesOrder: (id: string) =>
     fetcher<SalesOrderRow>(`/sales-orders/${id}/close`, { method: "POST", body: {} }),
+  /**
+   * Spin off the un-invoiced remainder of a partially-fulfilled SO
+   * into a brand-new SO and close the parent. Used by the AR
+   * statement banner when a warehouse shortfall is hanging on a
+   * customer's open balance and the user wants to keep the
+   * commitment alive on a fresh SO instead of writing it off.
+   */
+  backOrderSalesOrder: (id: string) =>
+    fetcher<{ backOrder: SalesOrderRow; parent: SalesOrderRow }>(
+      `/sales-orders/${id}/back-order`,
+      { method: "POST", body: {} }
+    ),
   invoiceSalesOrder: (
     id: string,
     body: {
@@ -2880,6 +3191,23 @@ export const api = {
       items: { salesOrderItemId: string; qty: number }[];
     }
   ) => fetcher<Raw>(`/sales-orders/${id}/invoice`, { method: "POST", body }),
+
+  // Hard-reserve / re-reserve. Returns a per-line breakdown of how
+  // much was actually reserved vs short. Idempotent — calling it on
+  // an already-reserved SO does a release+reserve cycle that
+  // re-anchors against current bin stock.
+  reserveSalesOrder: (id: string) =>
+    fetcher<{
+      reserved: Array<{
+        salesOrderItemId: string;
+        productId: string;
+        sku: string;
+        requested: number;
+        reserved: number;
+        short: number;
+        splits: Array<{ binId: string; qty: number; binPath: string }>;
+      }>;
+    }>(`/sales-orders/${id}/reserve`, { method: "POST", body: {} }),
 
   // ATP
   atp: (productId: string, variantId?: string | null) =>
@@ -3265,6 +3593,13 @@ export interface BulkOrderPreview {
     variantId: string | null;
     sku: string;
     productName: string;
+    /** Variant SKU when this line targets a specific variant; null for parent-only products. */
+    variantSku?: string | null;
+    /** Variant size token (e.g. "250 ml", "1 kg"). */
+    variantSize?: string | null;
+    /** Variant uom (typically "pc"); falls back to parent uom when null. */
+    variantUom?: string | null;
+    variantPackSize?: number | null;
     qty: number;
     rate: number;
     amount: number;

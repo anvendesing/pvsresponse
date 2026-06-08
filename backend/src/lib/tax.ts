@@ -24,6 +24,25 @@ export interface TaxLine {
   gstRate: number;
 }
 
+// GST on freight / goods transport agency services (SAC 9965) in India.
+export const TRANSPORT_GST_RATE = 18;
+
+export const computeTransportTax = (charge: number): number =>
+  Math.round(charge * (TRANSPORT_GST_RATE / 100) * 100) / 100;
+
+/** Grand total = goods subtotal + goods GST + freight + freight GST. */
+export const computeGrandTotal = (
+  subTotal: number,
+  goodsTax: number,
+  transportCharge: number
+): { transportTax: number; total: number } => {
+  const transportTax = computeTransportTax(transportCharge);
+  return {
+    transportTax,
+    total: subTotal + goodsTax + transportCharge + transportTax,
+  };
+};
+
 // ── Rate resolution ─────────────────────────────────────────────────────────
 
 /**

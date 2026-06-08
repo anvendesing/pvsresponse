@@ -39,6 +39,31 @@ const requireWriter = (
   return true;
 };
 
+// Stricter gate for admin-only TO controls (assign-to-anyone, manual
+// status override). Worker self-claim still uses the existing /claim
+// endpoint and stays open to all authenticated users.
+const requireAdminOrSupervisor = (
+  req: { user: { role: string } },
+  reply: { code: (n: number) => { send: (b: unknown) => void } }
+) => {
+  const r = req.user.role;
+  if (r !== "admin" && r !== "supervisor") {
+    reply.code(403).send({
+      error: { code: "forbidden", message: "Admins or supervisors only" },
+    });
+    return false;
+  }
+  return true;
+};
+
+// Roles eligible to be assigned a transfer order. Sales / billing /
+// accountant accounts are intentionally excluded.
+const ASSIGNABLE_ROLES = ["admin", "supervisor", "warehouse", "worker"] as const;
+
+// Allowed values for the manual status override. Mirrors the
+// TransferOrderRow.status union on the frontend.
+const TO_STATUSES = ["draft", "ready", "in_transit", "done", "cancelled"] as const;
+
 const nextTransferNo = async (): Promise<string> => {
   const year = new Date().getUTCFullYear();
   const prefix = `TRF-${year}-`;
@@ -332,6 +357,7 @@ export const transfersRoutes = async (app: FastifyInstance) => {
               await tx.stockLedger.create({
                 data: {
                   productId: item.productId,
+                  variantId: item.variantId,
                   warehouseId: to.fromWarehouseId,
                   bin: `${srcBin.zone}/${srcBin.shelf}/${srcBin.bin}`,
                   txnType: "Transfer",
@@ -343,11 +369,21 @@ export const transfersRoutes = async (app: FastifyInstance) => {
               });
             }
           }
-          // Product SOH correction.
-          await tx.product.update({
-            where: { id: item.productId },
-            data: { stockOnHand: { increment: item.qtyPicked } },
-          });
+          // SOH rollback. TransferOrderItem carries variantId when the
+          // moved SKU is a variant — return the qty to the variant
+          // counter so a variant transfer that's cancelled mid-flight
+          // doesn't leak units onto the parent counter.
+          if (item.variantId) {
+            await tx.productVariant.update({
+              where: { id: item.variantId },
+              data: { stockOnHand: { increment: item.qtyPicked } },
+            });
+          } else {
+            await tx.product.update({
+              where: { id: item.productId },
+              data: { stockOnHand: { increment: item.qtyPicked } },
+            });
+          }
         }
       });
     }
@@ -360,6 +396,165 @@ export const transfersRoutes = async (app: FastifyInstance) => {
     await recordChange("TransferOrder" as never, id, "update", updated, req.user.sub);
     return updated;
   });
+
+  // ======================================================================
+  // Admin controls - workers list / assign / manual status override
+  // ======================================================================
+
+  // GET /transfer-orders/workers
+  // Lightweight list of users that can be assigned to a transfer.
+  // Restricted to admin + supervisor so it can populate the assignment
+  // dropdown on the desktop ERP without exposing the full /users API.
+  app.get(
+    "/transfer-orders/workers",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      if (!requireAdminOrSupervisor(req, reply)) return;
+      const users = await db.user.findMany({
+        where: {
+          active: true,
+          role: { in: ASSIGNABLE_ROLES as unknown as string[] },
+        },
+        select: { id: true, username: true, name: true, role: true },
+        orderBy: [{ role: "asc" }, { name: "asc" }],
+      });
+      return users;
+    }
+  );
+
+  // POST /transfer-orders/:id/assign
+  // Admin / supervisor assigns the TO to a specific user (or clears the
+  // assignment by passing assignedToId: null). Differs from /claim which
+  // only lets the calling worker self-assign.
+  app.post(
+    "/transfer-orders/:id/assign",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      if (!requireAdminOrSupervisor(req, reply)) return;
+      const id = (req.params as { id: string }).id;
+      const body = z
+        .object({
+          assignedToId: z.string().min(1).nullable(),
+          note: z.string().max(500).nullable().optional(),
+        })
+        .parse(req.body);
+
+      const to = await db.transferOrder.findUnique({ where: { id } });
+      if (!to) return reply.code(404).send({ error: { code: "not_found" } });
+      if (to.status === "done" || to.status === "cancelled") {
+        return reply.code(409).send({
+          error: {
+            code: "invalid_status",
+            message: `Cannot reassign a ${to.status} transfer order.`,
+          },
+        });
+      }
+
+      if (body.assignedToId) {
+        const target = await db.user.findUnique({
+          where: { id: body.assignedToId },
+          select: { id: true, active: true, role: true, name: true },
+        });
+        if (!target) {
+          return reply.code(404).send({ error: { code: "user_not_found" } });
+        }
+        if (!target.active) {
+          return reply.code(400).send({
+            error: { code: "user_inactive", message: "Selected user is deactivated." },
+          });
+        }
+        if (!(ASSIGNABLE_ROLES as readonly string[]).includes(target.role)) {
+          return reply.code(400).send({
+            error: {
+              code: "role_not_assignable",
+              message: `Users with role '${target.role}' cannot be assigned transfer orders.`,
+            },
+          });
+        }
+      }
+
+      // Append an audit line to notes so the assignment trail is visible
+      // alongside the existing free-form notes column.
+      const stamp = new Date().toISOString().slice(0, 16).replace("T", " ");
+      const assignedLabel = body.assignedToId
+        ? `assigned to user ${body.assignedToId}`
+        : "unassigned";
+      const auditLine = `[${stamp}] ${req.user.sub} ${assignedLabel}${
+        body.note?.trim() ? ` — ${body.note.trim()}` : ""
+      }`;
+      const newNotes = to.notes ? `${to.notes}\n${auditLine}` : auditLine;
+
+      const updated = await db.transferOrder.update({
+        where: { id },
+        data: {
+          assignedToId: body.assignedToId,
+          // Stamp claimedAt on first assignment, clear when unassigning.
+          claimedAt: body.assignedToId ? to.claimedAt ?? new Date() : null,
+          notes: newNotes,
+        },
+        include: toInclude,
+      });
+      await recordChange("TransferOrder" as never, id, "update", updated, req.user.sub);
+      return updated;
+    }
+  );
+
+  // POST /transfer-orders/:id/status
+  // Manual admin status override ("backup" path used when the normal
+  // pick/drop flow can't be completed - e.g. a stuck TO after a mobile
+  // device crash). Pure metadata change: this endpoint deliberately
+  // does NOT move any stock. Use /pick, /drop, or /cancel for flows
+  // that should reverse or write ledger entries.
+  app.post(
+    "/transfer-orders/:id/status",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      if (!requireAdminOrSupervisor(req, reply)) return;
+      const id = (req.params as { id: string }).id;
+      const body = z
+        .object({
+          status: z.enum(TO_STATUSES),
+          reason: z.string().min(3).max(500),
+        })
+        .parse(req.body);
+
+      const to = await db.transferOrder.findUnique({ where: { id } });
+      if (!to) return reply.code(404).send({ error: { code: "not_found" } });
+      if (to.status === body.status) {
+        return reply.code(400).send({
+          error: { code: "no_change", message: `Status is already ${body.status}.` },
+        });
+      }
+
+      const stamp = new Date().toISOString().slice(0, 16).replace("T", " ");
+      const auditLine = `[${stamp}] ${req.user.sub} manually set status: ${to.status} → ${body.status} — ${body.reason.trim()}`;
+      const newNotes = to.notes ? `${to.notes}\n${auditLine}` : auditLine;
+
+      // Tidy up the timestamp columns to keep the meta strip readable
+      // even though we're not touching stock.
+      const data: Record<string, unknown> = {
+        status: body.status,
+        notes: newNotes,
+      };
+      if (body.status === "done") {
+        data.droppedAt = to.droppedAt ?? new Date();
+        data.droppedById = to.droppedById ?? req.user.sub;
+      } else if (body.status === "cancelled") {
+        data.cancelledAt = to.cancelledAt ?? new Date();
+      } else if (body.status === "in_transit") {
+        data.pickedAt = to.pickedAt ?? new Date();
+        data.pickedById = to.pickedById ?? req.user.sub;
+      }
+
+      const updated = await db.transferOrder.update({
+        where: { id },
+        data,
+        include: toInclude,
+      });
+      await recordChange("TransferOrder" as never, id, "update", updated, req.user.sub);
+      return updated;
+    }
+  );
 
   // ======================================================================
   // Transfer Order lifecycle - claim / pick / drop
@@ -443,6 +638,7 @@ export const transfersRoutes = async (app: FastifyInstance) => {
         await tx.stockLedger.create({
           data: {
             productId: item.productId,
+            variantId: item.variantId,
             warehouseId: to.fromWarehouseId,
             bin: `${srcBin.zone}/${srcBin.shelf}/${srcBin.bin}`,
             txnType: "Transfer",
@@ -453,11 +649,20 @@ export const transfersRoutes = async (app: FastifyInstance) => {
           },
         });
 
-        // Product SOH.
-        await tx.product.update({
-          where: { id: item.productId },
-          data: { stockOnHand: { decrement: line.qtyPicked } },
-        });
+        // SOH decrement. Variant-scoped items deduct from the variant
+        // counter; parent-scoped fall through to the parent. Routing
+        // is consistent with /inventory/adjust and the dispatch path.
+        if (item.variantId) {
+          await tx.productVariant.update({
+            where: { id: item.variantId },
+            data: { stockOnHand: { decrement: line.qtyPicked } },
+          });
+        } else {
+          await tx.product.update({
+            where: { id: item.productId },
+            data: { stockOnHand: { decrement: line.qtyPicked } },
+          });
+        }
 
         await tx.transferOrderItem.update({
           where: { id: line.itemId },
@@ -494,18 +699,30 @@ export const transfersRoutes = async (app: FastifyInstance) => {
 
   // POST /transfer-orders/:id/drop
   // Worker confirms dropping items at destination bins.
-  // Body: { lines: [{ itemId, qtyDropped, toBinId }] }
+  // Body: { lines: [{ itemId, qtyDropped, toBinId? }] }
+  //
+  // `toBinId` is now optional. When omitted, the server auto-picks a bin
+  // in the destination warehouse using this priority:
+  //   1. The bin that was reserved for the line on /pick (item.toBinId)
+  //   2. An existing bin that already holds the same product (consolidate)
+  //   3. The least-occupied empty bin (productId IS NULL, qty = 0)
+  //   4. The least-occupied bin in the warehouse (last-resort fallback)
+  // If the destination warehouse has zero bins, a 409 is returned with a
+  // clear message naming the warehouse so the user knows what to fix.
   app.post("/transfer-orders/:id/drop", { preHandler: [app.authenticate] }, async (req, reply) => {
     const id = (req.params as { id: string }).id;
     const body = z.object({
       lines: z.array(z.object({
         itemId: z.string().min(1),
         qtyDropped: z.number().nonnegative(),
-        toBinId: z.string().min(1),
+        toBinId: z.string().min(1).nullable().optional(),
       })).min(1),
     }).parse(req.body);
 
-    const to = await db.transferOrder.findUnique({ where: { id }, include: { items: true } });
+    const to = await db.transferOrder.findUnique({
+      where: { id },
+      include: { items: true, toWarehouse: { select: { id: true, code: true, name: true } } },
+    });
     if (!to) return reply.code(404).send({ error: { code: "not_found" } });
     if (to.status !== "in_transit") {
       return reply.code(409).send({
@@ -513,10 +730,66 @@ export const transfersRoutes = async (app: FastifyInstance) => {
       });
     }
 
+    // Pre-resolve destination bins for every line (including auto-pick).
+    // We do this outside the transaction so the error response (when the
+    // destination warehouse has no bins) doesn't roll back anything else
+    // and carries a clear message.
+    const destBinsInWh = await db.bin.findMany({
+      where: { warehouseId: to.toWarehouseId },
+      orderBy: [{ qty: "asc" }, { createdAt: "asc" }],
+    });
+
+    type Resolved = { itemId: string; qtyDropped: number; toBinId: string };
+    const resolved: Resolved[] = [];
+    for (const line of body.lines) {
+      const item = to.items.find((i) => i.id === line.itemId);
+      if (!item || line.qtyDropped <= 0) continue;
+
+      let toBinId = line.toBinId ?? item.toBinId ?? null;
+
+      // Auto-pick if the worker (or pick step) didn't choose a bin.
+      if (!toBinId) {
+        if (destBinsInWh.length === 0) {
+          return reply.code(409).send({
+            error: {
+              code: "no_destination_bins",
+              message:
+                `Destination warehouse ${to.toWarehouse.code} (${to.toWarehouse.name}) has no bins. ` +
+                `Create at least one bin for this warehouse in Warehouse → Bins before dropping.`,
+            },
+          });
+        }
+        // 1. Consolidate to an existing bin holding the same product.
+        const sameProduct = destBinsInWh.find((b) => b.productId === item.productId);
+        // 2. Otherwise pick the least-occupied empty bin.
+        const emptyBin = destBinsInWh.find((b) => !b.productId && b.qty === 0);
+        // 3. Fall back to the first bin (sorted by qty asc above).
+        toBinId = (sameProduct ?? emptyBin ?? destBinsInWh[0]).id;
+      } else {
+        // If the caller passed a bin, validate it belongs to the dest WH.
+        const supplied = destBinsInWh.find((b) => b.id === toBinId);
+        if (!supplied) {
+          return reply.code(400).send({
+            error: {
+              code: "bin_warehouse_mismatch",
+              message: `Bin ${toBinId} does not belong to destination warehouse ${to.toWarehouse.code}.`,
+            },
+          });
+        }
+      }
+      resolved.push({ itemId: item.id, qtyDropped: line.qtyDropped, toBinId });
+    }
+
+    if (resolved.length === 0) {
+      return reply.code(400).send({
+        error: { code: "no_lines", message: "No lines to drop." },
+      });
+    }
+
     const updated = await db.$transaction(async (tx) => {
-      for (const line of body.lines) {
+      for (const line of resolved) {
         const item = to.items.find((i) => i.id === line.itemId);
-        if (!item || line.qtyDropped <= 0) continue;
+        if (!item) continue;
 
         const dstBin = await tx.bin.findUnique({ where: { id: line.toBinId } });
         if (!dstBin) {
@@ -533,12 +806,17 @@ export const transfersRoutes = async (app: FastifyInstance) => {
           });
         }
 
-        // Increment destination bin.
+        // Increment destination bin. Tag with variantId when the moved
+        // SKU is a variant so the destination bin's level matches the
+        // source — without this, transferring "BAJF-1KG-01" into a
+        // fresh bin would leave the bin tagged at parent level only,
+        // re-introducing the leak we just fixed for the source side.
         await tx.bin.update({
           where: { id: line.toBinId },
           data: {
             qty: { increment: line.qtyDropped },
             productId: dstBin.productId ?? item.productId,
+            variantId: dstBin.variantId ?? item.variantId ?? null,
           },
         });
 
@@ -546,6 +824,7 @@ export const transfersRoutes = async (app: FastifyInstance) => {
         await tx.stockLedger.create({
           data: {
             productId: item.productId,
+            variantId: item.variantId,
             warehouseId: to.toWarehouseId,
             bin: `${dstBin.zone}/${dstBin.shelf}/${dstBin.bin}`,
             txnType: "Transfer",
@@ -556,11 +835,18 @@ export const transfersRoutes = async (app: FastifyInstance) => {
           },
         });
 
-        // Product SOH.
-        await tx.product.update({
-          where: { id: item.productId },
-          data: { stockOnHand: { increment: line.qtyDropped } },
-        });
+        // SOH increment, variant-aware (mirrors the pick decrement).
+        if (item.variantId) {
+          await tx.productVariant.update({
+            where: { id: item.variantId },
+            data: { stockOnHand: { increment: line.qtyDropped } },
+          });
+        } else {
+          await tx.product.update({
+            where: { id: item.productId },
+            data: { stockOnHand: { increment: line.qtyDropped } },
+          });
+        }
 
         await tx.transferOrderItem.update({
           where: { id: line.itemId },
@@ -587,7 +873,9 @@ export const transfersRoutes = async (app: FastifyInstance) => {
 
     if (!updated) return;
     await recordChange("TransferOrder" as never, id, "update", updated, req.user.sub);
-    for (const line of body.lines) {
+    // Use the resolved (auto-picked or supplied) bin ids — body.lines may
+    // have left toBinId blank, and TS now narrows the type for us.
+    for (const line of resolved) {
       await checkStockRules(line.toBinId, req.user.sub);
     }
     return updated;

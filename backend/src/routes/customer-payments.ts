@@ -16,9 +16,12 @@
 //   GET    /v1/customers/:id/open-invoices  – open/partial invoices for a customer
 
 import type { FastifyInstance } from "fastify";
+import type { Prisma, PrismaClient } from "@prisma/client";
 import { z } from "zod";
 import { db } from "../db.js";
 import { recordChange } from "../sync/log.js";
+
+type Tx = Prisma.TransactionClient | PrismaClient;
 
 // ----------------------------------------------------------------- helpers ---
 
@@ -48,8 +51,101 @@ export const invoiceOpenAmount = async (invoiceId: string): Promise<number> => {
   return Math.max(0, inv.amount - (alloc._sum.amount ?? 0));
 };
 
-// Total open AR for a customer = sum of open amounts across outstanding invoices.
-export const customerNetOpenBalance = async (customerId: string): Promise<number> => {
+// Sum of payment amounts that haven't been allocated to any invoice yet.
+// These are advances / prepayments — money the customer has put on
+// account that should offset future receivables. Cancelled / reversed
+// payments are excluded.
+export const customerUnallocatedCredits = async (
+  customerId: string
+): Promise<number> => {
+  const payments = await db.customerPayment.findMany({
+    where: { customerId },
+    select: {
+      amount: true,
+      allocations: { select: { amount: true } },
+    },
+  });
+  let credit = 0;
+  for (const p of payments) {
+    const allocated = p.allocations.reduce((s, a) => s + a.amount, 0);
+    credit += Math.max(0, p.amount - allocated);
+  }
+  return credit;
+};
+
+// Sum of un-invoiced commitment value across all OPEN sales orders.
+// An "open" SO is one we still owe the customer goods on — i.e. it
+// hasn't been cancelled, fully invoiced, or closed. Even though no
+// invoice has been issued yet, the customer has committed to take and
+// pay for these goods, so the value is part of their credit exposure.
+//
+// Per-line formula:
+//   remainingQty = qtyOrdered − qtyInvoiced − qtyCancelled
+//   lineExposure = (remainingQty / qtyOrdered) × line.amount      (subtotal)
+// Tax is then re-applied at the SO's effective rate so the number is
+// directly comparable to invoice amounts (which include tax).
+//
+// SOs in 'cancelled', 'invoiced', or 'closed' contribute 0 by
+// formula. 'on_hold' SOs are still commitments (we're holding stock
+// for them) so they DO count — releasing them is an explicit cancel.
+export const customerOpenSOCommitment = async (
+  customerId: string
+): Promise<number> => {
+  const sos = await db.salesOrder.findMany({
+    where: {
+      customerId,
+      status: { in: ["confirmed", "partially_invoiced", "on_hold"] },
+    },
+    include: { items: true },
+  });
+  let total = 0;
+  for (const so of sos) {
+    let lineSubtotal = 0;
+    for (const it of so.items) {
+      const remQty = Math.max(
+        0,
+        it.qtyOrdered - it.qtyInvoiced - it.qtyCancelled
+      );
+      const fraction = it.qtyOrdered > 0 ? remQty / it.qtyOrdered : 0;
+      lineSubtotal += it.amount * fraction;
+    }
+    const taxFraction = so.subTotal > 0 ? so.tax / so.subTotal : 0;
+    total += lineSubtotal * (1 + taxFraction);
+  }
+  return total;
+};
+
+// Signed net credit exposure for a customer:
+//   positive  = they owe us (or are committed to pay us) more than
+//               they've paid in advance,
+//   zero      = exactly flat,
+//   negative  = they have advance/prepayment headroom available.
+//
+// Formula:
+//   signed = (open invoice remainder)
+//          + (open SO commitment, un-invoiced)
+//          − (unallocated customer payments)
+//
+// Why each term:
+//   • open invoice remainder — money already billed and unpaid.
+//   • open SO commitment    — sales orders we've accepted but not yet
+//                             invoiced; the customer is on the hook
+//                             for these even before the invoice is
+//                             cut. This catches the case where a
+//                             cash-only customer has multiple open
+//                             SOs that haven't reached pack/invoice
+//                             yet but together exceed any prepayment
+//                             they've made.
+//   • unallocated payments  — advances / prepayments. Customer has
+//                             put money on account that hasn't been
+//                             absorbed by an invoice yet, so it
+//                             offsets future receivables.
+//
+// Callers that only want "amount owed" for UI display should clamp
+// to ≥ 0 — see customerNetOpenBalance below.
+export const customerSignedAR = async (
+  customerId: string
+): Promise<number> => {
   const openInvoices = await db.invoice.findMany({
     where: {
       customerId,
@@ -57,15 +153,188 @@ export const customerNetOpenBalance = async (customerId: string): Promise<number
     },
     select: { id: true, amount: true },
   });
-  let total = 0;
+  let invoiceRemainder = 0;
   for (const inv of openInvoices) {
     const alloc = await db.customerPaymentAllocation.aggregate({
       where: { invoiceId: inv.id },
       _sum: { amount: true },
     });
-    total += Math.max(0, inv.amount - (alloc._sum.amount ?? 0));
+    invoiceRemainder += Math.max(0, inv.amount - (alloc._sum.amount ?? 0));
   }
-  return total;
+  const soCommitment = await customerOpenSOCommitment(customerId);
+  const credits = await customerUnallocatedCredits(customerId);
+  return invoiceRemainder + soCommitment - credits;
+};
+
+// Detailed credit-exposure breakdown for diagnostics, approval-reason
+// strings, and the customer statement endpoint. Returns the same
+// `signed` number customerSignedAR returns so callers can reuse it
+// without a second DB roundtrip.
+export type CreditExposure = {
+  invoiceRemainder: number;
+  openSOCommitment: number;
+  unallocatedAdvance: number;
+  signed: number;
+};
+
+// Auto-allocate any standing customer advances against a freshly
+// created invoice. Industry-standard AR behaviour: when a payment
+// arrives BEFORE its invoice (a prepayment), the unallocated balance
+// sits on account; the moment the invoice IS issued, the system
+// should sweep advances against it FIFO until either the invoice is
+// covered or the advances are exhausted.
+//
+// Without this helper, an invoice can sit at status='issued' for
+// ever even though the customer has clearly paid for it — the
+// allocation simply never happened because the FIFO loop in
+// POST /customer-payments only ran at payment time.
+//
+// Called from every invoice-creation channel:
+//   • POST /invoices (POS walk-in, paymentMode='credit')
+//   • POST /sales-orders/:id/invoice (B2B SO draw-down)
+//   • ensureInvoiceForSalesOrder (auto pack-complete invoice)
+//
+// Idempotent and safe to call multiple times. If the invoice is
+// already 'paid' or 'draft', it's a no-op.
+//
+// Pass the transaction client when calling from inside $transaction
+// so the allocation lives atomically with the invoice insert.
+export interface ApplyAdvancesResult {
+  invoiceId: string;
+  allocatedNow: number;
+  newStatus: string;
+  remainder: number;
+}
+
+export const applyAdvancesToInvoice = async (
+  client: Tx,
+  invoiceId: string
+): Promise<ApplyAdvancesResult> => {
+  const inv = await client.invoice.findUnique({
+    where: { id: invoiceId },
+    select: { id: true, customerId: true, amount: true, status: true },
+  });
+  if (!inv) {
+    throw new Error(`applyAdvancesToInvoice: invoice ${invoiceId} not found`);
+  }
+  if (inv.status === "paid" || inv.status === "draft") {
+    return {
+      invoiceId,
+      allocatedNow: 0,
+      newStatus: inv.status,
+      remainder: 0,
+    };
+  }
+
+  const existingAlloc = await client.customerPaymentAllocation.aggregate({
+    where: { invoiceId },
+    _sum: { amount: true },
+  });
+  let outstanding = Math.max(
+    0,
+    inv.amount - (existingAlloc._sum.amount ?? 0)
+  );
+  if (outstanding < 0.005) {
+    // Already fully allocated — promote to 'paid' if the status is
+    // lagging and bail.
+    await client.invoice.update({
+      where: { id: invoiceId },
+      data: { status: "paid" },
+    });
+    return { invoiceId, allocatedNow: 0, newStatus: "paid", remainder: 0 };
+  }
+
+  // Find the customer's payments oldest-first and sweep their
+  // unallocated portion against this invoice.
+  const payments = await client.customerPayment.findMany({
+    where: { customerId: inv.customerId },
+    orderBy: { paymentDate: "asc" },
+    include: { allocations: { select: { amount: true } } },
+  });
+
+  let allocatedNow = 0;
+  for (const p of payments) {
+    if (outstanding < 0.005) break;
+    const used = p.allocations.reduce((s, a) => s + a.amount, 0);
+    const free = Math.max(0, p.amount - used);
+    if (free < 0.005) continue;
+    const apply = Math.min(free, outstanding);
+    await client.customerPaymentAllocation.create({
+      data: {
+        paymentId: p.id,
+        invoiceId,
+        amount: apply,
+      },
+    });
+    outstanding -= apply;
+    allocatedNow += apply;
+  }
+
+  // Compute final status. If the invoice is now fully paid → 'paid'.
+  // If anything was applied → 'partial' (or stays 'overdue' if it
+  // was already overdue and remainder>0). Otherwise unchanged.
+  let newStatus = inv.status;
+  if (outstanding < 0.005) {
+    newStatus = "paid";
+  } else if (allocatedNow > 0) {
+    // Preserve 'overdue' if the bill was already past due — the
+    // partial payment doesn't reset the dunning clock.
+    newStatus = inv.status === "overdue" ? "overdue" : "partial";
+  }
+  if (newStatus !== inv.status) {
+    await client.invoice.update({
+      where: { id: invoiceId },
+      data: { status: newStatus },
+    });
+  }
+
+  return {
+    invoiceId,
+    allocatedNow,
+    newStatus,
+    remainder: Math.max(0, outstanding),
+  };
+};
+
+export const customerCreditExposure = async (
+  customerId: string
+): Promise<CreditExposure> => {
+  const [openInvoices, soCommitment, unallocatedAdvance] = await Promise.all([
+    db.invoice.findMany({
+      where: {
+        customerId,
+        status: { in: ["issued", "partial", "overdue"] },
+      },
+      select: { id: true, amount: true },
+    }),
+    customerOpenSOCommitment(customerId),
+    customerUnallocatedCredits(customerId),
+  ]);
+  let invoiceRemainder = 0;
+  for (const inv of openInvoices) {
+    const alloc = await db.customerPaymentAllocation.aggregate({
+      where: { invoiceId: inv.id },
+      _sum: { amount: true },
+    });
+    invoiceRemainder += Math.max(0, inv.amount - (alloc._sum.amount ?? 0));
+  }
+  return {
+    invoiceRemainder,
+    openSOCommitment: soCommitment,
+    unallocatedAdvance,
+    signed: invoiceRemainder + soCommitment - unallocatedAdvance,
+  };
+};
+
+// Total open AR for a customer (≥ 0 only) — what the customer "owes
+// us". Subtracts unallocated payments (advances) so a prepayment
+// reduces the displayed balance, mirroring the AR-statement
+// running-balance view.
+export const customerNetOpenBalance = async (
+  customerId: string
+): Promise<number> => {
+  const signed = await customerSignedAR(customerId);
+  return Math.max(0, signed);
 };
 
 // ------------------------------------------------------------------ route ---
@@ -399,11 +668,59 @@ export const customerPaymentRoutes = async (app: FastifyInstance) => {
         e.balance = running;
       }
 
-      const openBalance = await customerNetOpenBalance(id);
+      // Open balance is the public, clamped-to-zero figure used in the
+      // KPI strip. The breakdown lets the UI explain *why* the open
+      // balance is higher than the AR ledger's running total — it's
+      // the un-invoiced SO commitment from partially_invoiced SOs
+      // (warehouse shortfalls, back-orders, etc) that pad the
+      // customer's credit exposure.
+      const exposure = await customerCreditExposure(id);
+      const openBalance = Math.max(0, exposure.signed);
       const availableCredit =
         customer.creditLimit > 0
           ? Math.max(0, customer.creditLimit - openBalance)
           : null;
+
+      // Surface every SO that's contributing to openSOCommitment so
+      // the UI can offer one-tap actions. We match the same status
+      // filter as customerOpenSOCommitment (confirmed, partially_invoiced,
+      // on_hold) — historical bug where pack-complete didn't always
+      // roll the SO from 'confirmed' → 'partially_invoiced' meant
+      // shortfall-padded SOs were invisible to the original
+      // status-equals-partially_invoiced query.
+      const candidateSos = await db.salesOrder.findMany({
+        where: {
+          customerId: id,
+          status: { in: ["confirmed", "partially_invoiced", "on_hold"] },
+        },
+        include: { items: true, invoices: { select: { id: true } } },
+        orderBy: { orderDate: "desc" },
+      });
+      const partialSoSummaries = candidateSos
+        .map((so) => {
+          const totalOrd = so.items.reduce(
+            (s, it) => s + it.qtyOrdered - it.qtyCancelled,
+            0
+          );
+          const totalInv = so.items.reduce((s, it) => s + it.qtyInvoiced, 0);
+          const remainingQty = Math.max(0, totalOrd - totalInv);
+          const fraction = totalOrd > 0 ? totalInv / totalOrd : 0;
+          return {
+            id: so.id,
+            soNo: so.soNo,
+            status: so.status,
+            total: so.total,
+            invoicedFraction: fraction,
+            remainingCommitment: Math.max(0, so.total * (1 - fraction)),
+            remainingQty,
+            hasIssuedInvoice: so.invoices.length > 0,
+          };
+        })
+        // Banner is for SOs where we've already issued an invoice and
+        // a remainder is still hanging. Untouched 'confirmed' SOs (no
+        // invoice yet, full commitment) are not the user's problem to
+        // solve here — they're normal AR exposure.
+        .filter((s) => s.hasIssuedInvoice && s.remainingQty > 0);
 
       return {
         customer: {
@@ -411,6 +728,12 @@ export const customerPaymentRoutes = async (app: FastifyInstance) => {
           openBalance,
           availableCredit,
         },
+        breakdown: {
+          invoiceRemainder: exposure.invoiceRemainder,
+          openSOCommitment: exposure.openSOCommitment,
+          unallocatedAdvance: exposure.unallocatedAdvance,
+        },
+        partiallyInvoicedSOs: partialSoSummaries,
         entries,
       };
     }

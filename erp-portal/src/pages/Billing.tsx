@@ -32,6 +32,7 @@ import { useApi } from "@/hooks/useApi";
 import type { Invoice, Product, ProductVariant } from "@/data/types";
 import { dd, dt, inr } from "@/lib/format";
 import { cn } from "@/lib/cn";
+import { effectivePrice, searchProductsForSale, variantLabel } from "@/lib/productSearch";
 
 interface Line {
   productId: string;
@@ -66,12 +67,6 @@ const invTone = (s: Invoice["status"]) => {
       return "neutral" as const;
   }
 };
-
-const variantLabel = (v: ProductVariant) =>
-  [v.size, v.color, v.grade].filter(Boolean).join(" · ") || "default";
-
-const effectivePrice = (p: Product, v?: ProductVariant) =>
-  v?.sellingPriceOverride ?? p.sellingPrice;
 
 export const Billing = () => {
   const liveInvoices = useApi(() => api.invoices(), []);
@@ -110,6 +105,7 @@ export const Billing = () => {
   const [scan, setScan] = useState("");
   const [search, setSearch] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
+  const [includeParentsAndRaw, setIncludeParentsAndRaw] = useState(false);
   const [lines, setLines] = useState<Line[]>([]);
   const [pay, setPay] = useState<"cash" | "card" | "upi" | "split" | "credit">("upi");
   const [q, setQ] = useState("");
@@ -257,39 +253,12 @@ export const Billing = () => {
   };
 
   // ---- Text search results ----
-  const searchResults = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    if (term.length < 2) return [];
-    const out: { product: Product; variant: ProductVariant | null; label: string; price: number }[] = [];
-    for (const p of products) {
-      const baseHit =
-        p.name.toLowerCase().includes(term) ||
-        p.sku.toLowerCase().includes(term) ||
-        p.barcode.includes(term) ||
-        (p.category?.name ?? "").toLowerCase().includes(term);
-      if (baseHit) {
-        out.push({ product: p, variant: null, label: "default", price: p.sellingPrice });
-      }
-      for (const v of p.variants ?? []) {
-        const variantHit =
-          v.sku.toLowerCase().includes(term) ||
-          (v.barcode ?? "").includes(term) ||
-          (v.size ?? "").toLowerCase().includes(term) ||
-          (v.color ?? "").toLowerCase().includes(term) ||
-          (v.grade ?? "").toLowerCase().includes(term);
-        if (variantHit || baseHit) {
-          out.push({
-            product: p,
-            variant: v,
-            label: variantLabel(v),
-            price: effectivePrice(p, v),
-          });
-        }
-      }
-      if (out.length > 30) break;
-    }
-    return out.slice(0, 12);
-  }, [search, products]);
+  const searchResult = useMemo(
+    () =>
+      searchProductsForSale(products, search, { includeParentsAndRaw }),
+    [search, products, includeParentsAndRaw]
+  );
+  const searchResults = searchResult.hits;
 
   const updateQty = (key: string, d: number) => {
     setLines((prev) =>
@@ -689,14 +658,36 @@ export const Billing = () => {
                     }}
                     onFocus={() => setSearchOpen(true)}
                   />
+                  {!soSource && (
+                    <label className="mt-2 flex items-center gap-2 text-body-sm text-ink-muted cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={includeParentsAndRaw}
+                        onChange={(e) => setIncludeParentsAndRaw(e.target.checked)}
+                        className="rounded border-border"
+                      />
+                      Include parent SKUs &amp; raw materials
+                    </label>
+                  )}
                   {searchOpen && search.trim().length >= 2 && (
                     <div className="absolute z-20 left-0 right-0 mt-1 bg-surface border border-border rounded-md elevation-3 max-h-80 overflow-y-auto">
                       {searchResults.length === 0 ? (
                         <div className="p-4 text-caption text-ink-muted">
                           No products match "{search}".
+                          {!includeParentsAndRaw && (
+                            <span className="block mt-1">
+                              Try enabling parent SKUs &amp; raw materials.
+                            </span>
+                          )}
                         </div>
                       ) : (
-                        searchResults.map((r, i) => (
+                        <>
+                          {searchResult.truncated && (
+                            <div className="px-3 py-1.5 text-caption text-ink-muted border-b border-border bg-canvas">
+                              Showing {searchResults.length} of {searchResult.totalMatches} — refine search to narrow
+                            </div>
+                          )}
+                          {searchResults.map((r, i) => (
                           <button
                             key={`${r.product.id}-${r.variant?.id ?? "_"}-${i}`}
                             className="w-full px-3 py-2 flex items-center gap-3 hover:bg-canvas text-left"
@@ -715,14 +706,25 @@ export const Billing = () => {
                                 )}
                               </div>
                             </div>
-                            {r.variant && (
+                            {r.rowKind === "variant" && (
                               <Chip size="sm" tone="info" icon={<Layers size={11} />}>
                                 variant
                               </Chip>
                             )}
+                            {r.rowKind === "parent" && (
+                              <Chip size="sm" tone="warning">
+                                parent
+                              </Chip>
+                            )}
+                            {r.rowKind === "standalone" && r.product.type !== "finished" && (
+                              <Chip size="sm" tone="neutral">
+                                {r.product.type}
+                              </Chip>
+                            )}
                             <span className="font-bold tnum text-primary">{inr(r.price)}</span>
                           </button>
-                        ))
+                          ))}
+                        </>
                       )}
                     </div>
                   )}

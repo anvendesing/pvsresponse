@@ -3,7 +3,7 @@
 // a banner reminds the operator that saving will create a new revision.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, ExternalLink, History, Layers, Plus, Search, Trash2, X, Zap } from "lucide-react";
+import { AlertTriangle, ExternalLink, History, Layers, Plus, RotateCcw, Search, Trash2, X, Zap } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Chip } from "@/components/common/Chip";
 import { Input } from "@/components/common/Input";
@@ -12,12 +12,15 @@ import {
   type AcceptQuoteResponse,
   type AtpResult,
   type CustomerRow,
+  DISPATCH_CATEGORY_LABELS,
+  type DispatchOptionRow,
   type QuoteCreatePayload,
   type QuoteRow,
 } from "@/lib/api";
 import type { Product, ProductVariant } from "@/data/types";
 import { inr, dd } from "@/lib/format";
 import { cn } from "@/lib/cn";
+import { searchProductsForSale } from "@/lib/productSearch";
 import { RevisionHistory } from "./RevisionHistory";
 import { ShareQuoteMenu } from "./ShareQuoteMenu";
 
@@ -114,9 +117,13 @@ export const QuoteEditor = ({
   const [validUntil, setValidUntil] = useState("");
   const [paymentTerms, setPaymentTerms] = useState("Net 30");
   const [notes, setNotes] = useState("");
+  const [dispatchOptionId, setDispatchOptionId] = useState<string>("");
+  const [transportCharge, setTransportCharge] = useState(0);
+  const [dispatchOptions, setDispatchOptions] = useState<DispatchOptionRow[]>([]);
   const [lines, setLines] = useState<Line[]>([]);
   const [search, setSearch] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
+  const [includeParentsAndRaw, setIncludeParentsAndRaw] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showRevisions, setShowRevisions] = useState(false);
@@ -131,6 +138,11 @@ export const QuoteEditor = ({
 
   useEffect(() => {
     if (!open) return;
+    void api.dispatchOptions().then(setDispatchOptions).catch(() => {});
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
     setError(null);
     setShowRevisions(false);
     setAtpCache({});
@@ -139,6 +151,8 @@ export const QuoteEditor = ({
       setValidUntil(quote.validUntil.slice(0, 10));
       setPaymentTerms(quote.paymentTerms ?? "");
       setNotes(quote.notes ?? "");
+      setDispatchOptionId(quote.dispatchOptionId ?? "");
+      setTransportCharge(quote.transportCharge ?? 0);
       setLines(linesFromQuote(quote));
     } else {
       setCustomerId(customers[0]?.id ?? "");
@@ -146,6 +160,8 @@ export const QuoteEditor = ({
       setValidUntil(d.toISOString().slice(0, 10));
       setPaymentTerms("Net 30");
       setNotes("");
+      setDispatchOptionId("");
+      setTransportCharge(0);
       setLines([]);
     }
   }, [open, mode, quote, customers]);
@@ -202,7 +218,34 @@ export const QuoteEditor = ({
     });
     return Math.round(lineTaxes.reduce((s, t) => s + t, 0));
   }, [lines, products]);
-  const total = subTotal + tax;
+  const transportTax = useMemo(
+    () => Math.round(transportCharge * 0.18 * 100) / 100,
+    [transportCharge]
+  );
+  const total = subTotal + tax + transportCharge + transportTax;
+
+  const dispatchOptionsByCategory = useMemo(() => {
+    const map = new Map<string, DispatchOptionRow[]>();
+    for (const o of dispatchOptions) {
+      const list = map.get(o.category) ?? [];
+      list.push(o);
+      map.set(o.category, list);
+    }
+    return map;
+  }, [dispatchOptions]);
+
+  const selectedDispatch = useMemo(
+    () => dispatchOptions.find((o) => o.id === dispatchOptionId) ?? null,
+    [dispatchOptions, dispatchOptionId]
+  );
+
+  const onDispatchChange = (id: string) => {
+    setDispatchOptionId(id);
+    const opt = dispatchOptions.find((o) => o.id === id);
+    if (opt && (transportCharge === 0 || transportCharge === selectedDispatch?.defaultCharge)) {
+      setTransportCharge(opt.defaultCharge);
+    }
+  };
 
   const headroom = useMemo(() => {
     if (!customer) return null;
@@ -210,39 +253,12 @@ export const QuoteEditor = ({
   }, [customer, total]);
 
   // ---- Search ----
-  const searchResults = useMemo(() => {
-    const term = search.trim().toLowerCase();
-    if (term.length < 2) return [];
-    const out: { product: Product; variant: ProductVariant | null; label: string; price: number }[] = [];
-    for (const p of products) {
-      const baseHit =
-        p.name.toLowerCase().includes(term) ||
-        p.sku.toLowerCase().includes(term) ||
-        p.barcode.includes(term) ||
-        (p.category?.name ?? "").toLowerCase().includes(term);
-      if (baseHit) {
-        out.push({ product: p, variant: null, label: "default", price: p.sellingPrice });
-      }
-      for (const v of p.variants ?? []) {
-        const vHit =
-          v.sku.toLowerCase().includes(term) ||
-          (v.barcode ?? "").includes(term) ||
-          (v.size ?? "").toLowerCase().includes(term) ||
-          (v.color ?? "").toLowerCase().includes(term) ||
-          (v.grade ?? "").toLowerCase().includes(term);
-        if (vHit || baseHit) {
-          out.push({
-            product: p,
-            variant: v,
-            label: variantLabel(v),
-            price: effectivePrice(p, v),
-          });
-        }
-      }
-      if (out.length > 30) break;
-    }
-    return out.slice(0, 12);
-  }, [search, products]);
+  const searchResult = useMemo(
+    () =>
+      searchProductsForSale(products, search, { includeParentsAndRaw }),
+    [search, products, includeParentsAndRaw]
+  );
+  const searchResults = searchResult.hits;
 
   // ---- Mutations ----
   // Resolves the customer-aware price from the backend. Falls back to the
@@ -360,13 +376,80 @@ export const QuoteEditor = ({
   };
 
   // ---- Validation + submit ----
-  const canSave = !!customerId && lines.length > 0 && !submitting && !isLocked;
+  const isDirty = useMemo(() => {
+    if (mode !== "edit" || !quote) return true;
+
+    const headerSame =
+      customerId === quote.customerId &&
+      validUntil === quote.validUntil.slice(0, 10) &&
+      (paymentTerms || null) === (quote.paymentTerms || null) &&
+      (notes || null) === (quote.notes || null) &&
+      (dispatchOptionId || null) === (quote.dispatchOptionId || null) &&
+      transportCharge === (quote.transportCharge ?? 0);
+    if (!headerSame) return true;
+
+    const normalize = (
+      items: {
+        productId: string;
+        variantId: string | null;
+        qty: number;
+        rate: number;
+        discount: number;
+      }[]
+    ) =>
+      [...items]
+        .map((it) => ({
+          productId: it.productId,
+          variantId: it.variantId ?? null,
+          qty: it.qty,
+          rate: it.rate,
+          discount: it.discount,
+        }))
+        .sort((a, b) =>
+          `${a.productId}:${a.variantId ?? ""}`.localeCompare(`${b.productId}:${b.variantId ?? ""}`)
+        );
+
+    const beforeItems = normalize(
+      quote.items.map((it) => ({
+        productId: it.productId,
+        variantId: it.variantId ?? null,
+        qty: it.qty,
+        rate: it.rate,
+        discount: it.discount,
+      }))
+    );
+    const currentItems = normalize(
+      lines.map((l) => ({
+        productId: l.productId,
+        variantId: l.variantId,
+        qty: l.qty,
+        rate: l.rate,
+        discount: l.discount,
+      }))
+    );
+    return JSON.stringify(beforeItems) !== JSON.stringify(currentItems);
+  }, [
+    mode,
+    quote,
+    customerId,
+    validUntil,
+    paymentTerms,
+    notes,
+    dispatchOptionId,
+    transportCharge,
+    lines,
+  ]);
+
+  const canSave =
+    !!customerId && lines.length > 0 && !submitting && !isLocked && isDirty;
 
   const buildPayload = (): QuoteCreatePayload => ({
     customerId,
     validUntil: new Date(validUntil + "T23:59:59").toISOString(),
     paymentTerms: paymentTerms || null,
     notes: notes || null,
+    dispatchOptionId: dispatchOptionId || null,
+    transportCharge,
     items: lines.map((l) => ({
       productId: l.productId,
       variantId: l.variantId,
@@ -397,7 +480,7 @@ export const QuoteEditor = ({
         saved = await api.submitQuote(saved.id);
       }
       onSaved(saved);
-      if (!alsoSubmit) onClose();
+      onClose();
     } catch (e) {
       setError((e as Error).message ?? "Save failed.");
     } finally {
@@ -411,6 +494,11 @@ export const QuoteEditor = ({
     setError(null);
     try {
       const r = await api.acceptQuote(quote.id);
+      if (r.creditHold) {
+        // Parked behind credit approval — refresh the quote row so the
+        // editor/list show "accepted" + the retry/override banner.
+        if (r.quote) onSaved(r.quote);
+      }
       onAccepted?.(r);
       onClose();
     } catch (e) {
@@ -571,6 +659,16 @@ export const QuoteEditor = ({
                   )}
                   <Button
                     size="sm"
+                    variant="outline"
+                    icon={<RotateCcw size={14} />}
+                    onClick={accept}
+                    disabled={submitting}
+                    title="Re-run the credit check. Use this after recording a customer payment that should clear the hold."
+                  >
+                    {submitting ? "…" : "Retry credit check"}
+                  </Button>
+                  <Button
+                    size="sm"
                     variant="primary"
                     icon={<Zap size={14} />}
                     onClick={forceConvert}
@@ -682,6 +780,51 @@ export const QuoteEditor = ({
                 placeholder="Free-form remarks"
               />
             </Field>
+            <Field label="Dispatch mode">
+              <select
+                disabled={!!isLocked}
+                value={dispatchOptionId}
+                onChange={(e) => onDispatchChange(e.target.value)}
+                className="w-full h-9 rounded-md border border-border bg-surface px-2 text-body-sm"
+              >
+                <option value="">— Select transport mode —</option>
+                {Array.from(dispatchOptionsByCategory.entries()).map(([cat, opts]) => (
+                  <optgroup
+                    key={cat}
+                    label={DISPATCH_CATEGORY_LABELS[cat] ?? cat}
+                  >
+                    {opts.map((o) => (
+                      <option key={o.id} value={o.id}>
+                        {o.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                ))}
+              </select>
+              {selectedDispatch?.description && (
+                <div className="text-caption text-ink-muted mt-1">
+                  {selectedDispatch.description}
+                </div>
+              )}
+            </Field>
+            <Field label="Transport charge (₹, excl. GST)">
+              <Input
+                type="number"
+                min={0}
+                step="any"
+                disabled={!!isLocked}
+                value={transportCharge}
+                onChange={(e) =>
+                  setTransportCharge(parseFloat(e.target.value) || 0)
+                }
+                placeholder="0"
+              />
+              {transportCharge > 0 && (
+                <div className="text-caption text-ink-muted mt-1">
+                  GST on freight (18%): {inr(transportTax)}
+                </div>
+              )}
+            </Field>
           </section>
 
           <section ref={searchRef} className="border-t border-border pt-4 relative">
@@ -697,26 +840,48 @@ export const QuoteEditor = ({
               </Chip>
             </div>
             {!isLocked && (
-              <Input
-                size="sm"
-                iconLeft={<Search size={14} />}
-                placeholder="Search products / variants…"
-                value={search}
-                onChange={(e) => {
-                  setSearch(e.target.value);
-                  setSearchOpen(true);
-                }}
-                onFocus={() => setSearchOpen(true)}
-              />
+              <>
+                <Input
+                  size="sm"
+                  iconLeft={<Search size={14} />}
+                  placeholder="Search products / variants…"
+                  value={search}
+                  onChange={(e) => {
+                    setSearch(e.target.value);
+                    setSearchOpen(true);
+                  }}
+                  onFocus={() => setSearchOpen(true)}
+                />
+                <label className="mt-2 flex items-center gap-2 text-body-sm text-ink-muted cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={includeParentsAndRaw}
+                    onChange={(e) => setIncludeParentsAndRaw(e.target.checked)}
+                    className="rounded border-border"
+                  />
+                  Include parent SKUs &amp; raw materials
+                </label>
+              </>
             )}
             {searchOpen && search.trim().length >= 2 && (
               <div className="absolute z-30 left-0 right-0 mt-1 bg-surface border border-border rounded-md elevation-3 max-h-72 overflow-y-auto">
                 {searchResults.length === 0 ? (
                   <div className="p-4 text-caption text-ink-muted">
                     No products match "{search}".
+                    {!includeParentsAndRaw && (
+                      <span className="block mt-1">
+                        Try enabling parent SKUs &amp; raw materials.
+                      </span>
+                    )}
                   </div>
                 ) : (
-                  searchResults.map((r, i) => (
+                  <>
+                    {searchResult.truncated && (
+                      <div className="px-3 py-1.5 text-caption text-ink-muted border-b border-border bg-canvas">
+                        Showing {searchResults.length} of {searchResult.totalMatches} — refine search to narrow
+                      </div>
+                    )}
+                    {searchResults.map((r, i) => (
                     <button
                       key={`${r.product.id}-${r.variant?.id ?? "_"}-${i}`}
                       className="w-full px-3 py-2 flex items-center gap-3 hover:bg-canvas text-left"
@@ -733,14 +898,25 @@ export const QuoteEditor = ({
                           {r.variant && <span className="ml-2 text-ink">· {r.label}</span>}
                         </div>
                       </div>
-                      {r.variant && (
+                      {r.rowKind === "variant" && (
                         <Chip size="sm" tone="info" icon={<Layers size={11} />}>
                           variant
                         </Chip>
                       )}
+                      {r.rowKind === "parent" && (
+                        <Chip size="sm" tone="warning">
+                          parent
+                        </Chip>
+                      )}
+                      {r.rowKind === "standalone" && r.product.type !== "finished" && (
+                        <Chip size="sm" tone="neutral">
+                          {r.product.type}
+                        </Chip>
+                      )}
                       <span className="font-bold tnum text-primary">{inr(r.price)}</span>
                     </button>
-                  ))
+                    ))}
+                  </>
                 )}
               </div>
             )}
@@ -859,7 +1035,16 @@ export const QuoteEditor = ({
           <section className="border-t border-border pt-4">
             <div className="grid grid-cols-2 gap-x-8 max-w-md ml-auto text-body-sm">
               <Row k="Subtotal" v={inr(subTotal)} />
-              <Row k="GST" v={inr(tax)} />
+              <Row k="GST (goods)" v={inr(tax)} />
+              {transportCharge > 0 && (
+                <>
+                  <Row
+                    k={`Transport${selectedDispatch ? ` · ${selectedDispatch.name}` : ""}`}
+                    v={inr(transportCharge)}
+                  />
+                  <Row k="GST (freight)" v={inr(transportTax)} />
+                </>
+              )}
               <Row k="Total" v={inr(total)} big />
             </div>
           </section>
@@ -912,6 +1097,13 @@ export const QuoteEditor = ({
               >
                 Delete
               </Button>
+              {/* Bulk Excel import (and manual "Save draft") leaves quotes in
+                  draft, but POST /quotes/:id/accept already accepts draft
+                  status — the button was previously hidden here, which made
+                  imported quotes look "stuck" with no convert path. */}
+              <Button size="sm" variant="primary" onClick={accept} disabled={submitting}>
+                {submitting ? "…" : "Convert → Sales Order"}
+              </Button>
               <div className="w-px h-6 bg-border mx-1" />
             </>
           )}
@@ -928,7 +1120,12 @@ export const QuoteEditor = ({
               </Button>
             </>
           ) : (
-            <Button size="sm" onClick={() => save(false)} disabled={!canSave}>
+            <Button
+              size="sm"
+              onClick={() => save(false)}
+              disabled={!canSave}
+              title={mode === "edit" && !isDirty ? "No changes to save" : undefined}
+            >
               {submitting ? "Saving…" : isSubmitted ? "Save (creates revision)" : "Save"}
             </Button>
           )}

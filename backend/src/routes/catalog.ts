@@ -98,6 +98,8 @@ const productCreate = z.object({
   reorderLevel: z.number().int().nonnegative().default(0),
   stockOnHand: z.number().int().nonnegative().default(0),
   batchTracked: z.boolean().default(false),
+  // Free-form catalogue description. Empty / null clears the column.
+  description: z.string().max(5000).nullish(),
   variants: z.array(variantInput).default([]),
 });
 
@@ -360,6 +362,231 @@ export const catalogRoutes = async (app: FastifyInstance) => {
     }
   });
 
+  // POST /products/normalize-uoms — bulk-coerce UoMs to the house pattern:
+  //
+  //   * Parent products keep bulk units only:
+  //       weight  → kg
+  //       volume  → L
+  //       length  → m   (kept canonical; rare in this catalog)
+  //       unit/time → left alone (already piece/hour, can't be bulk)
+  //     We never silently change an unknown / unmappable uom — those land
+  //     in `skipped` so the operator can see what needs hand-fixing.
+  //
+  //   * Variants are sellable units → uom = "pc". Every active variant
+  //     with a non-pc uom (or an empty/legacy alias) is updated. packSize
+  //     is left intact: it already encodes "1 variant unit = packSize
+  //     parent units", which is exactly what the rest of the system uses
+  //     to roll variant sales up to bulk consumption.
+  //
+  // Always runs in dry-run mode unless `apply: true` is set, so the UI
+  // can show a preview first. Admin / supervisor only.
+  const uomNormalizeBody = z
+    .object({ apply: z.boolean().default(false) })
+    .strict();
+
+  app.post(
+    "/products/normalize-uoms",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      if (req.user.role !== "admin" && req.user.role !== "supervisor") {
+        return reply
+          .code(403)
+          .send({ error: { code: "forbidden", message: "Admins only" } });
+      }
+      const body = uomNormalizeBody.parse(req.body ?? {});
+
+      // Build canonical-code → category-code map from the UoM master so
+      // we can decide the target without hard-coding the alias table.
+      const allUoms = await db.uom.findMany({
+        select: {
+          code: true,
+          category: { select: { code: true } },
+        },
+      });
+      const catByCode = new Map(allUoms.map((u) => [u.code, u.category.code]));
+      const targetByCategory: Record<string, string> = {
+        weight: "kg",
+        volume: "L",
+        length: "m",
+      };
+
+      const products = await db.product.findMany({
+        select: { id: true, sku: true, name: true, type: true, uom: true },
+        orderBy: { sku: "asc" },
+      });
+      const variants = await db.productVariant.findMany({
+        select: {
+          id: true,
+          sku: true,
+          productId: true,
+          uom: true,
+          active: true,
+          product: { select: { sku: true, uom: true } },
+        },
+        orderBy: { sku: "asc" },
+      });
+
+      type ProductChange = {
+        id: string;
+        sku: string;
+        name: string;
+        type: string;
+        currentUom: string;
+        canonical: string | null;
+        category: string | null;
+        targetUom: string | null;
+        action: "update" | "noop" | "skip";
+        reason?: string;
+      };
+      const productPlan: ProductChange[] = products.map((p) => {
+        const canonical = normalizeUomCode(p.uom);
+        const category = canonical ? catByCode.get(canonical) ?? null : null;
+        const targetUom = category ? targetByCategory[category] ?? null : null;
+        if (!canonical) {
+          return {
+            id: p.id,
+            sku: p.sku,
+            name: p.name,
+            type: p.type,
+            currentUom: p.uom,
+            canonical: null,
+            category: null,
+            targetUom: null,
+            action: "skip",
+            reason: `UoM "${p.uom}" is not recognised — fix manually in the product editor.`,
+          };
+        }
+        if (!targetUom) {
+          // unit / time / unknown category — already in a sellable unit.
+          return {
+            id: p.id,
+            sku: p.sku,
+            name: p.name,
+            type: p.type,
+            currentUom: p.uom,
+            canonical,
+            category,
+            targetUom: canonical,
+            action: "noop",
+            reason: "Already a non-bulk UoM (piece / time / etc.).",
+          };
+        }
+        return {
+          id: p.id,
+          sku: p.sku,
+          name: p.name,
+          type: p.type,
+          currentUom: p.uom,
+          canonical,
+          category,
+          targetUom,
+          action: p.uom === targetUom ? "noop" : "update",
+        };
+      });
+
+      type VariantChange = {
+        id: string;
+        sku: string;
+        productSku: string;
+        currentUom: string | null;
+        targetUom: string;
+        action: "update" | "noop";
+        active: boolean;
+      };
+      const variantPlan: VariantChange[] = variants.map((v) => {
+        const currentCanonical = v.uom ? normalizeUomCode(v.uom) : null;
+        // null/empty means "inherit parent" — that used to give parent's
+        // bulk uom (kg/L) at read time, which is wrong for sellable
+        // units. Force every variant to "pc" explicitly.
+        const action: "update" | "noop" =
+          currentCanonical === "pc" ? "noop" : "update";
+        return {
+          id: v.id,
+          sku: v.sku,
+          productSku: v.product.sku,
+          currentUom: v.uom,
+          targetUom: "pc",
+          action,
+          active: v.active,
+        };
+      });
+
+      const summary = {
+        products: {
+          total: productPlan.length,
+          willUpdate: productPlan.filter((p) => p.action === "update").length,
+          unchanged: productPlan.filter((p) => p.action === "noop").length,
+          skipped: productPlan.filter((p) => p.action === "skip").length,
+        },
+        variants: {
+          total: variantPlan.length,
+          willUpdate: variantPlan.filter((v) => v.action === "update").length,
+          unchanged: variantPlan.filter((v) => v.action === "noop").length,
+          skipped: 0,
+        },
+      };
+
+      if (!body.apply) {
+        return {
+          dryRun: true,
+          summary,
+          products: productPlan,
+          variants: variantPlan,
+        };
+      }
+
+      // Apply phase. Use a transaction so a partial failure rolls
+      // everything back. We also write a single change-log row per
+      // updated record so the audit trail stays useful.
+      const productUpdates = productPlan.filter((p) => p.action === "update");
+      const variantUpdates = variantPlan.filter((v) => v.action === "update");
+
+      await db.$transaction(async (tx) => {
+        for (const p of productUpdates) {
+          await tx.product.update({
+            where: { id: p.id },
+            data: { uom: p.targetUom! },
+          });
+        }
+        for (const v of variantUpdates) {
+          await tx.productVariant.update({
+            where: { id: v.id },
+            data: { uom: v.targetUom },
+          });
+        }
+      });
+
+      // Audit trail — outside the transaction so a sync-log hiccup
+      // doesn't roll back the actual data fix.
+      for (const p of productUpdates) {
+        await recordChange(
+          "Product",
+          p.id,
+          "update",
+          { uom: p.targetUom, _normalized: { from: p.currentUom } },
+          req.user.sub
+        );
+      }
+      for (const v of variantUpdates) {
+        await recordChange(
+          "ProductVariant",
+          v.id,
+          "update",
+          { uom: v.targetUom, _normalized: { from: v.currentUom } },
+          req.user.sub
+        );
+      }
+
+      return {
+        dryRun: false,
+        summary,
+        products: productPlan,
+        variants: variantPlan,
+        appliedAt: new Date().toISOString(),
+      };
+    }
+  );
+
   // ============= Warehouses =============
   // GET /warehouses
   // - By default returns only active warehouses (existing behaviour). Pass
@@ -394,7 +621,23 @@ export const catalogRoutes = async (app: FastifyInstance) => {
     const id = (req.params as { id: string }).id;
     return db.bin.findMany({
       where: { warehouseId: id },
-      include: { product: { select: { sku: true, name: true, uom: true } } },
+      include: {
+        product: { select: { sku: true, name: true, uom: true } },
+        // Variant tag on the bin — present when the bin holds a
+        // sellable variant (e.g. BAJF-1KG-01) rather than the bulk
+        // parent SKU. The frontend uses this to scope bin selectors
+        // by SKU level: parent-only bins for bulk adjustments,
+        // variant-tagged bins for finished-goods adjustments.
+        variant: {
+          select: {
+            id: true,
+            sku: true,
+            size: true,
+            uom: true,
+            packSize: true,
+          },
+        },
+      },
       orderBy: [{ zone: "asc" }, { shelf: "asc" }, { bin: "asc" }],
     });
   });
@@ -874,12 +1117,18 @@ export const catalogRoutes = async (app: FastifyInstance) => {
         if (!wh) return reply.code(409).send({ error: { code: "no_warehouse", message: "No warehouse found." } });
         const year = new Date().getUTCFullYear();
         const ref = `ADJ-V-${year}-${Date.now().toString().slice(-6)}`;
+        // Variant counter only — parent is a separate inventory level
+        // (bulk holdings in parent UoM) and must not move when a
+        // variant counter is corrected. The previous "increment parent
+        // by delta" was a left-over from the days when parent SOH was
+        // the sum of variants; with variant-tagged bins they're now
+        // independent counters.
         await db.$transaction([
           db.productVariant.update({ where: { id: vid }, data: { stockOnHand: newQty } }),
-          db.product.update({ where: { id }, data: { stockOnHand: { increment: delta } } }),
           db.stockLedger.create({
             data: {
               productId: id,
+              variantId: vid,
               warehouseId: wh.id,
               txnType: "Adjust",
               ref,

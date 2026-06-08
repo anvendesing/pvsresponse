@@ -16,6 +16,7 @@ import {
   Pause,
   Play,
   Plus,
+  RotateCcw,
   Square,
   TrendingUp,
   Users,
@@ -25,6 +26,7 @@ import { Button } from "@/components/common/Button";
 import { Card } from "@/components/common/Card";
 import { Chip, StatusDot } from "@/components/common/Chip";
 import { Kpi } from "@/components/common/Kpi";
+import { CollapsibleStats } from "@/components/common/CollapsibleStats";
 import { Toolbar } from "@/components/common/Toolbar";
 import {
   api,
@@ -38,6 +40,8 @@ import type { Bom, ProductionOrder } from "@/data/types";
 import { cn } from "@/lib/cn";
 import { dd, num } from "@/lib/format";
 import { NewMoModal } from "@/components/manufacturing/NewMoModal";
+import { CorrectOutputModal } from "@/components/manufacturing/CorrectOutputModal";
+import { LogOutputModal } from "@/components/manufacturing/LogOutputModal";
 
 const statusTone = (s: ProductionOrder["status"]) => {
   switch (s) {
@@ -71,8 +75,15 @@ export const Manufacturing = () => {
   const lines = liveLines.data?.lines ?? [];
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<"orders" | "productivity">("orders");
+  // Tabs: Orders = active MOs you're working on right now, History =
+  // closed (completed/cancelled) MOs kept available for lookup without
+  // cluttering the active rail, Productivity = plant/line dashboard.
+  const [activeTab, setActiveTab] = useState<"orders" | "history" | "productivity">(
+    "orders"
+  );
   const [showNewMo, setShowNewMo] = useState(false);
+  const [showCorrect, setShowCorrect] = useState(false);
+  const [showLogOutput, setShowLogOutput] = useState(false);
   const [okBanner, setOkBanner] = useState<string | null>(null);
   const [errBanner, setErrBanner] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -108,8 +119,41 @@ export const Manufacturing = () => {
   const loading = liveMo.loading || liveBoms.loading || liveWorkers.loading;
   const errorObj = liveMo.error ?? liveBoms.error ?? liveWorkers.error;
 
+  // Newest-first ordering by orderNo desc (MO-YYYY-NNNN is monotonic
+  // per year). Falls back to startDate when orderNo ties — belt and
+  // braces. Used for both the Active rail and History rail below.
+  const ordersNewestFirst = useMemo(() => {
+    const arr = [...productionOrders];
+    arr.sort((a, b) => {
+      if (a.orderNo !== b.orderNo) return b.orderNo.localeCompare(a.orderNo);
+      return (b.startDate ?? "").localeCompare(a.startDate ?? "");
+    });
+    return arr;
+  }, [productionOrders]);
+
+  // "Closed" = lifecycle dead-ends (completed, cancelled). Everything
+  // else is still actionable and stays in Active.
+  const isClosedStatus = (s: ProductionOrder["status"]): boolean =>
+    s === "completed" || (s as string) === "cancelled";
+
+  const activeOrders = useMemo(
+    () => ordersNewestFirst.filter((p) => !isClosedStatus(p.status)),
+    [ordersNewestFirst]
+  );
+  const closedOrders = useMemo(
+    () => ordersNewestFirst.filter((p) => isClosedStatus(p.status)),
+    [ordersNewestFirst]
+  );
+
+  // Left rail follows the active top tab. Productivity reuses the
+  // Active rail so users can still jump straight to an in-flight MO.
+  const railOrders = activeTab === "history" ? closedOrders : activeOrders;
+  const railLabel = activeTab === "history" ? "Closed Orders" : "Active Orders";
+
   const order =
-    productionOrders.find((p) => p.id === selectedId) ?? productionOrders[0];
+    productionOrders.find((p) => p.id === selectedId) ??
+    railOrders[0] ??
+    ordersNewestFirst[0];
 
   // Fetch requirements + linked TOs when the selected MO changes.
   useEffect(() => {
@@ -151,6 +195,17 @@ export const Manufacturing = () => {
 
   const activeBoms = boms.filter((b) => b.active);
   const isEmpty = !loading && !errorObj && productionOrders.length === 0;
+
+  // When the user switches between Active and History, the previously
+  // selected MO may not exist in the new rail anymore — bounce the
+  // selection to the rail's top item so the detail pane keeps matching
+  // what the user actually sees.
+  useEffect(() => {
+    if (!selectedId) return;
+    if (!railOrders.some((p) => p.id === selectedId)) {
+      setSelectedId(railOrders[0]?.id ?? null);
+    }
+  }, [activeTab, railOrders, selectedId]);
 
   const moToolbar = (
     <Toolbar
@@ -314,31 +369,7 @@ export const Manufacturing = () => {
     }
   };
 
-  const onLogOutput = async () => {
-    const goodInput = prompt(
-      "Good qty produced this batch (integer):",
-      String(Math.max(1, Math.round(order.plannedQty / 4)))
-    );
-    if (!goodInput) return;
-    const good = Number(goodInput);
-    if (!Number.isFinite(good) || good < 0) {
-      setErrBanner("Good qty must be a non-negative number.");
-      return;
-    }
-    const scrapInput = prompt("Scrap qty (defaults to 0):", "0");
-    const scrap = Number(scrapInput ?? "0");
-    setBusy("log");
-    try {
-      await api.logOutput(order.id, { goodQty: good, scrapQty: Number.isFinite(scrap) ? scrap : 0 });
-      setOkBanner(`Logged ${num(good)} good, ${num(scrap || 0)} scrap.`);
-      await refreshAll();
-      await refreshRequirements(order.id);
-    } catch (e) {
-      setErrBanner((e as Error).message);
-    } finally {
-      setBusy(null);
-    }
-  };
+  const onLogOutput = () => setShowLogOutput(true);
 
   const onReleaseMo = async () => {
     setBusy("release");
@@ -452,19 +483,44 @@ export const Manufacturing = () => {
         </div>
       )}
 
-      <div className="px-4 py-3 grid grid-cols-2 md:grid-cols-4 gap-3 bg-canvas border-b border-border">
-        <Kpi label="Plant Efficiency" value={`${eff.toFixed(1)}%`} delta={1.2} icon={<TrendingUp size={14} />} accent="success" />
-        <Kpi label="In Progress" value={String(inProgress)} deltaSuffix="" delta={1} icon={<Play size={14} />} accent="primary" />
-        <Kpi label="Delayed" value={String(delayed)} deltaSuffix="" delta={-1} icon={<AlertTriangle size={14} />} accent="danger" />
-        <Kpi label="Output Today" value={num(totalActual)} delta={6.4} accent="primary" hint={`Target ${num(totalPlanned)}`} />
-      </div>
+      <CollapsibleStats
+        storageKey="manufacturing"
+        summary={
+          <>
+            Efficiency {eff.toFixed(1)}% · {inProgress} in-progress · {delayed} delayed · output {num(totalActual)} / target {num(totalPlanned)}
+          </>
+        }
+      >
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <Kpi label="Plant Efficiency" value={`${eff.toFixed(1)}%`} delta={1.2} icon={<TrendingUp size={14} />} accent="success" />
+          <Kpi label="In Progress" value={String(inProgress)} deltaSuffix="" delta={1} icon={<Play size={14} />} accent="primary" />
+          <Kpi label="Delayed" value={String(delayed)} deltaSuffix="" delta={-1} icon={<AlertTriangle size={14} />} accent="danger" />
+          <Kpi label="Output Today" value={num(totalActual)} delta={6.4} accent="primary" hint={`Target ${num(totalPlanned)}`} />
+        </div>
+      </CollapsibleStats>
 
       {/* Tab bar */}
       <div className="border-b border-border bg-surface flex items-center px-4 gap-1">
         {(
           [
-            { id: "orders", label: "Orders", icon: <ClipboardList size={13} /> },
-            { id: "productivity", label: "Productivity", icon: <BarChart2 size={13} /> },
+            {
+              id: "orders",
+              label: "Orders",
+              icon: <ClipboardList size={13} />,
+              count: activeOrders.length,
+            },
+            {
+              id: "history",
+              label: "History",
+              icon: <CheckCircle2 size={13} />,
+              count: closedOrders.length,
+            },
+            {
+              id: "productivity",
+              label: "Productivity",
+              icon: <BarChart2 size={13} />,
+              count: null as number | null,
+            },
           ] as const
         ).map((tab) => (
           <button
@@ -479,19 +535,39 @@ export const Manufacturing = () => {
           >
             {tab.icon}
             {tab.label}
+            {tab.count != null && (
+              <span
+                className={cn(
+                  "ml-1 inline-flex items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold tnum",
+                  activeTab === tab.id
+                    ? "bg-primary text-white"
+                    : "bg-canvas text-ink-muted"
+                )}
+              >
+                {tab.count}
+              </span>
+            )}
           </button>
         ))}
       </div>
 
       <div className="flex-1 grid grid-cols-12 min-h-0">
-        {/* Left: orders list — always visible */}
+        {/* Left: orders list — content depends on which top tab is
+            active (Active vs Closed). Newest-first within each list. */}
         <aside className="col-span-3 bg-surface border-r border-border flex flex-col">
           <div className="px-3 py-2 border-b border-border flex items-center justify-between">
-            <span className="text-body-sm font-bold">Active Orders</span>
-            <Chip size="sm" tone="neutral">{productionOrders.length}</Chip>
+            <span className="text-body-sm font-bold">{railLabel}</span>
+            <Chip size="sm" tone="neutral">{railOrders.length}</Chip>
           </div>
           <div className="flex-1 overflow-y-auto">
-            {productionOrders.map((p) => {
+            {railOrders.length === 0 && (
+              <div className="px-3 py-6 text-center text-caption text-ink-muted">
+                {activeTab === "history"
+                  ? "No closed orders yet. Completed MOs land here."
+                  : "No active orders. Use \"New MO\" to create one."}
+              </div>
+            )}
+            {railOrders.map((p) => {
               const sel = p.id === selectedId;
               const pct = Math.round((p.actualQty / p.plannedQty) * 100);
               return (
@@ -535,9 +611,11 @@ export const Manufacturing = () => {
           </div>
         </aside>
 
-        {/* Right side: swaps between Orders detail and Productivity */}
+        {/* Right side: swaps between Orders detail and Productivity.
+            History reuses the order-detail layout so closed MOs render
+            with the same context (work orders, requirements, trail). */}
         <div className="col-span-9 flex flex-col min-h-0 overflow-y-auto">
-          {activeTab === "orders" && (
+          {(activeTab === "orders" || activeTab === "history") && (
             <div className="p-4 space-y-4">
             <Card
               title={
@@ -575,7 +653,7 @@ export const Manufacturing = () => {
                     variant="outline"
                     icon={<Plus size={14} />}
                     onClick={onLogOutput}
-                    disabled={busy === "log" || !canLogOutput}
+                    disabled={!canLogOutput}
                     title={
                       canLogOutput
                         ? "Record good and scrap qty for this batch"
@@ -583,6 +661,25 @@ export const Manufacturing = () => {
                     }
                   >
                     Log output
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    icon={<RotateCcw size={14} />}
+                    onClick={() => setShowCorrect(true)}
+                    disabled={
+                      moComplete ||
+                      (order.actualQty === 0 &&
+                        order.scrapQty === 0 &&
+                        order.reworkQty === 0)
+                    }
+                    title={
+                      moComplete
+                        ? "Cannot correct after completion - finished goods are already in inventory"
+                        : "Fix wrong-logged totals (e.g. Log output clicked twice)"
+                    }
+                  >
+                    Correct
                   </Button>
                   <Button
                     size="sm"
@@ -726,10 +823,35 @@ export const Manufacturing = () => {
                   <MapPin size={16} className="inline mr-1.5 -mt-0.5 text-ink-muted" />
                   No bin movements yet for this MO.{" "}
                   <strong>Issue materials</strong> records source bins;{" "}
-                  <strong>Complete</strong> records where {inventoryTrail.finishedGood.sku} was received.
+                  <strong>Complete</strong> records where{" "}
+                  {inventoryTrail.finishedGood.variantSku ?? inventoryTrail.finishedGood.sku} was received.
                 </div>
               ) : (
                 <div className="divide-y divide-border">
+                  {inventoryTrail.finishedGood.variantSku && (
+                    <div className="px-4 py-2.5 bg-primary/5 text-caption text-ink">
+                      Producing variant:{" "}
+                      <span className="font-mono font-semibold">
+                        {inventoryTrail.finishedGood.variantSku}
+                      </span>{" "}
+                      <span className="text-ink-muted">
+                        ({inventoryTrail.finishedGood.name}
+                        {inventoryTrail.finishedGood.variantSize
+                          ? ` · ${inventoryTrail.finishedGood.variantSize}`
+                          : ""}
+                        )
+                      </span>
+                      {inventoryTrail.finishedGood.variantPackSize &&
+                        inventoryTrail.finishedGood.variantPackSize !== 1 && (
+                          <span className="text-ink-muted">
+                            {" "}
+                            · 1 {inventoryTrail.finishedGood.variantUom} ={" "}
+                            <strong>{inventoryTrail.finishedGood.variantPackSize}</strong>{" "}
+                            {inventoryTrail.finishedGood.parentUom}
+                          </span>
+                        )}
+                    </div>
+                  )}
                   {inventoryTrail.productionLineWarehouse && (
                     <div className="px-4 py-2.5 bg-canvas text-caption text-ink-muted">
                       BOM production line:{" "}
@@ -751,19 +873,29 @@ export const Manufacturing = () => {
                         <ul className="space-y-2">
                           {inventoryTrail.materialsConsumed.map((m) => (
                             <li
-                              key={`${m.productId}-${m.warehouseCode}-${m.binPath}`}
+                              key={`${m.productId}-${m.variantId ?? "p"}-${m.warehouseCode}-${m.binPath}`}
                               className="text-body-sm"
                             >
                               <span className="font-mono text-caption text-ink-muted">
-                                {m.sku}
+                                {m.variantSku ?? m.sku}
                               </span>{" "}
                               <span className="font-semibold">{m.name}</span>
+                              {m.variantSize ? (
+                                <Chip size="sm" tone="neutral" className="ml-1">
+                                  {m.variantSize}
+                                </Chip>
+                              ) : !m.variantId ? (
+                                <Chip size="sm" tone="neutral" className="ml-1">
+                                  bulk
+                                </Chip>
+                              ) : null}
                               <div className="text-caption text-ink-muted mt-0.5 flex items-start gap-1">
                                 <MapPin size={12} className="mt-0.5 shrink-0" />
                                 {locLabel(m.warehouseCode, m.warehouseKind, m.binPath)}
                               </div>
                               <div className="text-caption tnum text-ink-muted">
-                                −{num(m.qty)} · {m.txnTypes.join(", ")}
+                                −{num(m.qty)}
+                                {m.variantUom ? ` ${m.variantUom}` : ""} · {m.txnTypes.join(", ")}
                               </div>
                             </li>
                           ))}
@@ -783,25 +915,35 @@ export const Manufacturing = () => {
                         <ul className="space-y-2">
                           {inventoryTrail.finishedGoodsPosted.map((f) => (
                             <li
-                              key={`${f.warehouseCode}-${f.binPath}`}
+                              key={`${f.variantId ?? "p"}-${f.warehouseCode}-${f.binPath}`}
                               className="text-body-sm"
                             >
                               <span className="font-semibold">
                                 {f.name}{" "}
                                 <span className="font-mono text-caption text-ink-muted">
-                                  ({f.sku})
+                                  ({f.variantSku ?? f.sku})
                                 </span>
                               </span>
+                              {f.variantSize ? (
+                                <Chip size="sm" tone="primary" className="ml-1">
+                                  {f.variantSize}
+                                </Chip>
+                              ) : !f.variantId ? (
+                                <Chip size="sm" tone="neutral" className="ml-1">
+                                  bulk
+                                </Chip>
+                              ) : null}
                               <div className="text-caption text-primary mt-0.5 flex items-start gap-1 font-medium">
                                 <MapPin size={12} className="mt-0.5 shrink-0" />
                                 {locLabel(f.warehouseCode, f.warehouseKind, f.binPath)}
                               </div>
                               <div className="text-caption tnum text-ink-muted">
-                                +{num(f.qty)} {inventoryTrail.finishedGood.uom} ·{" "}
+                                +{num(f.qty)}{" "}
+                                {f.variantUom ?? inventoryTrail.finishedGood.uom} ·{" "}
                                 {f.txnTypes.join(", ")}
                               </div>
                               <Link
-                                to={`/inventory?productId=${encodeURIComponent(f.productId)}`}
+                                to={`/inventory?productId=${encodeURIComponent(f.productId)}${f.variantId ? `&variantId=${encodeURIComponent(f.variantId)}` : ""}`}
                                 className="text-caption text-primary hover:underline mt-0.5 inline-block"
                               >
                                 View in Inventory →
@@ -821,22 +963,32 @@ export const Manufacturing = () => {
                       <ul className="space-y-2 md:grid md:grid-cols-2 md:gap-3">
                         {inventoryTrail.byproductsReleased.map((bp) => (
                           <li
-                            key={`${bp.productId}-${bp.warehouseCode}-${bp.binPath}`}
+                            key={`${bp.productId}-${bp.variantId ?? "p"}-${bp.warehouseCode}-${bp.binPath}`}
                             className="text-body-sm"
                           >
                             <span className="font-mono text-caption text-ink-muted">
-                              {bp.sku}
+                              {bp.variantSku ?? bp.sku}
                             </span>{" "}
                             <span className="font-semibold">{bp.name}</span>
+                            {bp.variantSize ? (
+                              <Chip size="sm" tone="neutral" className="ml-1">
+                                {bp.variantSize}
+                              </Chip>
+                            ) : !bp.variantId ? (
+                              <Chip size="sm" tone="neutral" className="ml-1">
+                                bulk
+                              </Chip>
+                            ) : null}
                             <div className="text-caption text-primary mt-0.5 flex items-start gap-1 font-medium">
                               <MapPin size={12} className="mt-0.5 shrink-0" />
                               {locLabel(bp.warehouseCode, bp.warehouseKind, bp.binPath)}
                             </div>
                             <div className="text-caption tnum text-ink-muted">
-                              +{num(bp.qty)} · {bp.txnTypes.join(", ")}
+                              +{num(bp.qty)}
+                              {bp.variantUom ? ` ${bp.variantUom}` : ""} · {bp.txnTypes.join(", ")}
                             </div>
                             <Link
-                              to={`/inventory?productId=${encodeURIComponent(bp.productId)}`}
+                              to={`/inventory?productId=${encodeURIComponent(bp.productId)}${bp.variantId ? `&variantId=${encodeURIComponent(bp.variantId)}` : ""}`}
                               className="text-caption text-primary hover:underline mt-0.5 inline-block"
                             >
                               View in Inventory →
@@ -1309,6 +1461,55 @@ export const Manufacturing = () => {
             setSelectedId(productionOrderId);
             setOkBanner(`MO ${orderNo} created.`);
             void liveMo.refetch();
+          }}
+        />
+      )}
+      {showCorrect && (
+        <CorrectOutputModal
+          order={{
+            id: order.id,
+            orderNo: order.orderNo,
+            plannedQty: order.plannedQty,
+            actualQty: order.actualQty,
+            scrapQty: order.scrapQty,
+            reworkQty: order.reworkQty,
+          }}
+          onClose={() => setShowCorrect(false)}
+          onSaved={async (msg) => {
+            setShowCorrect(false);
+            setOkBanner(msg);
+            await refreshAll();
+            await refreshRequirements(order.id);
+          }}
+        />
+      )}
+      {showLogOutput && (
+        <LogOutputModal
+          order={{
+            id: order.id,
+            orderNo: order.orderNo,
+            plannedQty: order.plannedQty,
+            actualQty: order.actualQty,
+            scrapQty: order.scrapQty,
+            reworkQty: order.reworkQty,
+          }}
+          bom={
+            // Prefer matching by bomId (variant-aware); fall back to
+            // sku for older data where bomId isn't set on the MO.
+            (order.bomId ? boms.find((b) => b.id === order.bomId) : null) ??
+            boms.find((b) => b.sku === order.sku) ??
+            null
+          }
+          alreadyLogged={inventoryTrail?.byproductsReleased}
+          onClose={() => setShowLogOutput(false)}
+          onSaved={async (msg) => {
+            setShowLogOutput(false);
+            setOkBanner(msg);
+            await refreshAll();
+            await Promise.all([
+              refreshRequirements(order.id),
+              refreshInventoryTrail(order.id),
+            ]);
           }}
         />
       )}

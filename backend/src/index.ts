@@ -136,6 +136,12 @@ app.get("/", async (req, reply) => {
 // role allowlist. admin always passes (enforced inside requireRole).
 // Using scoped plugins keeps the route definitions unchanged while adding
 // the hook at the mount boundary.
+//
+// Routes whose path starts with /public/ are exempted — they're served
+// over share-token auth (the token in the URL itself) and were getting
+// blanket-blocked by the role gate, which is what produced the
+// "Quote unavailable · Login required" error on share/quote and
+// share/company links.
 const withRole = (
   api: FastifyInstance,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -143,7 +149,13 @@ const withRole = (
   ...roles: string[]
 ) =>
   api.register(async (scoped) => {
-    scoped.addHook("preHandler", scoped.requireRole(...roles));
+    const roleGate = scoped.requireRole(...roles);
+    scoped.addHook("preHandler", async (req, reply) => {
+      // req.url includes the prefix (e.g. "/v1/public/quotes/abc?print=1").
+      // Match anywhere; the prefix is configurable upstream.
+      if (req.url.includes("/public/")) return;
+      await roleGate(req, reply);
+    });
     await scoped.register(plugin);
   });
 

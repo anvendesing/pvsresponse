@@ -18,6 +18,7 @@ import { Chip, StatusDot } from "@/components/common/Chip";
 import { DataTable, type Column } from "@/components/common/DataTable";
 import { Input } from "@/components/common/Input";
 import { Kpi } from "@/components/common/Kpi";
+import { CollapsibleStats } from "@/components/common/CollapsibleStats";
 import { Toolbar } from "@/components/common/Toolbar";
 import { api } from "@/lib/api";
 import { useApi } from "@/hooks/useApi";
@@ -324,7 +325,15 @@ export const Warehouse = () => {
       cell: (r) => (
         <div>
           <div className="font-semibold text-ink">{r.productName ?? "—"}</div>
-          <div className="text-caption text-ink-muted font-mono">{r.productSku ?? ""}</div>
+          <div className="text-caption text-ink-muted font-mono">
+            {r.productSku ?? ""}
+            {r.variantSku && (
+              <span className="ml-1.5 inline-flex items-center px-1.5 py-0.5 rounded bg-info-soft text-info text-[10px] font-semibold">
+                {r.variantSku}
+                {r.variantUom && ` · ${r.variantUom}`}
+              </span>
+            )}
+          </div>
         </div>
       ),
     },
@@ -432,12 +441,22 @@ export const Warehouse = () => {
         </div>
       )}
 
-      <div className="px-4 py-3 grid grid-cols-2 md:grid-cols-4 gap-3 bg-canvas border-b border-border">
-        <Kpi label="Bin Utilization" value={`${Math.round((occupiedBins / totalBins) * 100)}%`} delta={1.4} accent="primary" />
-        <Kpi label="Bins Active" value={`${occupiedBins}/${totalBins}`} deltaSuffix="" accent="success" />
-        <Kpi label="Pending Putaway" value="18" delta={-3} deltaSuffix="" accent="warning" />
-        <Kpi label="Pending Pick" value="46" delta={5} deltaSuffix="" accent="primary" />
-      </div>
+      <CollapsibleStats
+        storageKey="warehouse"
+        summary={
+          <>
+            Bins {occupiedBins}/{totalBins} ({Math.round((occupiedBins / totalBins) * 100)}%) ·
+            18 putaway · 46 pick
+          </>
+        }
+      >
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <Kpi label="Bin Utilization" value={`${Math.round((occupiedBins / totalBins) * 100)}%`} delta={1.4} accent="primary" />
+          <Kpi label="Bins Active" value={`${occupiedBins}/${totalBins}`} deltaSuffix="" accent="success" />
+          <Kpi label="Pending Putaway" value="18" delta={-3} deltaSuffix="" accent="warning" />
+          <Kpi label="Pending Pick" value="46" delta={5} deltaSuffix="" accent="primary" />
+        </div>
+      </CollapsibleStats>
 
       <div className="flex-1 flex min-h-0">
         {/* Bin tree */}

@@ -47,20 +47,46 @@ export const nextFulfilmentDocNo = async (
 // carries the shortage so the operator still sees a row to scan
 // against and short-pick.
 //
+// `variantId` narrows the candidate bins. When provided we prefer
+// bins explicitly tagged with that variant; if none exist we fall
+// back to bins that hold the parent product without a variant tag
+// (legacy untagged stock). When `variantId` is null the function
+// returns parent-product bins as before — same behaviour as before
+// Bin.variantId existed.
+//
 // prevAllocations lets callers chain multiple lines in the same pick
 // list - earlier allocations are deducted from each bin's free qty so
 // two lines for the same SKU can't claim the same physical units.
 export const splitAcrossBins = async (
   productId: string,
   qtyNeeded: number,
-  prevAllocations: Map<string, number> = new Map()
+  prevAllocations: Map<string, number> = new Map(),
+  variantId: string | null = null
 ): Promise<{ binId: string; qty: number }[]> => {
   if (qtyNeeded <= 0) return [];
-  const candidates = await db.bin.findMany({
-    where: { productId, qty: { gt: 0 } },
-    orderBy: [{ qty: "desc" }, { bin: "asc" }],
-    select: { id: true, qty: true, reservedQty: true },
-  });
+
+  // When a variantId is given, prefer variant-tagged bins. If we get
+  // none we fall back to legacy untagged bins (variantId IS NULL) for
+  // the same parent — that path is intentionally lossy but lets the
+  // system keep working on data that pre-dates variant tagging.
+  let candidates = variantId
+    ? await db.bin.findMany({
+        where: { productId, variantId, qty: { gt: 0 } },
+        orderBy: [{ qty: "desc" }, { bin: "asc" }],
+        select: { id: true, qty: true, reservedQty: true },
+      })
+    : await db.bin.findMany({
+        where: { productId, qty: { gt: 0 } },
+        orderBy: [{ qty: "desc" }, { bin: "asc" }],
+        select: { id: true, qty: true, reservedQty: true },
+      });
+  if (variantId && candidates.length === 0) {
+    candidates = await db.bin.findMany({
+      where: { productId, variantId: null, qty: { gt: 0 } },
+      orderBy: [{ qty: "desc" }, { bin: "asc" }],
+      select: { id: true, qty: true, reservedQty: true },
+    });
+  }
 
   const splits: { binId: string; qty: number }[] = [];
   let remaining = qtyNeeded;

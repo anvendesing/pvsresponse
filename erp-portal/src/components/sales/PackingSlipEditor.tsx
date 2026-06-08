@@ -27,6 +27,8 @@ import {
 import { ShareDocumentMenu } from "@/components/common/ShareDocumentMenu";
 import { dt, inr } from "@/lib/format";
 import { cn } from "@/lib/cn";
+import { resolveBillingTotals } from "@/lib/billingTotals";
+import { BillingTotalsBreakdown } from "@/components/billing/BillingTotalsBreakdown";
 
 interface Props {
   packingSlipId: string;
@@ -106,12 +108,22 @@ export const PackingSlipEditor = ({ packingSlipId, onClose, onChanged }: Props) 
 
   const isLocked = ps && ps.status !== "open";
 
-  const subTotal = useMemo(() => {
-    if (!ps) return 0;
-    return ps.items.reduce((s, it) => s + (drafts[it.id] ?? it.qtyPacked) * it.rate, 0);
+  const billingTotals = useMemo(() => {
+    if (!ps) return resolveBillingTotals({});
+    const goodsSubTotal = ps.items.reduce(
+      (s, it) => s + (drafts[it.id] ?? it.qtyPacked) * it.rate,
+      0
+    );
+    const goodsTax =
+      ps.invoice?.tax ?? Math.round(goodsSubTotal * 0.18);
+    return resolveBillingTotals({
+      goodsSubTotal,
+      goodsTax,
+      transportCharge: ps.invoice?.transportCharge ?? ps.salesOrder?.transportCharge,
+      transportTax: ps.invoice?.transportTax ?? ps.salesOrder?.transportTax,
+      total: ps.invoice?.amount,
+    });
   }, [ps, drafts]);
-  const tax = Math.round(subTotal * 0.18);
-  const total = subTotal + tax;
 
   const totalPicked = ps?.items.reduce((s, it) => s + it.qtyPicked, 0) ?? 0;
   const totalPacked = useMemo(
@@ -154,7 +166,7 @@ export const PackingSlipEditor = ({ packingSlipId, onClose, onChanged }: Props) 
       // straight to status='invoiced'. Surface the invoice so the
       // packer can confirm settlement happened in one keystroke.
       if (updated.invoice?.invoiceNo) {
-        setOkBanner(`Invoice ${updated.invoice.invoiceNo} settled · ${inr(updated.invoice.amount ?? total)}`);
+        setOkBanner(`Invoice ${updated.invoice.invoiceNo} settled · ${inr(updated.invoice.amount ?? billingTotals.grandTotal)}`);
       }
       onChanged?.();
     } catch (e) {
@@ -559,12 +571,12 @@ export const PackingSlipEditor = ({ packingSlipId, onClose, onChanged }: Props) 
                   <div className="text-caption text-ink-muted uppercase font-semibold mb-2">
                     Invoice summary
                   </div>
-                  <div className="border border-border rounded-md p-3 bg-canvas space-y-2">
-                    <Row k="Subtotal (from packed)" v={inr(subTotal)} />
-                    <Row k="GST 18%" v={inr(tax)} />
-                    <div className="border-t border-border pt-2">
-                      <Row k="Total" v={inr(total)} big />
-                    </div>
+                  <div className="border border-border rounded-md p-3 bg-canvas">
+                    <BillingTotalsBreakdown
+                      totals={billingTotals}
+                      goodsSubLabel="Subtotal (from packed)"
+                      goodsTaxLabel="GST (goods)"
+                    />
                     <div>
                       <div className="text-caption text-ink-muted mb-1">
                         Payment

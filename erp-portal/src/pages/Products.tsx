@@ -8,10 +8,13 @@ import {
   Filter,
   ImagePlus,
   Layers,
+  Package,
   Pencil,
   Plus,
   Search,
+  Trash2,
   Upload,
+  Wand2,
   X,
 } from "lucide-react";
 import { Button } from "@/components/common/Button";
@@ -22,9 +25,10 @@ import { Input } from "@/components/common/Input";
 import { Toolbar } from "@/components/common/Toolbar";
 import { EmptyState } from "@/components/common/EmptyState";
 import { ProductEditor } from "@/components/products/ProductEditor";
+import { NormalizeUomsModal } from "@/components/products/NormalizeUomsModal";
 import { effectiveUom, type Product, type ProductType } from "@/data/types";
 import { inr, num } from "@/lib/format";
-import { api, resolveUploadUrl } from "@/lib/api";
+import { api, auth, resolveUploadUrl } from "@/lib/api";
 import { useApi } from "@/hooks/useApi";
 
 const typeChip = (t: ProductType) => {
@@ -45,7 +49,15 @@ export const Products = () => {
   const [editorMode, setEditorMode] = useState<"create" | "edit" | null>(null);
   const [imgUploading, setImgUploading] = useState(false);
   const [imgError, setImgError] = useState<string | null>(null);
+  const [showNormalizeUoms, setShowNormalizeUoms] = useState(false);
+  const [okBanner, setOkBanner] = useState<string | null>(null);
+  const role = auth.user()?.role ?? "";
+  const canNormalize = role === "admin" || role === "supervisor";
   const productImgRef = useRef<HTMLInputElement>(null);
+  // Delete-confirmation dialog state for the currently selected product.
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const handleProductImageUpload = async (file: File) => {
     if (!selected?.id) return;
@@ -95,7 +107,12 @@ export const Products = () => {
         return src ? (
           <img src={src} alt={r.name} className="w-9 h-9 object-cover rounded border border-border" />
         ) : (
-          <div className="w-9 h-9 rounded border border-border bg-canvas" />
+          <div
+            className="w-9 h-9 rounded border border-border bg-canvas grid place-items-center text-ink-muted"
+            title="No product image"
+          >
+            <Package size={16} />
+          </div>
         );
       },
       width: "52px",
@@ -196,6 +213,26 @@ export const Products = () => {
     if (selected?.id === p.id) setSelected(p);
   };
 
+  const handleConfirmDelete = async () => {
+    if (!selected?.id) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await api.deleteProduct(selected.id);
+      setDeleteOpen(false);
+      setSelected(null);
+      await live.refetch();
+    } catch (e) {
+      // Backend returns 409 with a friendly message when the product is
+      // still referenced by other records (BOMs, invoices, etc.) — show
+      // that message verbatim so the user knows to mark it discontinued
+      // instead.
+      setDeleteError((e as Error).message);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   return (
     <div className="h-full flex flex-col">
       <Toolbar
@@ -209,6 +246,17 @@ export const Products = () => {
         }
         right={
           <>
+            {canNormalize && (
+              <Button
+                variant="outline"
+                size="sm"
+                icon={<Wand2 size={14} />}
+                onClick={() => setShowNormalizeUoms(true)}
+                title="Bulk-coerce parents to kg/L and variants to pc"
+              >
+                Normalize UoMs
+              </Button>
+            )}
             <Button variant="outline" size="sm" icon={<Upload size={14} />}>
               Import
             </Button>
@@ -228,6 +276,18 @@ export const Products = () => {
           </>
         }
       />
+      {okBanner && (
+        <div className="px-4 py-2 bg-success-soft border-b border-success text-success text-body-sm flex items-center gap-2">
+          <CheckCircle2 size={14} />
+          <span className="flex-1">{okBanner}</span>
+          <button
+            className="underline text-caption"
+            onClick={() => setOkBanner(null)}
+          >
+            dismiss
+          </button>
+        </div>
+      )}
       <div className="flex-1 flex min-h-0">
         <div
           className={`flex-1 flex flex-col min-w-0 ${selected ? "border-r border-border" : ""}`}
@@ -365,6 +425,13 @@ export const Products = () => {
                   <Row k="State" v={selected.state} />
                 </div>
               </Card>
+              {selected.description?.trim() && (
+                <Card title="Description">
+                  <p className="text-body-sm text-ink whitespace-pre-wrap leading-relaxed">
+                    {selected.description}
+                  </p>
+                </Card>
+              )}
               {selected.variants && selected.variants.length > 0 && (
                 <Card
                   title={`Variants (${selected.variants.length})`}
@@ -488,6 +555,19 @@ export const Products = () => {
               >
                 Edit
               </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                icon={<Trash2 size={14} />}
+                onClick={() => {
+                  setDeleteError(null);
+                  setDeleteOpen(true);
+                }}
+                title="Delete this product"
+                className="text-danger border-danger/40 hover:bg-danger-soft hover:border-danger"
+              >
+                Delete
+              </Button>
               <Button size="sm" className="flex-1" icon={<CheckCircle2 size={14} />} disabled>
                 Save · F4
               </Button>
@@ -503,9 +583,100 @@ export const Products = () => {
         onClose={() => setEditorMode(null)}
         onSaved={handleSaved}
       />
+
+      {deleteOpen && selected && (
+        <DeleteProductDialog
+          product={selected}
+          deleting={deleting}
+          error={deleteError}
+          onCancel={() => {
+            if (!deleting) setDeleteOpen(false);
+          }}
+          onConfirm={handleConfirmDelete}
+        />
+      )}
+
+      {showNormalizeUoms && (
+        <NormalizeUomsModal
+          onClose={() => setShowNormalizeUoms(false)}
+          onApplied={(msg) => {
+            setShowNormalizeUoms(false);
+            setOkBanner(msg);
+            void live.refetch();
+          }}
+        />
+      )}
     </div>
   );
 };
+
+const DeleteProductDialog = ({
+  product,
+  deleting,
+  error,
+  onCancel,
+  onConfirm,
+}: {
+  product: Product;
+  deleting: boolean;
+  error: string | null;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) => (
+  <div
+    className="fixed inset-0 z-50 bg-ink/40 grid place-items-center p-4"
+    onClick={onCancel}
+  >
+    <div
+      className="bg-surface w-full max-w-md rounded-lg elevation-3 overflow-hidden"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="px-5 py-4 border-b border-border flex items-start gap-3">
+        <div className="h-10 w-10 rounded-full bg-danger-soft text-danger grid place-items-center shrink-0">
+          <Trash2 size={18} />
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="text-h3 font-bold">Delete product?</div>
+          <div className="text-body-sm text-ink-muted mt-0.5">
+            <span className="font-mono text-caption">{product.sku}</span>
+            {" · "}
+            <span className="font-semibold text-ink">{product.name}</span>
+          </div>
+        </div>
+      </div>
+      <div className="px-5 py-4 space-y-3">
+        <p className="text-body-sm text-ink">
+          This permanently removes the product and all of its variants from the catalogue.
+          The action cannot be undone.
+        </p>
+        <p className="text-caption text-ink-muted">
+          If this product has been used in BOMs, purchase orders, invoices, or stock
+          movements, the delete will fail and you should set its state to
+          <span className="font-semibold"> discontinued</span> instead.
+        </p>
+        {error && (
+          <div className="bg-danger-soft border border-danger text-danger px-3 py-2 rounded-md text-body-sm">
+            {error}
+          </div>
+        )}
+      </div>
+      <div className="px-5 py-3 border-t border-border flex items-center justify-end gap-2 bg-canvas">
+        <Button variant="ghost" size="sm" onClick={onCancel} disabled={deleting}>
+          Cancel
+        </Button>
+        <Button
+          variant="danger"
+          size="sm"
+          onClick={onConfirm}
+          disabled={deleting}
+          icon={<Trash2 size={14} />}
+        >
+          {deleting ? "Deleting…" : "Delete product"}
+        </Button>
+      </div>
+    </div>
+  </div>
+);
 
 const Stat = ({ label, value }: { label: string; value: string }) => (
   <div className="bg-canvas border border-border rounded-md px-3 py-2">

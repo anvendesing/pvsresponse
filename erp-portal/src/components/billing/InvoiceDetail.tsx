@@ -23,6 +23,8 @@ import { Chip } from "@/components/common/Chip";
 import { ShareDocumentMenu } from "@/components/common/ShareDocumentMenu";
 import { api, type InvoiceDetail as InvoiceDetailRow } from "@/lib/api";
 import { dt, inr } from "@/lib/format";
+import { resolveBillingTotals, sumLineAmounts } from "@/lib/billingTotals";
+import { BillingTotalsBreakdown } from "@/components/billing/BillingTotalsBreakdown";
 import { TripPicker } from "./TripPicker";
 import { CourierPicker } from "./CourierPicker";
 
@@ -90,9 +92,17 @@ export const InvoiceDetail = ({ invoiceId, onClose, onChanged }: Props) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [invoiceId]);
 
-  const subTotal = useMemo(() => {
-    if (!inv) return 0;
-    return inv.amount - inv.tax;
+  const billingTotals = useMemo(() => {
+    if (!inv) {
+      return resolveBillingTotals({});
+    }
+    return resolveBillingTotals({
+      goodsSubTotal: sumLineAmounts(inv.items),
+      goodsTax: inv.tax,
+      transportCharge: inv.transportCharge,
+      transportTax: inv.transportTax,
+      total: inv.amount,
+    });
   }, [inv]);
 
   const onConfirmDispatch = async (id: string) => {
@@ -368,19 +378,13 @@ export const InvoiceDetail = ({ invoiceId, onClose, onChanged }: Props) => {
                     ))}
                   </div>
                   <div className="flex justify-end mt-3">
-                    <div className="w-72 space-y-1 text-body-sm">
-                      <div className="flex justify-between">
-                        <span className="text-ink-muted">Sub-total</span>
-                        <span className="tnum">{inr(subTotal)}</span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span className="text-ink-muted">Tax</span>
-                        <span className="tnum">{inr(inv.tax)}</span>
-                      </div>
-                      <div className="flex justify-between text-body pt-1 border-t border-border">
-                        <span className="font-bold">Total</span>
-                        <span className="tnum font-bold">{inr(inv.amount)}</span>
-                      </div>
+                    <div className="w-72">
+                      <BillingTotalsBreakdown
+                        totals={billingTotals}
+                        goodsSubLabel="Sub-total (goods)"
+                        goodsTaxLabel="GST (goods)"
+                        totalLabel="Total due"
+                      />
                     </div>
                   </div>
                 </div>

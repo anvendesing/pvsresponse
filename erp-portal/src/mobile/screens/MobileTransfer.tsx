@@ -134,14 +134,20 @@ export const MobileTransfer = () => {
     setBusy(true);
     setError(null);
     try {
-      const lines = to.items.map((item) => ({
-        itemId: item.id,
-        qtyDropped: Number(getQty(item, "drop")) || item.qtyPicked,
-        toBinId: item.toBinId ?? item.tobin?.id ?? "",
-      })).filter((l) => l.toBinId);
+      // Send every picked line. The server auto-assigns a bin in the
+      // destination warehouse when toBinId is null (consolidates onto an
+      // existing product bin, otherwise picks an empty one). It returns
+      // a clear 409 message if the destination warehouse has no bins.
+      const lines = to.items
+        .filter((item) => item.qtyPicked > 0)
+        .map((item) => ({
+          itemId: item.id,
+          qtyDropped: Number(getQty(item, "drop")) || item.qtyPicked,
+          toBinId: item.toBinId ?? item.tobin?.id ?? null,
+        }));
 
       if (lines.length === 0) {
-        setError("No destination bins assigned. Scan a destination bin first.");
+        setError("Nothing picked yet — go back to the pick step first.");
         return;
       }
 
@@ -263,7 +269,7 @@ export const MobileTransfer = () => {
                     <div className="text-xs text-amber-600">
                       {step === "pick"
                         ? "No source bin assigned - supervisor must assign."
-                        : "No dest. bin assigned - auto-assigned on drop."}
+                        : `No dest. bin set - system will auto-pick a bin in ${to.toWarehouse.code} on drop.`}
                     </div>
                   )}
                   <div className="flex items-center gap-2">

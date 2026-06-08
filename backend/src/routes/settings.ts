@@ -9,6 +9,10 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { db } from "../db.js";
 import { recordChange } from "../sync/log.js";
+import {
+  DISPATCH_CATEGORIES,
+  ensureDefaultDispatchOptions,
+} from "../lib/dispatch-options-seed.js";
 
 const SINGLETON_KEY = "default";
 
@@ -154,4 +158,86 @@ export const settingsRoutes = async (app: FastifyInstance) => {
     }
     return publicProjection(existing as unknown as Record<string, unknown>);
   });
+
+  // -- Dispatch options (admin CRUD) ----------------------------------------
+  const dispatchInput = z.object({
+    code: z.string().min(1).max(64).regex(/^[a-z0-9_]+$/, "lowercase letters, digits, underscores"),
+    name: z.string().min(1).max(120),
+    category: z.string().min(1).max(64),
+    description: z.string().max(500).nullable().optional(),
+    defaultCharge: z.number().nonnegative().default(0),
+    active: z.boolean().default(true),
+    sortOrder: z.number().int().default(0),
+  });
+
+  const dispatchUpdate = dispatchInput.partial();
+
+  app.get(
+    "/settings/dispatch-options",
+    { preHandler: [app.authenticate] },
+    async () => {
+      await ensureDefaultDispatchOptions(db);
+      return db.dispatchOption.findMany({
+        orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+      });
+    }
+  );
+
+  app.get(
+    "/settings/dispatch-categories",
+    { preHandler: [app.authenticate] },
+    async () => DISPATCH_CATEGORIES
+  );
+
+  app.post(
+    "/settings/dispatch-options",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      if (req.user.role !== "admin" && req.user.role !== "supervisor") {
+        return reply.code(403).send({ error: { code: "forbidden" } });
+      }
+      const body = dispatchInput.parse(req.body);
+      const created = await db.dispatchOption.create({ data: body });
+      await recordChange("DispatchOption", created.id, "insert", created, req.user.sub);
+      return created;
+    }
+  );
+
+  app.patch(
+    "/settings/dispatch-options/:id",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      if (req.user.role !== "admin" && req.user.role !== "supervisor") {
+        return reply.code(403).send({ error: { code: "forbidden" } });
+      }
+      const { id } = req.params as { id: string };
+      const body = dispatchUpdate.parse(req.body);
+      const updated = await db.dispatchOption.update({ where: { id }, data: body });
+      await recordChange("DispatchOption", id, "update", updated, req.user.sub);
+      return updated;
+    }
+  );
+
+  app.delete(
+    "/settings/dispatch-options/:id",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      if (req.user.role !== "admin" && req.user.role !== "supervisor") {
+        return reply.code(403).send({ error: { code: "forbidden" } });
+      }
+      const { id } = req.params as { id: string };
+      const inUse = await db.quote.count({ where: { dispatchOptionId: id } });
+      if (inUse > 0) {
+        return reply.code(409).send({
+          error: {
+            code: "in_use",
+            message: "Dispatch option is referenced by quotes. Deactivate instead.",
+          },
+        });
+      }
+      await db.dispatchOption.delete({ where: { id } });
+      await recordChange("DispatchOption", id, "delete", { id }, req.user.sub);
+      return { ok: true };
+    }
+  );
 };

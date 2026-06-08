@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   Award,
   Calendar,
@@ -26,7 +26,7 @@ import { Toolbar } from "@/components/common/Toolbar";
 import { api } from "@/lib/api";
 import { useApi } from "@/hooks/useApi";
 import type { Worker } from "@/data/types";
-import { num } from "@/lib/format";
+import { num, dt } from "@/lib/format";
 import { cn } from "@/lib/cn";
 
 const statusTone = (s: Worker["status"]) =>
@@ -36,6 +36,9 @@ export const Productivity = () => {
   const [q, setQ] = useState("");
   const [shift, setShift] = useState<Worker["shift"] | "all">("all");
   const [punchOpen, setPunchOpen] = useState(false);
+  const [selectedAttendanceDay, setSelectedAttendanceDay] = useState<string | null>(null);
+  const [highlightAttendance, setHighlightAttendance] = useState(false);
+  const attendanceSectionRef = useRef<HTMLDivElement>(null);
   const [banner, setBanner] = useState<{ tone: "ok" | "err"; text: string } | null>(null);
 
   const live = useApi(() => api.workers(), []);
@@ -84,6 +87,14 @@ export const Productivity = () => {
     if (workers.length === 0) return null;
     return [...workers].sort((a, b) => b.efficiency - a.efficiency)[0];
   }, [workers]);
+
+  const openAttendance = (date?: string) => {
+    const day = date ?? new Date().toISOString().slice(0, 10);
+    setSelectedAttendanceDay(day);
+    attendanceSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    setHighlightAttendance(true);
+    window.setTimeout(() => setHighlightAttendance(false), 1600);
+  };
 
   const cols: Column<Worker>[] = [
     {
@@ -191,7 +202,12 @@ export const Productivity = () => {
         }
         right={
           <>
-            <Button variant="outline" size="sm" icon={<Calendar size={14} />}>
+            <Button
+              variant="outline"
+              size="sm"
+              icon={<Calendar size={14} />}
+              onClick={() => openAttendance()}
+            >
               Attendance
             </Button>
             <Button
@@ -283,13 +299,31 @@ export const Productivity = () => {
           </div>
         </Card>
 
-        <Card
-          title="Attendance Heatmap"
-          subtitle="Last 4 weeks · daily distinct workers punched in"
-          className="col-span-12 lg:col-span-5"
+        <div
+          ref={attendanceSectionRef}
+          className={cn(
+            "col-span-12 lg:col-span-5 transition-shadow rounded-md",
+            highlightAttendance && "ring-2 ring-primary ring-offset-2"
+          )}
         >
-          <AttendanceHeatmap rows={heatmap.data ?? []} loading={heatmap.loading} />
-        </Card>
+          <Card
+            title="Attendance Heatmap"
+            subtitle="Last 4 weeks · daily distinct workers punched in · click a day for detail"
+          >
+            <AttendanceHeatmap
+              rows={heatmap.data ?? []}
+              loading={heatmap.loading}
+              selectedDate={selectedAttendanceDay}
+              onDayClick={(date) => openAttendance(date)}
+            />
+            {selectedAttendanceDay && (
+              <AttendanceDayPanel
+                date={selectedAttendanceDay}
+                onClose={() => setSelectedAttendanceDay(null)}
+              />
+            )}
+          </Card>
+        </div>
       </div>
 
       {/* Production lines: live rollup of WorkCenter throughput vs
@@ -518,9 +552,13 @@ interface HeatmapRow {
 const AttendanceHeatmap = ({
   rows,
   loading,
+  selectedDate,
+  onDayClick,
 }: {
   rows: HeatmapRow[];
   loading: boolean;
+  selectedDate?: string | null;
+  onDayClick?: (date: string) => void;
 }) => {
   const max = Math.max(1, ...rows.map((r) => r.presentCount));
   const weekdayLabels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -555,10 +593,17 @@ const AttendanceHeatmap = ({
             day: "numeric",
           });
           return (
-            <div
+            <button
               key={i}
+              type="button"
               title={`${dateLabel} · ${count} on floor`}
-              className="aspect-square rounded-sm grid place-items-center text-[10px] tnum font-semibold"
+              onClick={() => onDayClick?.(c.date)}
+              className={cn(
+                "aspect-square rounded-sm grid place-items-center text-[10px] tnum font-semibold transition-transform",
+                "hover:scale-105 focus:outline-none focus-visible:ring-2 focus-visible:ring-primary",
+                onDayClick && "cursor-pointer",
+                selectedDate === c.date && "ring-2 ring-primary ring-offset-1"
+              )}
               style={{
                 background: count > 0
                   ? `rgba(0, 48, 135, ${0.1 + intensity * 0.85})`
@@ -567,7 +612,7 @@ const AttendanceHeatmap = ({
               }}
             >
               {count > 0 ? count : ""}
-            </div>
+            </button>
           );
         })}
       </div>
@@ -585,6 +630,59 @@ const AttendanceHeatmap = ({
         <span>More</span>
       </div>
     </>
+  );
+};
+
+const AttendanceDayPanel = ({
+  date,
+  onClose,
+}: {
+  date: string;
+  onClose: () => void;
+}) => {
+  const live = useApi(() => api.attendanceDay(date), [date]);
+  const label = new Date(`${date}T12:00:00`).toLocaleDateString(undefined, {
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+  });
+
+  return (
+    <div className="mt-4 pt-4 border-t border-border">
+      <div className="flex items-center justify-between mb-2">
+        <div className="text-body-sm font-semibold">{label}</div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="text-caption text-ink-muted hover:text-ink"
+        >
+          Close
+        </button>
+      </div>
+      {live.loading && (
+        <div className="text-caption text-ink-muted py-2">Loading roster…</div>
+      )}
+      {live.error && (
+        <div className="text-caption text-danger py-2">{(live.error as Error).message}</div>
+      )}
+      {!live.loading && !live.error && live.data && live.data.workers.length === 0 && (
+        <div className="text-caption text-ink-muted py-2">No punch-ins recorded for this day.</div>
+      )}
+      {live.data && live.data.workers.length > 0 && (
+        <div className="max-h-40 overflow-y-auto divide-y divide-border border border-border rounded-md">
+          {live.data.workers.map((w) => (
+            <div key={w.workerId} className="px-3 py-2 flex items-center gap-2 text-body-sm">
+              <span className="font-mono text-caption font-semibold w-14 shrink-0">{w.empNo}</span>
+              <span className="flex-1 min-w-0 truncate font-medium">{w.name}</span>
+              <span className="text-caption text-ink-muted shrink-0">
+                {w.inAt ? dt(w.inAt) : "—"}
+                {w.outAt ? ` → ${dt(w.outAt)}` : ""}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 };
 

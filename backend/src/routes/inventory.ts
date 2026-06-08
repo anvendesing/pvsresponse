@@ -16,6 +16,13 @@ const transferSchema = z.object({
 
 const adjustSchema = z.object({
   productId: z.string(),
+  // Variant SKU this adjustment targets. When the parent product has
+  // variants, the caller MUST pass the specific variantId so the
+  // delta lands in (and is recomputed against) the right bin family.
+  // Omit only for products that have no variants (bulk SKUs without
+  // sellable child SKUs) or for legitimate bulk-only stock kept under
+  // the parent SKU itself.
+  variantId: z.string().nullable().optional(),
   warehouseId: z.string(),
   /** When set, the delta is applied to this bin (Manufacturing reads bin qty). */
   binId: z.string().optional(),
@@ -37,6 +44,10 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
       take: limit,
       include: {
         product: { select: { sku: true, name: true } },
+        // Variant SKU + size disambiguate variant-scoped rows (e.g. MO
+        // producing the 250ml variant from a parent SKU shared with the
+        // bulk consumed material).
+        variant: { select: { sku: true, size: true } },
         warehouse: { select: { code: true } },
       },
     });
@@ -88,6 +99,7 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
             select: {
               id: true,
               productId: true,
+              variantId: true,
               qty: true,
               reservedQty: true,
               zone: true,
@@ -113,13 +125,55 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
       binsByProduct.set(b.productId, list);
     }
 
+    // Lookup table for resolving each bin's variant tag back to the
+    // human SKU/size — the bin only stores variantId, but the UI wants
+    // the variant SKU on each row.
+    const variantByIdAcrossProducts = new Map<
+      string,
+      { id: string; sku: string; size: string | null; uom: string; packSize: number }
+    >();
+    for (const p of products) {
+      for (const v of p.variants) {
+        variantByIdAcrossProducts.set(v.id, {
+          id: v.id,
+          sku: v.sku,
+          size: v.size,
+          uom: v.uom,
+          packSize: v.packSize,
+        });
+      }
+    }
+
     const matches = products.map((p) => {
-      const bins = binsByProduct.get(p.id) ?? [];
+      const allBinsForProduct = binsByProduct.get(p.id) ?? [];
+      // When the query string matches a specific variant SKU exactly
+      // (or as a substring), narrow the bin list to bins tagged with
+      // that variant. Legacy untagged bins (variantId = null) are
+      // preserved so we don't hide stock that pre-dates the variant
+      // tagging migration. Without an exact-variant match, return
+      // every bin and let the per-bin chip tell the user what each
+      // bin actually holds.
+      const matchedVariant = q
+        ? p.variants.find(
+            (v) => v.sku.includes(q) || (v.barcode && v.barcode.includes(q))
+          ) ?? null
+        : null;
+      // Only narrow when the query genuinely points at this variant —
+      // a parent SKU search like "CAOL" must NOT collapse to one
+      // variant's bins (that's exactly the bug where every bin
+      // appeared as CAOL-AMU-5L-01).
+      const queryHitsVariantPrecisely =
+        matchedVariant !== null &&
+        q.length > 0 &&
+        matchedVariant.sku.toLowerCase().includes(q.toLowerCase()) &&
+        !p.sku.toLowerCase().includes(q.toLowerCase());
+      const bins = queryHitsVariantPrecisely && matchedVariant
+        ? allBinsForProduct.filter(
+            (b) => b.variantId === matchedVariant.id || b.variantId === null
+          )
+        : allBinsForProduct;
       const binTotal = bins.reduce((s, b) => s + b.qty, 0);
       const binFree = bins.reduce((s, b) => s + (b.qty - b.reservedQty), 0);
-      const matchedVariant = p.variants.find(
-        (v) => v.sku.includes(q) || (v.barcode && v.barcode.includes(q))
-      ) ?? null;
       return {
         productId: p.id,
         sku: p.sku,
@@ -128,6 +182,9 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
         counterOnHand: p.stockOnHand,
         binTotal,
         binFree,
+        // matchedVariant remains for callers that explicitly look up a
+        // single variant; the inventory locations panel now prefers
+        // each bin's own variantSku for display.
         matchedVariant: matchedVariant
           ? {
               id: matchedVariant.id,
@@ -137,20 +194,30 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
               packSize: matchedVariant.packSize,
             }
           : null,
-        bins: bins.map((b) => ({
-          binId: b.id,
-          warehouseId: b.warehouseId,
-          warehouseCode: b.warehouse.code,
-          warehouseName: b.warehouse.name,
-          warehouseKind: b.warehouse.kind,
-          location: `${b.zone}/${b.shelf}/${b.bin}`,
-          zone: b.zone,
-          shelf: b.shelf,
-          bin: b.bin,
-          qty: b.qty,
-          reserved: b.reservedQty,
-          free: b.qty - b.reservedQty,
-        })),
+        bins: bins.map((b) => {
+          const v = b.variantId
+            ? variantByIdAcrossProducts.get(b.variantId) ?? null
+            : null;
+          return {
+            binId: b.id,
+            warehouseId: b.warehouseId,
+            warehouseCode: b.warehouse.code,
+            warehouseName: b.warehouse.name,
+            warehouseKind: b.warehouse.kind,
+            location: `${b.zone}/${b.shelf}/${b.bin}`,
+            zone: b.zone,
+            shelf: b.shelf,
+            bin: b.bin,
+            qty: b.qty,
+            reserved: b.reservedQty,
+            free: b.qty - b.reservedQty,
+            // Per-bin variant attribution. NULL = parent / bulk bin.
+            variantId: b.variantId,
+            variantSku: v?.sku ?? null,
+            variantSize: v?.size ?? null,
+            variantUom: v?.uom ?? null,
+          };
+        }),
       };
     });
 
@@ -235,58 +302,138 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
         error: { code: "product_not_found", message: "Unknown productId." },
       });
     }
-    const newSohPreview = (product.stockOnHand ?? 0) + body.qty;
-    if (newSohPreview < 0) {
+
+    // Validate the variant if one was supplied — must belong to the
+    // parent product and be active. Variants and parents are stored
+    // in separate bins with separate UoMs, so an adjustment must
+    // declare which level it's targeting.
+    const variantId = body.variantId ?? null;
+    let variant: { id: string; sku: string; stockOnHand: number } | null = null;
+    if (variantId) {
+      const v = await db.productVariant.findUnique({
+        where: { id: variantId },
+        select: { id: true, sku: true, stockOnHand: true, productId: true },
+      });
+      if (!v) {
+        return reply.code(404).send({
+          error: { code: "variant_not_found", message: "Unknown variantId." },
+        });
+      }
+      if (v.productId !== body.productId) {
+        return reply.code(400).send({
+          error: {
+            code: "variant_mismatch",
+            message: `Variant ${v.sku} does not belong to product ${product.sku}.`,
+          },
+        });
+      }
+      variant = { id: v.id, sku: v.sku, stockOnHand: v.stockOnHand };
+    }
+
+    // Compare against the right counter — variant SKU vs parent SKU.
+    const sohBefore = variant?.stockOnHand ?? product.stockOnHand ?? 0;
+    const sohLabel = variant?.sku ?? product.sku;
+    if (sohBefore + body.qty < 0) {
       return reply.code(409).send({
         error: {
           code: "insufficient_stock",
-          message: `Cannot adjust ${product.sku} by ${body.qty}: only ${product.stockOnHand ?? 0} on hand.`,
+          message: `Cannot adjust ${sohLabel} by ${body.qty}: only ${sohBefore} on hand.`,
         },
       });
     }
 
     const result = await db.$transaction(async (tx) => {
       const adjNo = await nextAdjustNo(tx as unknown as typeof db);
-      let bin: { id: string; zone: string; shelf: string; bin: string; qty: number; productId: string | null } | null =
-        null;
+      let bin: {
+        id: string;
+        zone: string;
+        shelf: string;
+        bin: string;
+        qty: number;
+        productId: string | null;
+        variantId: string | null;
+      } | null = null;
 
       if (body.binId) {
         const picked = await tx.bin.findFirst({
           where: { id: body.binId, warehouseId: body.warehouseId },
         });
         if (!picked) throw new Error("bin_not_found");
-        if (body.qty < 0 && picked.productId !== body.productId) {
-          throw new Error("bin_product_mismatch");
-        }
-        if (body.qty > 0) {
+
+        // The bin must agree with what we're targeting. Variant-level
+        // adjustments must land in a variant-tagged bin (or an empty
+        // bin we can tag); parent/bulk adjustments must land in a
+        // bin without a variantId.
+        if (variantId) {
+          if (picked.variantId && picked.variantId !== variantId) {
+            throw new Error("bin_variant_mismatch");
+          }
           if (picked.productId && picked.productId !== body.productId) {
             throw new Error("bin_product_mismatch");
           }
-          if (!picked.productId) {
+          if (body.qty > 0 && (!picked.productId || !picked.variantId)) {
             await tx.bin.update({
               where: { id: picked.id },
-              data: { productId: body.productId },
+              data: { productId: body.productId, variantId },
             });
           }
+        } else {
+          if (picked.variantId) {
+            // Bulk/parent adjustments cannot land in a variant-tagged
+            // bin — that bin is for sellable variant inventory only.
+            throw new Error("bin_is_variant_only");
+          }
+          if (body.qty < 0 && picked.productId !== body.productId) {
+            throw new Error("bin_product_mismatch");
+          }
+          if (body.qty > 0) {
+            if (picked.productId && picked.productId !== body.productId) {
+              throw new Error("bin_product_mismatch");
+            }
+            if (!picked.productId) {
+              await tx.bin.update({
+                where: { id: picked.id },
+                data: { productId: body.productId },
+              });
+            }
+          }
         }
-        bin = { ...picked, productId: picked.productId ?? body.productId };
+        bin = {
+          ...picked,
+          productId: picked.productId ?? body.productId,
+          variantId: variantId ?? picked.variantId,
+        };
       } else {
+        // No bin specified — auto-pick. Variant adjustments only
+        // search variant-tagged bins; parent/bulk only bins where
+        // variantId IS NULL.
         bin = await tx.bin.findFirst({
-          where: { warehouseId: body.warehouseId, productId: body.productId },
+          where: variantId
+            ? { warehouseId: body.warehouseId, variantId }
+            : { warehouseId: body.warehouseId, productId: body.productId, variantId: null },
           orderBy: { qty: "desc" },
         });
         if (!bin && body.qty > 0) {
           // Land positive stock in the first empty bin in this warehouse.
           const empty = await tx.bin.findFirst({
-            where: { warehouseId: body.warehouseId, productId: null, reservedQty: 0 },
+            where: {
+              warehouseId: body.warehouseId,
+              productId: null,
+              variantId: null,
+              reservedQty: 0,
+            },
             orderBy: { createdAt: "asc" },
           });
           if (empty) {
             await tx.bin.update({
               where: { id: empty.id },
-              data: { productId: body.productId },
+              data: { productId: body.productId, variantId: variantId ?? null },
             });
-            bin = { ...empty, productId: body.productId };
+            bin = {
+              ...empty,
+              productId: body.productId,
+              variantId: variantId ?? null,
+            };
           }
         }
       }
@@ -309,6 +456,7 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
       const ledger = await tx.stockLedger.create({
         data: {
           productId: body.productId,
+          variantId: variantId ?? null,
           warehouseId: body.warehouseId,
           bin: `${bin.zone}/${bin.shelf}/${bin.bin}`,
           txnType: "Adjust",
@@ -317,7 +465,12 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
           ref: adjNo,
         },
       });
-      const newSoh = await recomputeStockOnHand(tx as unknown as typeof db, body.productId);
+      const newSoh = await recomputeStockOnHand(
+        tx as unknown as typeof db,
+        body.productId,
+        variantId,
+        body.qty
+      );
       // High-value moves still raise an approval row for supervisor review.
       if (Math.abs(body.qty) > 50000) {
         await tx.approval.create({
@@ -369,6 +522,26 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
         });
         return null;
       }
+      if (code === "bin_variant_mismatch") {
+        reply.code(409).send({
+          error: {
+            code: "bin_variant_mismatch",
+            message:
+              "That bin is tagged for a different variant of this product. Pick the bin that matches the chosen variant or use an empty slot.",
+          },
+        });
+        return null;
+      }
+      if (code === "bin_is_variant_only") {
+        reply.code(409).send({
+          error: {
+            code: "bin_is_variant_only",
+            message:
+              "That bin holds a sellable variant; bulk/parent stock cannot be mixed in. Pick a parent-only bin or pass the variantId so this becomes a variant-level adjustment.",
+          },
+        });
+        return null;
+      }
       throw e;
     });
     if (!result) return;
@@ -404,22 +577,58 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
     return false;
   };
 
-  // Recompute Product.stockOnHand from the sum of all bins holding it,
-  // so the SOH column never drifts from physical reality.
+  // Apply a stock-on-hand delta to the right counter (variant or
+  // parent). Returns the post-update SOH value so the caller can
+  // surface it in audit logs / response payloads.
+  //
+  // Why incremental and not "recompute from bins"
+  // --------------------------------------------
+  // Stock-on-hand is a running balance shared by every flow that
+  // touches inventory: GRN posts +qty, sales/dispatch -qty, manuf
+  // production +qty, manuf consumption -qty, adjustments ±qty. Some
+  // of those flows touch bins (where this delta also applies); some
+  // (legacy seed data, sales counter decrements) don't. Aggregating
+  // SOH from bin sums on every adjustment would over-correct — it
+  // would zero out any counter whose bins were never populated, even
+  // though the canonical SOH is right.
+  //
+  // The bin-sum view is still available — see /products/:id/bin-stock
+  // and /inventory/locations — but it lives alongside the counter
+  // rather than replacing it. The two only converge when every
+  // movement on a SKU is bin-aware (the goal for new SKUs going
+  // forward; legacy SKUs converge as they're recounted).
+  //
+  // Convention for routing the delta:
+  //   • variantId set → ProductVariant.stockOnHand += delta
+  //   • variantId null → Product.stockOnHand += delta   (bulk parent)
   const recomputeStockOnHand = async (
     tx: typeof db,
-    productId: string
+    productId: string,
+    variantId: string | null,
+    delta: number
   ): Promise<number> => {
-    const agg = await tx.bin.aggregate({
-      where: { productId },
-      _sum: { qty: true },
+    if (variantId) {
+      const before = await tx.productVariant.findUnique({
+        where: { id: variantId },
+        select: { stockOnHand: true },
+      });
+      const after = Math.max(0, (before?.stockOnHand ?? 0) + delta);
+      await tx.productVariant.update({
+        where: { id: variantId },
+        data: { stockOnHand: after },
+      });
+      return after;
+    }
+    const before = await tx.product.findUnique({
+      where: { id: productId },
+      select: { stockOnHand: true },
     });
-    const total = agg._sum.qty ?? 0;
+    const after = Math.max(0, (before?.stockOnHand ?? 0) + delta);
     await tx.product.update({
       where: { id: productId },
-      data: { stockOnHand: total },
+      data: { stockOnHand: after },
     });
-    return total;
+    return after;
   };
 
   // Generate the next sequential CC document number, e.g. "CC-2026-0007".
@@ -563,7 +772,14 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
             flagged,
           },
         });
-        const newSoh = await recomputeStockOnHand(tx as unknown as typeof db, bin.productId!);
+        // BinCount delta lands on the variant if the bin is variant-tagged,
+        // else on the parent. Mirrors the routing rule used by /inventory/adjust.
+        const newSoh = await recomputeStockOnHand(
+          tx as unknown as typeof db,
+          bin.productId!,
+          bin.variantId ?? null,
+          delta
+        );
         if (body.clientOpId) {
           await tx.auditLog.create({
             data: {
@@ -698,11 +914,25 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
             flagged,
           },
         });
-        // Recompute SOH on both old and new products (if they differ).
+        // Bin reassign moves units from one product to another. The
+        // OLD product loses `before` units; the NEW product gains
+        // `after` units. Stay variant-aware on whichever side has a
+        // variantId tag (typically neither at this point — reassign
+        // is for parent-only flows — but keep the column honest).
         if (oldProductId && oldProductId !== newProductId) {
-          await recomputeStockOnHand(tx as unknown as typeof db, oldProductId);
+          await recomputeStockOnHand(
+            tx as unknown as typeof db,
+            oldProductId,
+            null,
+            -before
+          );
         }
-        await recomputeStockOnHand(tx as unknown as typeof db, newProductId);
+        await recomputeStockOnHand(
+          tx as unknown as typeof db,
+          newProductId,
+          null,
+          after
+        );
 
         if (body.clientOpId) {
           await tx.auditLog.create({

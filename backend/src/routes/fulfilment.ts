@@ -25,6 +25,7 @@ import {
   ensureInvoiceForSalesOrder,
   reconcileInvoiceWithPack,
 } from "../services/invoice-create.js";
+import { consumeReservationsForPickedItems } from "../lib/so-reservations.js";
 import { recordChange } from "../sync/log.js";
 
 // Local alias kept so the rest of this file - which already uses
@@ -84,12 +85,30 @@ const fullPackInclude = {
       soNo: true,
       status: true,
       customerId: true,
+      subTotal: true,
+      tax: true,
+      total: true,
+      transportCharge: true,
+      transportTax: true,
+      dispatchOptionId: true,
+      dispatchOption: { select: { id: true, name: true, code: true } },
       customer: { select: { id: true, name: true, code: true, city: true } },
     },
   },
   assignedTo: { select: { id: true, name: true, username: true } },
   pickList: { select: { id: true, pickListNo: true, status: true } },
-  invoice: { select: { id: true, invoiceNo: true, amount: true, status: true, date: true } },
+  invoice: {
+    select: {
+      id: true,
+      invoiceNo: true,
+      amount: true,
+      tax: true,
+      transportCharge: true,
+      transportTax: true,
+      status: true,
+      date: true,
+    },
+  },
   items: {
     include: {
       product: { select: { id: true, sku: true, name: true, uom: true, stockOnHand: true, barcode: true } },
@@ -276,7 +295,11 @@ export const fulfilmentRoutes = async (app: FastifyInstance) => {
           variantId: soi.variantId,
           binId: body.binId || null,
           qtyToPick: body.qtyToPick,
-          qtyPicked: body.qtyToPick,
+          // Newly added split lines start UNCONFIRMED. qtyPicked is
+          // bumped explicitly via the scan flow / desktop edit; auto-
+          // filling it with qtyToPick made the mobile screen treat the
+          // line as already done.
+          qtyPicked: 0,
         },
       });
       // Bump pick list to picking once the operator starts editing splits.
@@ -463,6 +486,25 @@ export const fulfilmentRoutes = async (app: FastifyInstance) => {
           });
         }
       }
+      // Transfer SO hard-reservations into pick-list reservations.
+      // See so-reservations.ts for the full lifecycle — short version:
+      // the bump above + this drain together net to zero on the
+      // reserved bin (or transfer to a new bin if the picker chose
+      // differently), so total Bin.reservedQty across the warehouse
+      // tracks outstanding SO qty without drift.
+      try {
+        await consumeReservationsForPickedItems(
+          positives.map((p) => ({
+            salesOrderItemId: p.salesOrderItemId,
+            qty: p.qtyPicked,
+          }))
+        );
+      } catch (e) {
+        req.log?.warn(
+          { err: e, pickListId: id },
+          "consumeReservationsForPickedItems failed"
+        );
+      }
 
       const updated = await db.pickList.update({
         where: { id },
@@ -519,9 +561,14 @@ export const fulfilmentRoutes = async (app: FastifyInstance) => {
                 variantId: agg.variantId,
                 qtyOrdered: soi.qtyOrdered,
                 qtyPicked: agg.qtyPicked,
-                qtyPacked: agg.qtyPicked, // operator can edit this
+                // qtyPacked starts at 0 — the packer scan-confirms each
+                // line on the PWA, hits the desktop "Auto pack" button,
+                // or types qtyPacked manually. Pre-filling with the
+                // picked qty (the legacy default) made every line show
+                // as already packed before the packer did anything.
+                qtyPacked: 0,
                 rate: soi.rate,
-                amount: agg.qtyPicked * soi.rate,
+                amount: 0,
               };
             }),
           },
@@ -757,6 +804,26 @@ export const fulfilmentRoutes = async (app: FastifyInstance) => {
           });
         }
       }
+      // Drain SO-level hard reservations for the picked qty so we
+      // don't double-count them on top of the pick-list reservation
+      // we just placed. If the picker chose a different bin than the
+      // SO had reserved, this releases the original bin and the
+      // increment above lands on the picker's chosen bin — net effect
+      // is that Bin.reservedQty across the warehouse stays equal to
+      // the outstanding SO qty.
+      try {
+        await consumeReservationsForPickedItems(
+          positives.map((p) => ({
+            salesOrderItemId: p.salesOrderItemId,
+            qty: p.qtyPicked,
+          }))
+        );
+      } catch (e) {
+        req.log?.warn(
+          { err: e, pickListId: id },
+          "consumeReservationsForPickedItems failed (auto-complete)"
+        );
+      }
       const updated = await db.pickList.update({
         where: { id },
         data: { status: "picked", pickedAt: new Date() },
@@ -796,9 +863,13 @@ export const fulfilmentRoutes = async (app: FastifyInstance) => {
                 variantId: agg.variantId,
                 qtyOrdered: soi.qtyOrdered,
                 qtyPicked: agg.qtyPicked,
-                qtyPacked: agg.qtyPicked,
+                // See note on the manual-complete branch above —
+                // qtyPacked starts at 0 so the packer's scan flow
+                // matters. Auto-pack copies qtyPicked across in one
+                // click on the desktop.
+                qtyPacked: 0,
                 rate: soi.rate,
-                amount: agg.qtyPicked * soi.rate,
+                amount: 0,
               };
             }),
           },
@@ -1167,6 +1238,7 @@ export const fulfilmentRoutes = async (app: FastifyInstance) => {
             await db.stockLedger.create({
               data: {
                 productId: p.productId,
+                variantId: p.variantId ?? null,
                 warehouseId: wh.id,
                 txnType: "Sale",
                 qty: -Math.round(p.qtyPacked),
@@ -1188,6 +1260,42 @@ export const fulfilmentRoutes = async (app: FastifyInstance) => {
         },
         include: fullPackInclude,
       });
+
+      // Roll up SO status (mirrors the legacy /packing-slips/:id/invoice
+      // handler). Without this, a /pack call that left a shortfall
+      // would leave the SO sitting in 'confirmed' indefinitely while
+      // its qtyInvoiced reflected the partial fulfilment - and the
+      // customer's open AR kept padding in the un-invoiced remainder
+      // because no one ever flipped the SO to a state where the
+      // shortfall is observable in the UI.
+      const rolledSo = await db.salesOrder.findUnique({
+        where: { id: ps.salesOrderId },
+        include: { items: true },
+      });
+      if (rolledSo) {
+        const totalOrd = rolledSo.items.reduce(
+          (s, it) => s + it.qtyOrdered - it.qtyCancelled,
+          0
+        );
+        const totalInv = rolledSo.items.reduce(
+          (s, it) => s + it.qtyInvoiced,
+          0
+        );
+        const newStatus =
+          totalInv >= totalOrd - 1e-6
+            ? "invoiced"
+            : totalInv > 0
+              ? "partially_invoiced"
+              : "confirmed";
+        if (newStatus !== rolledSo.status) {
+          const u = await db.salesOrder.update({
+            where: { id: rolledSo.id },
+            data: { status: newStatus },
+          });
+          await recordChange("SalesOrder", u.id, "update", u, req.user.sub);
+        }
+      }
+
       await recordChange("PackingSlip", id, "update", updated, req.user.sub);
       return updated;
     }
@@ -1227,12 +1335,14 @@ export const fulfilmentRoutes = async (app: FastifyInstance) => {
       };
       const mismatches: Mismatch[] = [];
 
-      // Set qtyPacked := qtyPicked for every line. Where qtyPacked already
-      // differs from qtyPicked (eg. a packer hand-edited a row before
-      // hitting the auto button) we keep the qtyPicked value but flag it
-      // as a mismatch so the UI can show the originally-edited number.
+      // Set qtyPacked := qtyPicked for every line. We only flag a row
+      // as a mismatch when it has a NON-ZERO qtyPacked that differs
+      // from qtyPicked — that's the real "operator hand-edited
+      // before auto-pack" signal. qtyPacked == 0 is the fresh-slip
+      // default (the packer hasn't scanned anything yet) and would
+      // otherwise show every line as a phantom mismatch.
       const updates = ps.items.map((it) => {
-        if (it.qtyPacked !== it.qtyPicked) {
+        if (it.qtyPacked > 0 && it.qtyPacked !== it.qtyPicked) {
           mismatches.push({
             itemId: it.id,
             sku: it.variant?.sku ?? it.product?.sku ?? "(no-sku)",
@@ -1448,6 +1558,7 @@ export const fulfilmentRoutes = async (app: FastifyInstance) => {
             await db.stockLedger.create({
               data: {
                 productId: p.productId,
+                variantId: p.variantId ?? null,
                 warehouseId: wh.id,
                 txnType: "Sale",
                 qty: -packed,

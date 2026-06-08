@@ -687,6 +687,9 @@ export const procurementRoutes = async (app: FastifyInstance) => {
         const accepted = line.receivedQty - line.rejectedQty;
         if (accepted <= 0) continue;
         const productId = line.poItem.productId;
+        // PO / GRN lines don't carry a variantId today, so receipts post
+        // against the parent product. If variant-level PO support lands
+        // later, propagate line.poItem.variantId through here.
         const bin = await pickBinForReceive(null, productId);
         let binLabel: string | null = null;
         if (bin) {

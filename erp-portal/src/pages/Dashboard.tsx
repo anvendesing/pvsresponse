@@ -34,12 +34,35 @@ import { Chip, StatusDot } from "@/components/common/Chip";
 import { Kpi } from "@/components/common/Kpi";
 import { EmptyState } from "@/components/common/EmptyState";
 import { inr, num } from "@/lib/format";
-import { api } from "@/lib/api";
+import { api, auth } from "@/lib/api";
 import { useApi } from "@/hooks/useApi";
 
 const COLORS = ["#003087", "#009CDE", "#019C34", "#F5BA2E", "#687173"];
 
+// Pick a time-of-day greeting so the dashboard header feels appropriate
+// for the user's shift rather than always saying "evening".
+const greetingFor = (date: Date): string => {
+  const h = date.getHours();
+  if (h < 12) return "Good morning";
+  if (h < 17) return "Good afternoon";
+  return "Good evening";
+};
+
+// First name only — keeps the headline tight even when the signed-in
+// user has a long full name. Falls back to the username, then a generic
+// label if no session is available.
+const firstNameOf = (full: string | null | undefined, fallback?: string | null) => {
+  const f = (full ?? "").trim();
+  if (f) return f.split(/\s+/)[0];
+  const u = (fallback ?? "").trim();
+  if (u) return u.split(/[.\s_-]/)[0];
+  return "there";
+};
+
 export const Dashboard = () => {
+  const sessionUser = auth.user();
+  const greeting = greetingFor(new Date());
+  const firstName = firstNameOf(sessionUser?.name, sessionUser?.username);
   const live = useApi(() => api.dashboard(), []);
   const liveTrend = useApi(() => api.productionTrend(), []);
   const liveSplit = useApi(() => api.procurementSplit(), []);
@@ -104,10 +127,9 @@ export const Dashboard = () => {
     <div className="p-6 space-y-6 max-w-[1600px] mx-auto">
       <div className="flex items-end justify-between flex-wrap gap-4">
         <div>
-          <div className="text-caption text-ink-muted uppercase tracking-wide font-semibold">
-            Executive Overview
-          </div>
-          <h1 className="text-h1 font-bold text-ink mt-1">Good evening, Arjun</h1>
+          <h1 className="text-h1 font-bold text-ink">
+            {greeting}, {firstName}
+          </h1>
           <div className="text-body text-ink-muted mt-1">
             Plant performance for the last 14 days · Updated 2 min ago
           </div>

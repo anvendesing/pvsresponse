@@ -41,6 +41,7 @@ const emptyForm = (): Product => ({
   gstRate: 18,
   batchTracked: false,
   imageUrl: null,
+  description: "",
   variants: [],
 });
 
@@ -218,6 +219,9 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
         reorderLevel: Number(form.reorderLevel) || 0,
         stockOnHand: Number(form.stockOnHand) || 0,
         batchTracked: !!form.batchTracked,
+        // Send null when the user cleared the field so the backend
+        // explicitly drops the previous value.
+        description: form.description?.trim() ? form.description.trim() : null,
         variants: (form.variants ?? []).map((v) => ({
           id: v.id,
           // Empty string = let backend auto-generate
@@ -514,6 +518,15 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
                   Track manufacturing batch / expiry
                 </span>
               </label>
+            </Field>
+            <Field label="Description" full>
+              <textarea
+                className="w-full bg-surface border border-border rounded-md px-3 py-2 text-body-sm text-ink placeholder:text-ink-muted/70 min-h-[88px] resize-y outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
+                value={form.description ?? ""}
+                onChange={(e) => update("description", e.target.value)}
+                placeholder="Short catalogue / storefront description shown to customers (optional)…"
+                maxLength={5000}
+              />
             </Field>
           </section>
 
@@ -918,7 +931,19 @@ const StockLedgerDrawer = ({
                     {meta.label}
                   </span>
                 </div>
-                <div className="col-span-3 font-mono text-caption truncate">{e.ref}</div>
+                <div className="col-span-3 font-mono text-caption truncate">
+                  {e.ref}
+                  {/* When the row applies to a variant (e.g. an MO output
+                      for the 250ml CAOL variant) show the variant SKU
+                      and size so the user can distinguish it from rows
+                      on the bulk parent. */}
+                  {e.variantSku || e.variantSize ? (
+                    <div className="font-sans normal-case text-[10px] text-ink-muted truncate">
+                      {e.variantSize ?? e.variantSku}
+                      {e.variantSku && e.variantSize ? ` · ${e.variantSku}` : null}
+                    </div>
+                  ) : null}
+                </div>
                 <div className="col-span-2 text-caption text-ink-muted truncate">
                   {e.warehouse}{e.bin ? ` · ${e.bin}` : ""}
                 </div>

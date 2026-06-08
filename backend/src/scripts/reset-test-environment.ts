@@ -304,7 +304,12 @@ async function seedOpeningStock(qty: number) {
       await db.$transaction([
         db.bin.update({
           where: { id: slot.binId },
-          data: { productId: v.productId, qty, reservedQty: 0 },
+          // Tag the bin with the variant so the inventory locations
+          // panel and the warehouse map can attribute physical stock
+          // to the right SKU. Without this, every variant-bearing bin
+          // would render as bulk parent and break the variant-aware
+          // ATP / Adjust Stock flows we wired up.
+          data: { productId: v.productId, variantId: v.id, qty, reservedQty: 0 },
         }),
         db.productVariant.update({
           where: { id: v.id },
@@ -313,6 +318,10 @@ async function seedOpeningStock(qty: number) {
         db.stockLedger.create({
           data: {
             productId: v.productId,
+            // Stamp variantId on the opening-stock ledger row so the
+            // MO inventory-trail and stock movement reports can see
+            // which variant the qty belongs to.
+            variantId: v.id,
             warehouseId: slot.warehouseId,
             txnType: "Adjust",
             ref,
@@ -346,7 +355,10 @@ async function seedOpeningStock(qty: number) {
       await db.$transaction([
         db.bin.update({
           where: { id: slot.binId },
-          data: { productId: p.id, qty, reservedQty: 0 },
+          // Parent-only product (no variants) — bin's variantId stays
+          // null. This is the correct shape for non-packaged bulk
+          // SKUs and raw materials.
+          data: { productId: p.id, variantId: null, qty, reservedQty: 0 },
         }),
         db.product.update({
           where: { id: p.id },
@@ -355,6 +367,7 @@ async function seedOpeningStock(qty: number) {
         db.stockLedger.create({
           data: {
             productId: p.id,
+            variantId: null,
             warehouseId: slot.warehouseId,
             txnType: "Adjust",
             ref,
@@ -368,18 +381,24 @@ async function seedOpeningStock(qty: number) {
     productsSet++;
   }
 
-  // Parent counters for variant parents = sum of active variant stock.
+  // Parent counter for products WITH variants = sum of bulk-parent
+  // bins only (variantId IS NULL). The previous approach of summing
+  // variant SOH conflated bulk parent with packaged variants and broke
+  // the "Packaged total in bulk UoM" rollup on the Products page (it
+  // would display a number that double-counted variant stock plus
+  // mislabelled it as parent bulk). Under the current architecture
+  // parent = internal bulk only; variants own their own counters.
   if (!dryRun) {
     const parents = await db.product.findMany({
       where: { variants: { some: { active: true } } },
-      select: {
-        id: true,
-        sku: true,
-        variants: { where: { active: true }, select: { stockOnHand: true } },
-      },
+      select: { id: true, sku: true },
     });
     for (const p of parents) {
-      const sum = p.variants.reduce((s, v) => s + v.stockOnHand, 0);
+      const bulkSum = await db.bin.aggregate({
+        where: { productId: p.id, variantId: null },
+        _sum: { qty: true },
+      });
+      const sum = bulkSum._sum.qty ?? 0;
       await db.product.update({
         where: { id: p.id },
         data: { stockOnHand: sum },

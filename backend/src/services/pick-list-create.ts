@@ -99,7 +99,15 @@ export const createPickListForSalesOrder = async (
       it.qtyCancelled -
       (onPickMap.get(it.id) ?? 0);
     if (remaining <= 0) continue;
-    const splits = await splitAcrossBins(it.productId, remaining, allocations);
+    // Variant-aware bin allocation: prefer bins tagged with the
+    // line's variant so a 1KG-pack SO line doesn't pick from a
+    // 500g-pack bin under the same parent product.
+    const splits = await splitAcrossBins(
+      it.productId,
+      remaining,
+      allocations,
+      it.variantId
+    );
     for (const sp of splits) {
       itemsToCreate.push({
         salesOrderItemId: it.id,
@@ -107,7 +115,12 @@ export const createPickListForSalesOrder = async (
         variantId: it.variantId ?? null,
         binId: sp.binId || null,
         qtyToPick: sp.qty,
-        qtyPicked: sp.qty,
+        // Fresh pick list lines start UNCONFIRMED. The mobile picker
+        // bumps qtyPicked at scan time; the desktop editor accepts a
+        // manual value or runs auto-pick. Pre-filling with sp.qty
+        // (the legacy default) made the PWA show every line as
+        // "Picked" before the operator did anything.
+        qtyPicked: 0,
       });
     }
   }

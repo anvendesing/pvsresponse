@@ -80,6 +80,9 @@ export interface Product {
   gstRate: number;
   batchTracked: boolean;
   imageUrl?: string | null;
+  // Free-form storefront / catalogue description. Optional — older rows
+  // and items created through the basic ERP form may not have one.
+  description?: string | null;
   variants?: ProductVariant[];
 }
 
@@ -109,8 +112,19 @@ export interface Bin {
   bin: string;
   capacity: number;
   occupied: number;
+  productId?: string | null;
   productSku?: string;
   productName?: string;
+  // Variant tag on the bin. When set, the bin physically holds the
+  // sellable variant (e.g. "BAJF-1KG-01"); when null, the bin holds
+  // the bulk parent SKU (or is empty / legacy untagged). All bin
+  // pickers in the portal scope by this column so a parent's bulk
+  // bin and a 1KG-pack variant bin are never conflated.
+  variantId?: string | null;
+  variantSku?: string | null;
+  variantSize?: string | null;
+  variantUom?: string | null;
+  variantPackSize?: number | null;
   qty?: number;
   batch?: string;
 }
@@ -159,6 +173,10 @@ export interface PurchaseOrder {
 export interface ProductionOrder {
   id: string;
   orderNo: string;
+  // BOM that produced this MO. Use this (not sku) when looking up the
+  // BOM byproducts / outputQty for a given order — sku alone can match
+  // the wrong revision or variant.
+  bomId?: string;
   product: string;
   sku: string;
   plannedQty: number;
@@ -290,6 +308,12 @@ export interface StockLedgerEntry {
   date: string;
   product: string;
   sku: string;
+  // Variant info (when present) disambiguates rows where the parent SKU
+  // alone is ambiguous - e.g. an MO that consumes bulk CAOL and produces
+  // the 250ml CAOL variant: both rows share productSku "CAOL", but only
+  // the produced row has variantSku "CAOL-250ML" / variantSize "250ml".
+  variantSku?: string | null;
+  variantSize?: string | null;
   txnType: "GRN" | "Issue" | "Transfer" | "Sale" | "Production" | "Adjust";
   ref: string;
   qty: number;

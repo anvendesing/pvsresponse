@@ -26,6 +26,7 @@ import {
   Smartphone,
   Tags,
   Trash2,
+  Truck,
   Users,
   Warehouse as WarehouseIcon,
   Wifi,
@@ -48,6 +49,7 @@ import { cn } from "@/lib/cn";
 import { useBrand } from "@/hooks/useBrand";
 import { UserManager } from "@/components/settings/UserManager";
 import { CategoryManager } from "@/components/settings/CategoryManager";
+import { DispatchOptionManager } from "@/components/settings/DispatchOptionManager";
 
 type SettingsSection = { id: string; label: string; icon: typeof Building };
 
@@ -64,6 +66,10 @@ const SECTION_GROUPS: { heading: string; sections: SettingsSection[] }[] = [
       { id: "stockrules", label: "Stock rules", icon: Gauge },
       { id: "production", label: "Production lines", icon: Factory },
     ],
+  },
+  {
+    heading: "Sales & fulfilment",
+    sections: [{ id: "dispatch", label: "Dispatch options", icon: Truck }],
   },
   {
     heading: "Catalog & access",
@@ -162,6 +168,7 @@ export const Settings = () => {
           {active === "stockrules" && <StockRulesManager />}
 
           {active === "categories" && <CategoryManager />}
+          {active === "dispatch" && <DispatchOptionManager />}
 
           {active === "users" && <UserManager />}
 

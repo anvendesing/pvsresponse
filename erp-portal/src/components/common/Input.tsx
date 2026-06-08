@@ -48,7 +48,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
           </span>
         )}
       </span>
-      {error ? (
+      {error && error.trim() ? (
         <span className="text-caption text-danger">{error}</span>
       ) : helper ? (
         <span className="text-caption text-ink-muted">{helper}</span>

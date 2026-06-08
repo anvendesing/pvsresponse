@@ -1,8 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api, ApiError, auth } from "../../lib/api";
+import { variantSkuLine } from "../../lib/variantAttrs";
 import { BarcodeScanner } from "../BarcodeScanner";
 import { newClientOpId } from "../clientOpId";
+import {
+  nextUnpickedAfter,
+  savePickScrollTarget,
+} from "../pickScrollRestore";
 
 // =====================================================================
 // /m/picks/:id/line/:itemId
@@ -23,7 +28,7 @@ interface PickItem {
   qtyPicked: number;
   notes?: string | null;
   product?: { sku?: string; name?: string; uom?: string; barcode?: string | null };
-  variant?: { sku?: string; uom?: string; size?: string; color?: string; barcode?: string | null } | null;
+  variant?: { sku?: string; uom?: string; size?: string; color?: string; grade?: string; barcode?: string | null } | null;
   bin?: { id?: string; code?: string; zone?: string; shelf?: string; bin?: string };
 }
 
@@ -95,6 +100,15 @@ export const MobilePickLine = () => {
     [pl, itemId]
   );
 
+  const goBackToPickList = useCallback(
+    (scrollToItemId: string) => {
+      if (!id) return;
+      savePickScrollTarget(id, scrollToItemId);
+      nav(`/m/picks/${id}`, { replace: true, state: { scrollToItemId } });
+    },
+    [id, nav]
+  );
+
   // Derived values - computed even when `line` is null so we don't
   // change hook order between renders. Once `line` is null the values
   // are sensible defaults that the JSX never renders anyway.
@@ -138,7 +152,7 @@ export const MobilePickLine = () => {
       <div className="px-4 pt-4 pb-20">
         <button
           type="button"
-          onClick={() => nav(`/m/picks/${id}`)}
+          onClick={() => id && itemId && goBackToPickList(itemId)}
           className="mb-3 -ml-1 inline-flex items-center gap-1 text-sm text-slate-600"
         >
           <span>←</span> Back to pick list
@@ -182,6 +196,7 @@ export const MobilePickLine = () => {
   }
 
   const sku = line.variant?.sku ?? line.product?.sku ?? "?";
+  const skuLine = variantSkuLine(sku, line.variant);
   const uom = line.variant?.uom ?? line.product?.uom ?? "pcs";
 
   const submit = async () => {
@@ -197,7 +212,9 @@ export const MobilePickLine = () => {
         remarks: remarks.trim() || null,
         clientOpId: opIdRef.current,
       });
-      nav(`/m/picks/${id}`, { replace: true });
+      const scrollTo =
+        pl && itemId ? nextUnpickedAfter(pl.items, itemId) : itemId!;
+      goBackToPickList(scrollTo);
     } catch (err) {
       if (err instanceof ApiError) {
         setError(err.message);
@@ -213,18 +230,18 @@ export const MobilePickLine = () => {
     <div className="px-4 pt-4 pb-20">
       <button
         type="button"
-        onClick={() => nav(`/m/picks/${id}`)}
+        onClick={() => id && itemId && goBackToPickList(itemId)}
         className="mb-3 -ml-1 inline-flex items-center gap-1 text-sm text-slate-600"
       >
         <span>←</span> Back to pick list
       </button>
 
       <div className="mb-4 rounded-2xl bg-white p-4 ring-1 ring-slate-200 shadow-sm">
-        <div className="flex items-baseline justify-between">
-          <span className="font-mono text-base font-semibold text-[#003087]">{sku}</span>
-          <span className="text-xs text-slate-500">to pick {line.qtyToPick} {uom}</span>
+        <div className="flex items-baseline justify-between gap-3">
+          <span className="text-base font-medium text-slate-900">{line.product?.name ?? "—"}</span>
+          <span className="shrink-0 text-xs text-slate-500">to pick {line.qtyToPick} {uom}</span>
         </div>
-        <div className="mt-1 text-sm font-medium text-slate-900">{line.product?.name}</div>
+        <div className="mt-1 font-mono text-xs text-slate-500">{skuLine}</div>
         {expectedBinCode && (
           <div className="mt-2 text-[11px] text-slate-500">
             expected bin: <span className="font-mono">{expectedBinCode}</span>

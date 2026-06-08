@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { Fingerprint, Lock, ScanLine, Shield, User } from "lucide-react";
+import { Eye, EyeOff, Fingerprint, Lock, ScanLine, Shield, User } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Input } from "@/components/common/Input";
 import { api, apiEnabled, auth as authStore } from "@/lib/api";
@@ -14,12 +14,37 @@ export const Login = () => {
   const [pin, setPin] = useState("");
   const [username, setUsername] = useState("arjun.patel");
   const [password, setPassword] = useState("nova1234");
+  const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // Per-field error flags. `true` here means the field should be highlighted
+  // in red (e.g. empty submit, or backend rejected the credentials).
+  const [fieldErrors, setFieldErrors] = useState<{
+    username?: boolean;
+    password?: boolean;
+  }>({});
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErr(null);
+    // Client-side validation: highlight the missing field(s) so the user
+    // sees exactly which input needs attention.
+    const missing = {
+      username: !username.trim(),
+      password: !password,
+    };
+    if (missing.username || missing.password) {
+      setFieldErrors(missing);
+      setErr(
+        missing.username && missing.password
+          ? "Enter username and password."
+          : missing.username
+            ? "Enter your username."
+            : "Enter your password."
+      );
+      return;
+    }
+    setFieldErrors({});
     setLoading(true);
     try {
       if (!apiEnabled) {
@@ -29,6 +54,10 @@ export const Login = () => {
       authStore.set(res.token, res.user);
       navigate("/dashboard");
     } catch (e) {
+      // Backend rejected the credentials — highlight both fields so the
+      // user knows the combination didn't work without us leaking which
+      // half was wrong.
+      setFieldErrors({ username: true, password: true });
       setErr((e as Error).message);
     } finally {
       setLoading(false);
@@ -173,19 +202,45 @@ export const Login = () => {
           </div>
 
           {mode === "password" ? (
-            <form onSubmit={submit} className="space-y-4">
+            <form onSubmit={submit} className="space-y-4" noValidate>
               <Input
                 label="Username"
                 value={username}
-                onChange={(e) => setUsername(e.target.value)}
+                onChange={(e) => {
+                  setUsername(e.target.value);
+                  if (fieldErrors.username) {
+                    setFieldErrors((f) => ({ ...f, username: false }));
+                  }
+                }}
                 iconLeft={<User size={16} />}
+                error={fieldErrors.username ? " " : undefined}
+                autoComplete="username"
               />
               <Input
                 label="Password"
-                type="password"
+                type={showPassword ? "text" : "password"}
                 value={password}
-                onChange={(e) => setPassword(e.target.value)}
+                onChange={(e) => {
+                  setPassword(e.target.value);
+                  if (fieldErrors.password) {
+                    setFieldErrors((f) => ({ ...f, password: false }));
+                  }
+                }}
                 iconLeft={<Lock size={16} />}
+                iconRight={
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    className="text-ink-muted hover:text-primary transition-colors p-1 -m-1"
+                    title={showPassword ? "Hide password" : "Show password"}
+                    aria-label={showPassword ? "Hide password" : "Show password"}
+                    tabIndex={-1}
+                  >
+                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                }
+                error={fieldErrors.password ? " " : undefined}
+                autoComplete="current-password"
               />
               <div className="flex items-center justify-between">
                 <label className="flex items-center gap-2 text-body-sm text-ink-muted">

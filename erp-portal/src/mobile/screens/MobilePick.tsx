@@ -1,6 +1,12 @@
-import { useCallback, useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { api, ApiError, auth } from "../../lib/api";
+import { variantSkuLine } from "../../lib/variantAttrs";
+import {
+  consumePickScrollTarget,
+  savePickScrollTarget,
+  scrollPickItemIntoView,
+} from "../pickScrollRestore";
 
 // =====================================================================
 // /m/picks/:id
@@ -16,7 +22,7 @@ interface PickItem {
   qtyPicked: number;
   notes?: string | null;
   product?: { sku?: string; name?: string; uom?: string };
-  variant?: { sku?: string; uom?: string; size?: string; color?: string } | null;
+  variant?: { sku?: string; uom?: string; size?: string; color?: string; grade?: string } | null;
   bin?: { id?: string; code?: string; zone?: string; shelf?: string; bin?: string; qty?: number };
 }
 
@@ -32,11 +38,13 @@ interface PickList {
 
 export const MobilePick = () => {
   const { id } = useParams<{ id: string }>();
+  const location = useLocation();
   const nav = useNavigate();
   const [pl, setPl] = useState<PickList | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [online, setOnline] = useState(navigator.onLine);
+  const scrolledRef = useRef(false);
 
   useEffect(() => {
     const onUp = () => setOnline(true);
@@ -72,6 +80,23 @@ export const MobilePick = () => {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    scrolledRef.current = false;
+  }, [id]);
+
+  // After returning from a line screen, scroll the list back to the
+  // line the worker was on (or the next unpicked line after confirm).
+  useEffect(() => {
+    if (!pl || !id || scrolledRef.current) return;
+    const fromState = (location.state as { scrollToItemId?: string } | null)
+      ?.scrollToItemId;
+    const fromStorage = consumePickScrollTarget(id);
+    const targetId = fromState ?? fromStorage;
+    if (!targetId) return;
+    scrolledRef.current = true;
+    scrollPickItemIntoView(targetId);
+  }, [pl, id, location.state]);
 
   const release = async () => {
     if (!id) return;
@@ -320,6 +345,7 @@ export const MobilePick = () => {
       <div className="space-y-2">
         {pl.items.map((it) => {
           const sku = it.variant?.sku ?? it.product?.sku ?? "?";
+          const skuLine = variantSkuLine(sku, it.variant);
           const uom = it.variant?.uom ?? it.product?.uom ?? "pcs";
           const binLabel = it.bin
             ? `${it.bin.zone}/${it.bin.shelf}/${it.bin.bin}`
@@ -334,10 +360,16 @@ export const MobilePick = () => {
           // can't submit.
           const RowEl: React.ElementType = locked || skipped ? "div" : Link;
           const rowProps: Record<string, unknown> =
-            locked || skipped ? {} : { to: `/m/picks/${pl.id}/line/${it.id}` };
+            locked || skipped
+              ? {}
+              : {
+                  to: `/m/picks/${pl.id}/line/${it.id}`,
+                  onClick: () => savePickScrollTarget(pl.id, it.id),
+                };
           return (
             <RowEl
               key={it.id}
+              data-pick-item-id={it.id}
               {...rowProps}
               className={[
                 "flex items-stretch overflow-hidden rounded-xl ring-1 transition",
@@ -365,20 +397,20 @@ export const MobilePick = () => {
               />
               <div className="min-w-0 flex-1 px-3 py-3">
                 <div className="flex items-baseline justify-between gap-3">
-                  <span className="truncate font-mono text-sm font-semibold text-[#003087]">
-                    {sku}
+                  <span className="truncate text-sm font-medium text-slate-900">
+                    {it.product?.name ?? "—"}
                   </span>
                   <span
                     className={[
-                      "text-xs font-semibold",
+                      "shrink-0 text-xs font-semibold",
                       done ? "text-emerald-700" : "text-slate-500",
                     ].join(" ")}
                   >
                     {it.qtyPicked}/{it.qtyToPick} {uom}
                   </span>
                 </div>
-                <div className="mt-0.5 truncate text-sm text-slate-800">
-                  {it.product?.name ?? "—"}
+                <div className="mt-0.5 truncate font-mono text-xs text-slate-500">
+                  {skuLine}
                 </div>
                 <div className="mt-1.5 flex items-center gap-2 flex-wrap">
                   <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-500">

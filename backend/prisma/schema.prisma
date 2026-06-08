@@ -153,6 +153,14 @@ model Bin {
   capacity     Int        @default(100)
   occupied     Int        @default(0)
   productId    String?
+  // The specific variant of `productId` this bin physically holds.
+  // Optional because (a) products without variants put units straight
+  // into bins with `variantId = null`, and (b) legacy bins from before
+  // we tracked variants are left untagged. `splitAcrossBins`,
+  // `computeAtp` and `/inventory/locations` honour this column when
+  // present so a 1KG-pack bin and a 500g-pack bin under the same
+  // parent product no longer get conflated.
+  variantId    String?
   qty          Int        @default(0)
   // Quantity reserved by completed pick lists but not yet shipped.
   // Free-to-pick = qty - reservedQty. This prevents double-picking the
@@ -163,12 +171,14 @@ model Bin {
   updatedAt    DateTime   @updatedAt
   warehouse    Warehouse  @relation(fields: [warehouseId], references: [id])
   product      Product?   @relation(fields: [productId], references: [id])
+  variant      ProductVariant? @relation(fields: [variantId], references: [id])
   pickListItems PickListItem[]
   binCounts    BinCount[]
   putawayRules  PutawayRule[]
   stockRulesMonitor StockRule[] @relation("StockRuleMonitor")
   stockRulesSource  StockRule[] @relation("StockRuleSource")
   stockRulesDest    StockRule[] @relation("StockRuleDest")
+  salesOrderReservations SalesOrderReservation[]
   transferItemsFrom TransferOrderItem[] @relation("TransferItemFromBin")
   transferItemsTo   TransferOrderItem[] @relation("TransferItemToBin")
 
@@ -284,6 +294,8 @@ model ProductVariant {
   stockRules          StockRule[]
   transferOrderItems  TransferOrderItem[]
   enquiryItems        EnquiryItem[]
+  ledger              StockLedger[]
+  bins                Bin[]
 
   @@index([productId])
 }
@@ -1000,6 +1012,11 @@ model StockLedger {
   id           String   @id @default(cuid())
   date         DateTime @default(now())
   productId    String
+  // Optional pointer to the specific variant this row moved. Populated
+  // by variant-scoped flows (e.g. producing the 250ml CAOL variant via
+  // a variant-scoped BOM, or transferring a tagged variant SKU). NULL
+  // means the row applies to the parent product / bulk stock.
+  variantId    String?
   txnType      String // GRN | Issue | Transfer | Sale | Production | Adjust
   ref          String
   qty          Float
@@ -1007,9 +1024,11 @@ model StockLedger {
   bin          String?
   balance      Float    @default(0)
   product      Product  @relation(fields: [productId], references: [id])
+  variant      ProductVariant? @relation(fields: [variantId], references: [id])
   warehouse    Warehouse @relation(fields: [warehouseId], references: [id])
 
   @@index([productId])
+  @@index([variantId])
   @@index([warehouseId])
   @@index([txnType])
   @@index([date])
@@ -1036,14 +1055,18 @@ model Invoice {
   date            DateTime @default(now())
   amount          Float
   tax             Float
+  transportCharge Float    @default(0)
+  transportTax    Float    @default(0)
   status          String   @default("draft") // draft | issued | paid | partial | overdue
   paymentMode     String // cash | card | upi | credit | split
+  dispatchOptionId String?
   notes           String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   customer        Customer @relation(fields: [customerId], references: [id])
   salesOrder      SalesOrder? @relation(fields: [salesOrderId], references: [id])
   packingSlip     PackingSlip? @relation(fields: [packingSlipId], references: [id])
+  dispatchOption  DispatchOption? @relation(fields: [dispatchOptionId], references: [id])
   items           InvoiceItem[]
   paymentAllocations CustomerPaymentAllocation[]
   dispatches      DispatchOrder[]
@@ -1053,6 +1076,7 @@ model Invoice {
   @@index([status])
   @@index([customerId])
   @@index([salesOrderId])
+  @@index([dispatchOptionId])
 }
 
 model InvoiceItem {
@@ -1156,6 +1180,36 @@ model Trip {
 // Sales: Quote -> Sales Order -> Invoice
 // =====================================================================
 
+// Admin-configurable dispatch / transport modes offered on quotes.
+// Categories mirror common Indian B2B logistics channels:
+//   door_to_door    — last-mile delivery to customer premises
+//   bulk_carrier    — national LTL/FTL operators (Navata, VRL, etc.)
+//   company_vehicle — own fleet (lorry, van, two-wheeler)
+//   rtc_cargo       — state transport corporation parcel/cargo
+//   bus_cargo       — private bus / tempo-traveller cargo space
+//   railway         — Indian Railways parcel / freight
+//   courier         — express parcel (Delhivery, BlueDart, DTDC)
+//   customer_pickup — ex-works / customer-arranged transport
+model DispatchOption {
+  id            String   @id @default(cuid())
+  code          String   @unique
+  name          String
+  category      String
+  description   String?
+  // Suggested default freight (₹, excl. GST) — pre-fills the quote form.
+  defaultCharge Float    @default(0)
+  active        Boolean  @default(true)
+  sortOrder     Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  quotes        Quote[]
+  salesOrders   SalesOrder[]
+  invoices      Invoice[]
+
+  @@index([category])
+  @@index([active])
+}
+
 model Quote {
   id                    String          @id @default(cuid())
   quoteNo               String          @unique
@@ -1172,7 +1226,13 @@ model Quote {
   validUntil            DateTime
   subTotal              Float           @default(0)
   tax                   Float           @default(0)
+  // Freight / transport charge (excl. GST). GST on freight is stored in
+  // transportTax at 18% (SAC 9965 — goods transport agency services).
+  transportCharge       Float           @default(0)
+  transportTax          Float           @default(0)
   total                 Float           @default(0)
+  // How goods will reach the customer — set from Settings → Dispatch options.
+  dispatchOptionId      String?
   paymentTerms          String?
   notes                 String?
   acceptedAt            DateTime?
@@ -1184,12 +1244,14 @@ model Quote {
   createdAt             DateTime        @default(now())
   updatedAt             DateTime        @updatedAt
   customer              Customer        @relation(fields: [customerId], references: [id])
+  dispatchOption        DispatchOption? @relation(fields: [dispatchOptionId], references: [id])
   items                 QuoteItem[]
   revisions             QuoteRevision[]
   salesOrder            SalesOrder?
 
   @@index([status])
   @@index([customerId])
+  @@index([dispatchOptionId])
 }
 
 model QuoteItem {
@@ -1243,12 +1305,16 @@ model SalesOrder {
   orderDate    DateTime         @default(now())
   subTotal     Float            @default(0)
   tax          Float            @default(0)
+  transportCharge Float         @default(0)
+  transportTax    Float         @default(0)
   total        Float            @default(0)
+  dispatchOptionId String?
   notes        String?
   createdAt    DateTime         @default(now())
   updatedAt    DateTime         @updatedAt
   customer     Customer         @relation(fields: [customerId], references: [id])
   quote        Quote?           @relation(fields: [quoteId], references: [id])
+  dispatchOption DispatchOption? @relation(fields: [dispatchOptionId], references: [id])
   items        SalesOrderItem[]
   invoices     Invoice[]
   pickLists    PickList[]
@@ -1257,6 +1323,7 @@ model SalesOrder {
   @@index([status])
   @@index([customerId])
   @@index([source])
+  @@index([dispatchOptionId])
 }
 
 model SalesOrderItem {
@@ -1275,10 +1342,37 @@ model SalesOrderItem {
   invoiceItems    InvoiceItem[]
   pickListItems   PickListItem[]
   packingSlipItems PackingSlipItem[]
+  reservations    SalesOrderReservation[]
 
   @@index([salesOrderId])
   @@index([productId])
   @@index([variantId])
+}
+
+// Hard reservation against a specific bin once an SO is confirmed.
+// One row per (SO line, bin) split — a single line that can't fit in
+// one bin produces multiple rows. Bin.reservedQty is the materialised
+// total of these (plus pick-list reservations after pick→picked).
+//
+// Lifecycle:
+//   * SO confirm / resume   → row(s) created, Bin.reservedQty += qty
+//   * Invoice / pack-out    → row(s) trimmed proportionally
+//   * Pick → picked         → SO reservation released, pick list
+//                             reservation takes over (Bin.reservedQty
+//                             stays put unless picker chose a different
+//                             bin, in which case it transfers)
+//   * SO cancel / hold      → row(s) deleted, Bin.reservedQty -= qty
+model SalesOrderReservation {
+  id                String         @id @default(cuid())
+  salesOrderItemId  String
+  binId             String
+  qty               Int
+  createdAt         DateTime       @default(now())
+  salesOrderItem    SalesOrderItem @relation(fields: [salesOrderItemId], references: [id], onDelete: Cascade)
+  bin               Bin            @relation(fields: [binId], references: [id], onDelete: Cascade)
+
+  @@index([salesOrderItemId])
+  @@index([binId])
 }
 
 // =====================================================================

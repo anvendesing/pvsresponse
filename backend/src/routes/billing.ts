@@ -5,6 +5,8 @@ import { mintShareToken } from "../lib/share.js";
 import { recordChange } from "../sync/log.js";
 import { checkStockRules } from "../lib/stock-rules.js";
 import { resolveGstRate, computeTax, lineTax } from "../lib/tax.js";
+import { evaluateCreditGate } from "./sales.js";
+import { applyAdvancesToInvoice } from "./customer-payments.js";
 
 const invoiceCreate = z.object({
   customerId: z.string(),
@@ -168,6 +170,43 @@ export const billingRoutes = async (app: FastifyInstance) => {
 
     const sub = itemsWithGst.reduce((s, i) => s + i.lineAmount, 0);
     const tax = computeTax(itemsWithGst.map((i) => ({ amount: i.lineAmount, gstRate: i.lineGstRate })));
+
+    // -------- Credit-limit gate (credit-mode invoices only) --------
+    // Cash / card / UPI / split invoices are paid at the till and
+    // never become AR, so they can't blow a credit limit. Credit-mode
+    // walk-in invoices DO add to AR immediately, so they need the
+    // same gate the quote-accept and direct-SO flows use. `force:true`
+    // lets an authorised cashier override after manager sign-off.
+    if (body.paymentMode === "credit") {
+      const customer = await db.customer.findUnique({
+        where: { id: body.customerId },
+        select: { id: true, name: true, creditLimit: true },
+      });
+      if (!customer) {
+        return reply.code(404).send({
+          error: { code: "customer_not_found", message: "Customer not found" },
+        });
+      }
+      const limit = customer.creditLimit ?? 0;
+      const total = sub + tax;
+      const gate = await evaluateCreditGate(customer.id, total, customer.name, limit);
+      const force = (req.body as { force?: boolean } | null)?.force === true;
+      if (!gate.allowed && !force) {
+        return reply.code(409).send({
+          error: {
+            code: "credit_limit_exceeded",
+            message: gate.reason,
+            details: {
+              limit,
+              projected: gate.projected,
+              exposure: gate.exposure,
+              attemptedAmount: total,
+            },
+          },
+        });
+      }
+    }
+
     const next = await db.invoice.count();
     const inv = await db.invoice.create({
       data: {
@@ -196,6 +235,15 @@ export const billingRoutes = async (app: FastifyInstance) => {
       },
     });
     await recordChange("Invoice", inv.id, "insert", inv, req.user.sub);
+
+    // Sweep any standing customer advances against this invoice. For
+    // cash/card/UPI walk-ins this is normally a no-op (no advance
+    // exists), but for credit-mode invoices a customer who paid
+    // upfront gets their invoice marked 'paid' immediately rather
+    // than sitting at 'issued' until someone runs the FIFO logic.
+    if (body.paymentMode === "credit") {
+      await applyAdvancesToInvoice(db, inv.id);
+    }
 
     // Decrement stock and record ledger entries — on the variant if present.
     // Stock-on-hand was validated above (pre-flight oversell guard), so the
@@ -246,6 +294,7 @@ export const billingRoutes = async (app: FastifyInstance) => {
         await db.stockLedger.create({
           data: {
             productId: item.productId,
+            variantId: item.variantId ?? null,
             warehouseId: wh.id,
             txnType: "Sale",
             qty: -item.qty,

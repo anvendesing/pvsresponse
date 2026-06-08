@@ -30,7 +30,8 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { mintShareToken } from "../lib/share.js";
 import { nextFulfilmentDocNo } from "../lib/pick-list-helpers.js";
-import { computeTax } from "../lib/tax.js";
+import { computeTax, computeGrandTotal } from "../lib/tax.js";
+import { applyAdvancesToInvoice } from "../routes/customer-payments.js";
 
 type Tx = Prisma.TransactionClient | PrismaClient;
 
@@ -88,6 +89,9 @@ export const ensureInvoiceForSalesOrder = async (
       shareToken: mintShareToken(),
       customerId: so.customerId,
       salesOrderId: so.id,
+      dispatchOptionId: so.dispatchOptionId,
+      transportCharge: so.transportCharge,
+      transportTax: so.transportTax,
       amount: so.total,
       tax: so.tax,
       status: opts.status ?? "issued",
@@ -114,7 +118,22 @@ export const ensureInvoiceForSalesOrder = async (
     },
   });
 
-  return { invoice, created: true };
+  // Sweep the customer's unallocated advance payments against the
+  // freshly-created invoice so a prepayment recorded BEFORE the
+  // invoice was minted is correctly absorbed (status flips to 'paid'
+  // or 'partial' instantly, instead of leaving the invoice in
+  // 'issued' with cash sitting on account).
+  await applyAdvancesToInvoice(client, invoice.id);
+  // Re-read so the caller gets the post-allocation status.
+  const final = await client.invoice.findUnique({
+    where: { id: invoice.id },
+    include: {
+      items: { include: { product: true, variant: true } },
+      customer: true,
+    },
+  });
+
+  return { invoice: final, created: true };
 };
 
 // Helper used by the packing-slip pack-complete path to bring the
@@ -180,9 +199,15 @@ export const reconcileInvoiceWithPack = async (
   const tax = computeTax(
     remainingItems.map((r) => ({ amount: r.amount, gstRate: r.gstRate ?? 18 }))
   );
+  const transportCharge = invoice.transportCharge ?? 0;
+  const freight = computeGrandTotal(sub, tax, transportCharge);
   await client.invoice.update({
     where: { id: invoiceId },
-    data: { amount: sub + tax, tax },
+    data: {
+      amount: freight.total,
+      tax,
+      transportTax: freight.transportTax,
+    },
   });
 
   return client.invoice.findUnique({

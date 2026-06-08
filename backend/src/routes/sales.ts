@@ -16,7 +16,15 @@ import { z } from "zod";
 import { db } from "../db.js";
 import { mintShareToken } from "../lib/share.js";
 import { recordChange } from "../sync/log.js";
-import { resolveGstRate, computeTax } from "../lib/tax.js";
+import { resolveGstRate, computeTax, computeGrandTotal } from "../lib/tax.js";
+import {
+  releaseSalesOrderReservations,
+  reserveSalesOrderStock,
+} from "../lib/so-reservations.js";
+import {
+  customerCreditExposure,
+  applyAdvancesToInvoice,
+} from "./customer-payments.js";
 
 // ---------------------------------------------------------------- helpers ----
 
@@ -67,6 +75,8 @@ const quoteCreate = z.object({
   validUntil: z.string().datetime().optional(), // default = +30 days
   paymentTerms: z.string().nullable().optional(),
   notes: z.string().nullable().optional(),
+  dispatchOptionId: z.string().nullable().optional(),
+  transportCharge: z.number().nonnegative().default(0),
   items: z.array(quoteItemSchema).min(1),
 });
 
@@ -75,6 +85,8 @@ const quoteUpdate = z.object({
   validUntil: z.string().datetime().optional(),
   paymentTerms: z.string().nullable().optional(),
   notes: z.string().nullable().optional(),
+  dispatchOptionId: z.string().nullable().optional(),
+  transportCharge: z.number().nonnegative().optional(),
   items: z.array(quoteItemSchema).optional(),
   reason: z.string().optional(), // captured into QuoteRevision
 });
@@ -94,6 +106,8 @@ const soInvoiceSchema = z.object({
 const soDirectCreate = z.object({
   customerId: z.string(),
   notes: z.string().nullable().optional(),
+  dispatchOptionId: z.string().nullable().optional(),
+  transportCharge: z.number().nonnegative().default(0),
   items: z
     .array(
       z.object({
@@ -109,8 +123,16 @@ const soDirectCreate = z.object({
 // ---------------------------------------------------------- helper utilities --
 
 const computeTotals = (
-  items: { qty: number; rate: number; discount?: number; gstRate?: number }[]
-): { subTotal: number; tax: number; total: number; lines: number[] } => {
+  items: { qty: number; rate: number; discount?: number; gstRate?: number }[],
+  transportCharge = 0
+): {
+  subTotal: number;
+  tax: number;
+  transportCharge: number;
+  transportTax: number;
+  total: number;
+  lines: number[];
+} => {
   const amounts = items.map((it) => it.qty * it.rate * (1 - (it.discount ?? 0) / 100));
   const subTotal = amounts.reduce((s, n) => s + n, 0);
   const taxLines = items.map((it, i) => ({
@@ -118,7 +140,15 @@ const computeTotals = (
     gstRate: it.gstRate ?? 18,
   }));
   const tax = computeTax(taxLines);
-  return { subTotal, tax, total: subTotal + tax, lines: amounts };
+  const freight = computeGrandTotal(subTotal, tax, transportCharge);
+  return {
+    subTotal,
+    tax,
+    transportCharge,
+    transportTax: freight.transportTax,
+    total: freight.total,
+    lines: amounts,
+  };
 };
 
 // Compute the next sequence number for Q-{year}-{####} / SO-{year}-{####}.
@@ -173,26 +203,78 @@ export const nextDocNo = async (
   return `${prefix}-${year}-${String(max + 1).padStart(4, "0")}`;
 };
 
-const customerOpenBalance = async (customerId: string): Promise<number> => {
-  // Outstanding = net unpaid (invoice amount minus any payment allocations).
-  // This matches customerNetOpenBalance in customer-payments.ts but is
-  // inlined here to avoid a circular import.
-  const openInvoices = await db.invoice.findMany({
-    where: {
-      customerId,
-      status: { in: ["issued", "partial", "overdue"] },
-    },
-    select: { id: true, amount: true },
-  });
-  let total = 0;
-  for (const inv of openInvoices) {
-    const alloc = await db.customerPaymentAllocation.aggregate({
-      where: { invoiceId: inv.id },
-      _sum: { amount: true },
-    });
-    total += Math.max(0, inv.amount - (alloc._sum.amount ?? 0));
+// Used to be a local copy of customerNetOpenBalance; consolidated to
+// customer-payments.ts so the AR statement view, the customer list,
+// and the credit-limit gate all read the same number — including
+// unallocated advance payments that should offset a new quote.
+
+// =====================================================================
+// Credit-limit gate — single source of truth.
+//
+// A new commitment of `addedAmount` against `customerId` is allowed
+// when projected exposure ≤ creditLimit. Projected exposure is:
+//
+//   signed = invoiceRemainder + openSOCommitment − unallocatedAdvance
+//
+// so a customer who has prepaid an advance and has no open SOs gets
+// negative exposure (= headroom) and can place a new order without an
+// approval — but the same customer with TWO open SOs that already
+// sum to more than the advance is correctly blocked.
+//
+// Returns:
+//   { allowed: true,  projected, exposure } when the gate passes.
+//   { allowed: false, projected, exposure, reason } when it blocks.
+//
+// `reason` is a human-readable breakdown suitable for the Approval
+// row's `reason` column and the user-facing toast.
+// =====================================================================
+export type CreditGateResult =
+  | {
+      allowed: true;
+      projected: number;
+      exposure: import("./customer-payments.js").CreditExposure;
+      limit: number;
+    }
+  | {
+      allowed: false;
+      projected: number;
+      exposure: import("./customer-payments.js").CreditExposure;
+      limit: number;
+      reason: string;
+    };
+
+export const evaluateCreditGate = async (
+  customerId: string,
+  addedAmount: number,
+  customerName: string,
+  creditLimit: number
+): Promise<CreditGateResult> => {
+  const exposure = await customerCreditExposure(customerId);
+  const projected = exposure.signed + addedAmount;
+  const inr = (n: number) =>
+    `₹${Math.round(n).toLocaleString("en-IN")}`;
+  if (projected <= creditLimit) {
+    return { allowed: true, projected, exposure, limit: creditLimit };
   }
-  return total;
+  const parts = [
+    `Customer ${customerName} would exceed credit limit (${inr(creditLimit)}).`,
+    `Open AR ${inr(exposure.invoiceRemainder)}`,
+    exposure.openSOCommitment > 0
+      ? `+ open SO commitment ${inr(exposure.openSOCommitment)}`
+      : null,
+    exposure.unallocatedAdvance > 0
+      ? `− advance ${inr(exposure.unallocatedAdvance)}`
+      : null,
+    `+ this order ${inr(addedAmount)}`,
+    `= projected ${inr(projected)}.`,
+  ].filter(Boolean);
+  return {
+    allowed: false,
+    projected,
+    exposure,
+    limit: creditLimit,
+    reason: parts.join(" "),
+  };
 };
 
 const variantLineSelect = {
@@ -206,8 +288,20 @@ const variantLineSelect = {
   stockOnHand: true,
 } as const;
 
+const dispatchOptionSelect = {
+  id: true,
+  code: true,
+  name: true,
+  category: true,
+  description: true,
+  defaultCharge: true,
+  active: true,
+  sortOrder: true,
+} as const;
+
 const fullQuoteInclude = {
   customer: { select: { id: true, code: true, name: true, gst: true, city: true, creditLimit: true } },
+  dispatchOption: { select: dispatchOptionSelect },
   items: {
     include: {
       product: { select: { id: true, sku: true, name: true, uom: true, stockOnHand: true } },
@@ -219,10 +313,30 @@ const fullQuoteInclude = {
 
 const fullSoInclude = {
   customer: { select: { id: true, code: true, name: true, gst: true, city: true } },
+  dispatchOption: { select: dispatchOptionSelect },
   items: {
     include: {
       product: { select: { id: true, sku: true, name: true, uom: true, stockOnHand: true } },
       variant: { select: variantLineSelect },
+      // Hard-reservation rows for the SO line. The desktop SO detail
+      // panel sums these up to render "Reserved X / Y" per line.
+      reservations: {
+        select: {
+          id: true,
+          binId: true,
+          qty: true,
+          createdAt: true,
+          bin: {
+            select: {
+              id: true,
+              zone: true,
+              shelf: true,
+              bin: true,
+              warehouse: { select: { id: true, code: true, name: true } },
+            },
+          },
+        },
+      },
     },
   },
   invoices: {
@@ -264,6 +378,88 @@ export const snapshotQuote = async (quoteId: string, reason: string, changedBy: 
   });
 };
 
+type QuoteItemComparable = {
+  productId: string;
+  variantId: string | null;
+  qty: number;
+  rate: number;
+  discount: number;
+};
+
+const comparableQuoteItems = (
+  items: {
+    productId: string;
+    variantId: string | null;
+    qty: number;
+    rate: number;
+    discount: number;
+  }[]
+): QuoteItemComparable[] =>
+  items
+    .map((it) => ({
+      productId: it.productId,
+      variantId: it.variantId ?? null,
+      qty: it.qty,
+      rate: it.rate,
+      discount: it.discount,
+    }))
+    .sort((a, b) =>
+      `${a.productId}:${a.variantId ?? ""}`.localeCompare(`${b.productId}:${b.variantId ?? ""}`)
+    );
+
+const quoteItemsEqual = (a: QuoteItemComparable[], b: QuoteItemComparable[]) =>
+  JSON.stringify(a) === JSON.stringify(b);
+
+const quoteDateKey = (d: Date | string) => new Date(d).toISOString().slice(0, 10);
+
+/** True when a PATCH body would not change quote header or line content. */
+export const quotePatchIsNoOp = (
+  before: {
+    customerId: string;
+    validUntil: Date;
+    paymentTerms: string | null;
+    notes: string | null;
+    dispatchOptionId: string | null;
+    transportCharge: number;
+    items: {
+      productId: string;
+      variantId: string | null;
+      qty: number;
+      rate: number;
+      discount: number;
+    }[];
+  },
+  body: z.infer<typeof quoteUpdate>
+): boolean => {
+  const customerId = body.customerId ?? before.customerId;
+  const validUntil = body.validUntil ? new Date(body.validUntil) : before.validUntil;
+  const paymentTerms = body.paymentTerms !== undefined ? body.paymentTerms : before.paymentTerms;
+  const notes = body.notes !== undefined ? body.notes : before.notes;
+  const dispatchOptionId =
+    body.dispatchOptionId !== undefined ? body.dispatchOptionId : before.dispatchOptionId;
+  const transportCharge =
+    body.transportCharge !== undefined ? body.transportCharge : before.transportCharge;
+
+  if (customerId !== before.customerId) return false;
+  if (quoteDateKey(validUntil) !== quoteDateKey(before.validUntil)) return false;
+  if ((paymentTerms ?? null) !== (before.paymentTerms ?? null)) return false;
+  if ((notes ?? null) !== (before.notes ?? null)) return false;
+  if ((dispatchOptionId ?? null) !== (before.dispatchOptionId ?? null)) return false;
+  if (transportCharge !== before.transportCharge) return false;
+
+  const nextItems = body.items
+    ? body.items.map((it) => ({
+        productId: it.productId,
+        variantId: it.variantId ?? null,
+        qty: it.qty,
+        rate: it.rate,
+        discount: it.discount ?? 0,
+      }))
+    : before.items;
+
+  return quoteItemsEqual(comparableQuoteItems(before.items), comparableQuoteItems(nextItems));
+};
+
 // ---------------------------------------------------------- ATP calculator ---
 
 const computeAtp = async (
@@ -277,14 +473,49 @@ const computeAtp = async (
   openProduction: number;
   atp: number;
 }> => {
-  // On-hand: variant if specified, otherwise parent product
+  // On-hand: prefer summing variant-tagged bins (the physical truth
+  // post-Bin.variantId migration) and fall back to the legacy
+  // stockOnHand counter when no bins are tagged. Bin sums let two
+  // bins under the same parent each hold a different variant without
+  // their stock blending into one ATP figure.
   let onHand = 0;
   if (variantId) {
-    const v = await db.productVariant.findUnique({ where: { id: variantId }, select: { stockOnHand: true } });
-    onHand = v?.stockOnHand ?? 0;
+    const taggedBins = await db.bin.aggregate({
+      _sum: { qty: true },
+      where: { productId, variantId },
+    });
+    if ((taggedBins._sum.qty ?? 0) > 0) {
+      onHand = taggedBins._sum.qty ?? 0;
+    } else {
+      // No bin tagged for this variant — fall through to the variant
+      // counter so legacy data without variantId tagging still
+      // produces a non-zero ATP.
+      const v = await db.productVariant.findUnique({
+        where: { id: variantId },
+        select: { stockOnHand: true },
+      });
+      onHand = v?.stockOnHand ?? 0;
+    }
   } else {
-    const p = await db.product.findUnique({ where: { id: productId }, select: { stockOnHand: true } });
-    onHand = p?.stockOnHand ?? 0;
+    // Bulk / no-variant flow: count bins NOT tagged to any variant
+    // (those bins genuinely belong to the parent product) and add
+    // the parent counter as a fallback when nothing is tagged. Once
+    // every bin in a multi-variant product is tagged, the sum here
+    // collapses to 0 — which is correct, since selling the bulk
+    // parent doesn't draw from variant-specific bins.
+    const parentBins = await db.bin.aggregate({
+      _sum: { qty: true },
+      where: { productId, variantId: null },
+    });
+    if ((parentBins._sum.qty ?? 0) > 0) {
+      onHand = parentBins._sum.qty ?? 0;
+    } else {
+      const p = await db.product.findUnique({
+        where: { id: productId },
+        select: { stockOnHand: true },
+      });
+      onHand = p?.stockOnHand ?? 0;
+    }
   }
 
   // Reserved-for-SO = SUM(qtyOrdered - qtyInvoiced - qtyCancelled) on items
@@ -304,10 +535,12 @@ const computeAtp = async (
 
   // Physical reservation on bins (already-picked-but-not-yet-invoiced).
   // Informational only; this is a SUBSET of reservedForSO so we don't
-  // double-count it in the ATP calculation.
+  // double-count it in the ATP calculation. Narrow to variant-tagged
+  // bins when a variantId is supplied so a 1KG SO doesn't pick up the
+  // 500g variant's reservedQty.
   const binAgg = await db.bin.aggregate({
     _sum: { reservedQty: true },
-    where: { productId },
+    where: variantId ? { productId, variantId } : { productId },
   });
   const binReserved = binAgg._sum.reservedQty ?? 0;
 
@@ -348,6 +581,27 @@ const computeAtp = async (
 
 export const salesRoutes = async (app: FastifyInstance) => {
   // ============================================================== Quotes ====
+
+  // Active dispatch modes for quote / SO forms (lazy-seeds defaults).
+  app.get("/dispatch-options", { preHandler: [app.authenticate] }, async () => {
+    const { ensureDefaultDispatchOptions } = await import(
+      "../lib/dispatch-options-seed.js"
+    );
+    await ensureDefaultDispatchOptions(db);
+    return db.dispatchOption.findMany({
+      where: { active: true },
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        category: true,
+        description: true,
+        defaultCharge: true,
+        sortOrder: true,
+      },
+    });
+  });
 
   app.get("/quotes", async (req) => {
     const q = (req.query as Record<string, string>) ?? {};
@@ -447,6 +701,7 @@ export const salesRoutes = async (app: FastifyInstance) => {
       where: { shareToken: token },
       include: {
         customer: { select: { name: true, gst: true, city: true, contact: true } },
+        dispatchOption: { select: { code: true, name: true, category: true } },
         items: {
           include: {
             product: { select: { name: true, sku: true, uom: true, hsn: true } },
@@ -466,7 +721,16 @@ export const salesRoutes = async (app: FastifyInstance) => {
       notes: quote.notes,
       subTotal: quote.subTotal,
       tax: quote.tax,
+      transportCharge: quote.transportCharge,
+      transportTax: quote.transportTax,
       total: quote.total,
+      dispatchOption: quote.dispatchOption
+        ? {
+            code: quote.dispatchOption.code,
+            name: quote.dispatchOption.name,
+            category: quote.dispatchOption.category,
+          }
+        : null,
       createdAt: quote.createdAt,
       customer: quote.customer,
       items: quote.items.map((it) => ({
@@ -507,7 +771,10 @@ export const salesRoutes = async (app: FastifyInstance) => {
   app.post("/quotes", { preHandler: [app.authenticate] }, async (req) => {
     const body = quoteCreate.parse(req.body);
     const lineRates = await resolveLineGstRates(body.items);
-    const totals = computeTotals(body.items.map((it, i) => ({ ...it, gstRate: lineRates[i] })));
+    const totals = computeTotals(
+      body.items.map((it, i) => ({ ...it, gstRate: lineRates[i] })),
+      body.transportCharge ?? 0
+    );
     const quoteNo = await nextDocNo("Q", 2026, 1001);
     const validUntil = body.validUntil
       ? new Date(body.validUntil)
@@ -521,6 +788,9 @@ export const salesRoutes = async (app: FastifyInstance) => {
         validUntil,
         paymentTerms: body.paymentTerms ?? null,
         notes: body.notes ?? null,
+        dispatchOptionId: body.dispatchOptionId ?? null,
+        transportCharge: totals.transportCharge,
+        transportTax: totals.transportTax,
         subTotal: totals.subTotal,
         tax: totals.tax,
         total: totals.total,
@@ -546,7 +816,7 @@ export const salesRoutes = async (app: FastifyInstance) => {
   app.patch("/quotes/:id", { preHandler: [app.authenticate] }, async (req, reply) => {
     const id = (req.params as { id: string }).id;
     const body = quoteUpdate.parse(req.body);
-    const before = await db.quote.findUnique({ where: { id } });
+    const before = await db.quote.findUnique({ where: { id }, include: { items: true } });
     if (!before) return reply.code(404).send({ error: { code: "not_found" } });
 
     if (["accepted", "converted", "rejected"].includes(before.status)) {
@@ -556,6 +826,10 @@ export const salesRoutes = async (app: FastifyInstance) => {
           message: `Quote in status '${before.status}' cannot be edited. Create a new quote instead.`,
         },
       });
+    }
+
+    if (quotePatchIsNoOp(before, body)) {
+      return db.quote.findUnique({ where: { id }, include: fullQuoteInclude });
     }
 
     // Snapshot + bump revision when editing a submitted quote
@@ -573,12 +847,25 @@ export const salesRoutes = async (app: FastifyInstance) => {
     if (body.validUntil !== undefined) headerData.validUntil = new Date(body.validUntil);
     if (body.paymentTerms !== undefined) headerData.paymentTerms = body.paymentTerms;
     if (body.notes !== undefined) headerData.notes = body.notes;
+    if (body.dispatchOptionId !== undefined) {
+      headerData.dispatchOptionId = body.dispatchOptionId;
+    }
+
+    const transportCharge =
+      body.transportCharge !== undefined
+        ? body.transportCharge
+        : before.transportCharge;
 
     if (items !== undefined) {
       const lineRates = await resolveLineGstRates(items);
-      const totals = computeTotals(items.map((it, i) => ({ ...it, gstRate: lineRates[i] })));
+      const totals = computeTotals(
+        items.map((it, i) => ({ ...it, gstRate: lineRates[i] })),
+        transportCharge
+      );
       headerData.subTotal = totals.subTotal;
       headerData.tax = totals.tax;
+      headerData.transportCharge = totals.transportCharge;
+      headerData.transportTax = totals.transportTax;
       headerData.total = totals.total;
       // Replace items wholesale - simpler than diffing; old items go via cascade.
       await db.quoteItem.deleteMany({ where: { quoteId: id } });
@@ -594,6 +881,18 @@ export const salesRoutes = async (app: FastifyInstance) => {
           requiredBy: it.requiredBy ? new Date(it.requiredBy) : null,
         })),
       });
+    } else if (
+      body.transportCharge !== undefined ||
+      body.dispatchOptionId !== undefined
+    ) {
+      const freight = computeGrandTotal(
+        before.subTotal,
+        before.tax,
+        transportCharge
+      );
+      headerData.transportCharge = transportCharge;
+      headerData.transportTax = freight.transportTax;
+      headerData.total = freight.total;
     }
 
     const updated = await db.quote.update({
@@ -708,19 +1007,36 @@ export const salesRoutes = async (app: FastifyInstance) => {
       });
       return reply.code(200).send({ alreadyConverted: true, salesOrder: so });
     }
-    if (!["submitted", "draft"].includes(quote.status)) {
+    // 'accepted' is also valid here: it means a previous /accept call
+    // parked the quote behind a credit-limit approval, but the
+    // customer may since have paid an advance that clears the gate.
+    // Re-running the check here lets the salesperson "retry" without
+    // a manager touching the approval row.
+    if (!["submitted", "draft", "accepted"].includes(quote.status)) {
       return reply.code(409).send({
         error: { code: "bad_state", message: `Cannot accept a quote in '${quote.status}'.` },
       });
     }
+    if (quote.status === "accepted" && quote.convertedSalesOrderId) {
+      // Already materialised — handled above, but guard for type safety.
+      return reply.code(409).send({
+        error: { code: "already_converted", message: "Quote is already converted." },
+      });
+    }
 
     // -------- Credit-limit gate --------
-    // A breach is anything that would leave the customer's projected open
-    // balance above their credit limit. Customers with a 0 limit are
-    // cash-only -> any non-zero balance is a breach and requires approval.
+    // Single source of truth — see evaluateCreditGate above. Includes
+    // open invoice remainder + open SO commitment − unallocated
+    // advance, so a customer with multiple un-invoiced SOs can't slip
+    // a new quote through just because their AR happens to be zero.
     const limit = quote.customer.creditLimit ?? 0;
-    const open = await customerOpenBalance(quote.customerId);
-    if (open + quote.total > limit) {
+    const gate = await evaluateCreditGate(
+      quote.customerId,
+      quote.total,
+      quote.customer.name,
+      limit
+    );
+    if (!gate.allowed) {
       // Park the acceptance: create an Approval and freeze the quote in
       // 'accepted' state; the SO is materialised when the approval is
       // granted via /approvals/:id/decide.
@@ -736,19 +1052,20 @@ export const salesRoutes = async (app: FastifyInstance) => {
             requestedBy: req.user.name,
             amount: quote.total,
             priority: "high",
-            reason: `Customer ${quote.customer.name} would exceed credit limit (₹${limit.toLocaleString(
-              "en-IN"
-            )}). Open balance ₹${open.toLocaleString("en-IN")} + this quote ₹${quote.total.toLocaleString(
-              "en-IN"
-            )}.`,
+            reason: gate.reason,
           },
         }));
-      const updated = await db.quote.update({
-        where: { id },
-        data: { status: "accepted", acceptedAt: new Date() },
-        include: fullQuoteInclude,
-      });
-      await recordChange("Quote", id, "update", updated, req.user.sub);
+      const updated =
+        quote.status === "accepted"
+          ? quote
+          : await db.quote.update({
+              where: { id },
+              data: { status: "accepted", acceptedAt: new Date() },
+              include: fullQuoteInclude,
+            });
+      if (quote.status !== "accepted") {
+        await recordChange("Quote", id, "update", updated, req.user.sub);
+      }
       return reply.code(202).send({
         creditHold: true,
         approvalId: approval.id,
@@ -756,6 +1073,37 @@ export const salesRoutes = async (app: FastifyInstance) => {
         message:
           "Quote accepted but converting to a Sales Order requires credit-limit approval.",
       });
+    }
+
+    // -------- Gate passes — auto-resolve any standing approval --------
+    // If this quote was previously parked behind a Credit Limit
+    // approval and the customer has since paid an advance that clears
+    // the gate, mark the approval as approved (audit-trail) before
+    // materialising the SO so the approvals queue stays clean.
+    if (quote.status === "accepted") {
+      const standing = await db.approval.findFirst({
+        where: { ref: quote.quoteNo, type: "Credit Limit", status: "pending" },
+      });
+      if (standing) {
+        const note = `Auto-resolved by ${req.user.name}: projected exposure ₹${gate.projected.toLocaleString(
+          "en-IN"
+        )} ≤ limit ₹${limit.toLocaleString("en-IN")} (open AR ₹${gate.exposure.invoiceRemainder.toLocaleString(
+          "en-IN"
+        )} + open SO ₹${gate.exposure.openSOCommitment.toLocaleString(
+          "en-IN"
+        )} − advance ₹${gate.exposure.unallocatedAdvance.toLocaleString(
+          "en-IN"
+        )} + this quote ₹${quote.total.toLocaleString("en-IN")}).`;
+        await db.approval.update({
+          where: { id: standing.id },
+          data: {
+            status: "approved",
+            decidedAt: new Date(),
+            decidedBy: req.user.name,
+            reason: `${standing.reason}\n\n[approved by ${req.user.name}] ${note}`,
+          },
+        });
+      }
     }
 
     // -------- Materialise the Sales Order --------
@@ -847,10 +1195,54 @@ export const salesRoutes = async (app: FastifyInstance) => {
     return so;
   });
 
-  app.post("/sales-orders", { preHandler: [app.authenticate] }, async (req) => {
+  app.post("/sales-orders", { preHandler: [app.authenticate] }, async (req, reply) => {
     const body = soDirectCreate.parse(req.body);
     const lineRates = await resolveLineGstRates(body.items);
-    const totals = computeTotals(body.items.map((it, i) => ({ ...it, gstRate: lineRates[i] })));
+    const totals = computeTotals(
+      body.items.map((it, i) => ({ ...it, gstRate: lineRates[i] })),
+      body.transportCharge ?? 0
+    );
+
+    // Credit-limit gate. Direct SO creation is a back-office flow that
+    // bypasses the quote → /accept path, so without this check a
+    // salesperson could create an SO that the quote-accept gate would
+    // have blocked. The body has no quoteNo, so the Approval row
+    // references the to-be-issued SO number; if the gate trips we
+    // bail out 409 BEFORE allocating an SO number / persisting any
+    // row, and let the caller take it through the quote flow (or
+    // /sales-orders with `force:true` once we add admin override).
+    const customer = await db.customer.findUnique({
+      where: { id: body.customerId },
+      select: { id: true, name: true, creditLimit: true },
+    });
+    if (!customer) {
+      return reply.code(404).send({
+        error: { code: "customer_not_found", message: "Customer not found" },
+      });
+    }
+    const limit = customer.creditLimit ?? 0;
+    const gate = await evaluateCreditGate(
+      customer.id,
+      totals.total,
+      customer.name,
+      limit
+    );
+    const force = (req.body as { force?: boolean } | null)?.force === true;
+    if (!gate.allowed && !force) {
+      return reply.code(409).send({
+        error: {
+          code: "credit_limit_exceeded",
+          message: gate.reason,
+          details: {
+            limit,
+            projected: gate.projected,
+            exposure: gate.exposure,
+            attemptedAmount: totals.total,
+          },
+        },
+      });
+    }
+
     const soNo = await nextDocNo("SO", 2026, 2001);
     const so = await db.salesOrder.create({
       data: {
@@ -858,6 +1250,9 @@ export const salesRoutes = async (app: FastifyInstance) => {
         shareToken: mintShareToken(),
         customerId: body.customerId,
         notes: body.notes ?? null,
+        dispatchOptionId: body.dispatchOptionId ?? null,
+        transportCharge: totals.transportCharge,
+        transportTax: totals.transportTax,
         subTotal: totals.subTotal,
         tax: totals.tax,
         total: totals.total,
@@ -874,6 +1269,16 @@ export const salesRoutes = async (app: FastifyInstance) => {
       include: fullSoInclude,
     });
     await recordChange("SalesOrder", so.id, "insert", so, req.user.sub);
+
+    // SO is born "confirmed" → hard-reserve stock against bins so the
+    // Reserved column reflects committed sales orders. Best-effort:
+    // shortages don't block creation, the UI surfaces them on the
+    // SO detail panel.
+    try {
+      await reserveSalesOrderStock(so.id);
+    } catch (e) {
+      req.log?.warn({ err: e, soId: so.id }, "reserveSalesOrderStock failed");
+    }
 
     // Back-office (source='internal') SOs do NOT pre-generate an invoice.
     // The packing flow mints the invoice on the fly at pack-complete via
@@ -934,6 +1339,13 @@ export const salesRoutes = async (app: FastifyInstance) => {
         req.user.sub
       );
     }
+    // Cancellation releases all reserved bin qty so other SOs / pick
+    // lists can claim it again.
+    try {
+      await releaseSalesOrderReservations(id);
+    } catch (e) {
+      req.log?.warn({ err: e, soId: id }, "releaseSalesOrderReservations failed (cancel)");
+    }
     await recordChange("SalesOrder", id, "update", updated, req.user.sub);
     return updated;
   });
@@ -947,6 +1359,14 @@ export const salesRoutes = async (app: FastifyInstance) => {
       data: { status: "on_hold" },
       include: fullSoInclude,
     });
+    // Hold = "park this order" → release reservations so the stock
+    // is visible to other commitments. /resume re-reserves whatever's
+    // still available.
+    try {
+      await releaseSalesOrderReservations(id);
+    } catch (e) {
+      req.log?.warn({ err: e, soId: id }, "releaseSalesOrderReservations failed (hold)");
+    }
     await recordChange("SalesOrder", id, "update", updated, req.user.sub);
     return updated;
   });
@@ -968,24 +1388,257 @@ export const salesRoutes = async (app: FastifyInstance) => {
       data: { status: newStatus },
       include: fullSoInclude,
     });
+    // Resume → re-reserve. reserveSalesOrderStock is idempotent and
+    // skips fully-invoiced lines.
+    try {
+      await reserveSalesOrderStock(id);
+    } catch (e) {
+      req.log?.warn({ err: e, soId: id }, "reserveSalesOrderStock failed (resume)");
+    }
     await recordChange("SalesOrder", id, "update", updated, req.user.sub);
     return updated;
   });
 
+  // POST /sales-orders/:id/reserve — manual (re)reservation. Useful
+  // for backfilling SOs created before the hard-reserve feature
+  // existed, or after a bin recount when the operator needs to
+  // re-anchor reservations to the current stock picture.
+  app.post(
+    "/sales-orders/:id/reserve",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      const id = (req.params as { id: string }).id;
+      const so = await db.salesOrder.findUnique({
+        where: { id },
+        select: { id: true, status: true, soNo: true },
+      });
+      if (!so) return reply.code(404).send({ error: { code: "not_found" } });
+      if (so.status !== "confirmed" && so.status !== "partially_invoiced") {
+        return reply.code(409).send({
+          error: {
+            code: "wrong_status",
+            message: `SO ${so.soNo} is ${so.status}; only confirmed / partially-invoiced orders can hold reservations.`,
+          },
+        });
+      }
+      const result = await reserveSalesOrderStock(id);
+      await recordChange(
+        "SalesOrder",
+        id,
+        "update",
+        { id, _reservation: result },
+        req.user.sub
+      );
+      return result;
+    }
+  );
+
+  // Close a sales order. Accepts the SO's invoiced state as final and
+  // declares any un-invoiced remainder as cancelled (e.g. accepted
+  // shortfall after a partial pick). Without bumping qtyCancelled the
+  // customer's open AR keeps the un-invoiced remainder as a future
+  // commitment - the credit-exposure math
+  // (customerOpenSOCommitment) treats partially_invoiced SOs as
+  // "more invoices coming" and pads the AR balance even though no
+  // further invoice is going to be cut.
+  //
+  // Net effect for a partially_invoiced SO with a shortfall:
+  //   • un-invoiced remainder per line → qtyCancelled
+  //   • status → 'closed'
+  //   • soCommitment for this SO → 0 in customerSignedAR
+  //   • customer Open Balance now reflects only the actual issued
+  //     invoice (matches the AR statement's running total).
+  // Idempotent: re-running on an already-closed SO is a no-op.
   app.post(
     "/sales-orders/:id/close",
     { preHandler: [app.authenticate] },
     async (req, reply) => {
       const id = (req.params as { id: string }).id;
-      const before = await db.salesOrder.findUnique({ where: { id } });
+      const before = await db.salesOrder.findUnique({
+        where: { id },
+        include: { items: true },
+      });
       if (!before) return reply.code(404).send({ error: { code: "not_found" } });
+      if (before.status === "closed" || before.status === "cancelled") {
+        return reply.send(
+          await db.salesOrder.findUnique({
+            where: { id },
+            include: fullSoInclude,
+          })
+        );
+      }
+      const lineUpdates = before.items
+        .map((it) => {
+          const remaining = Math.max(
+            0,
+            it.qtyOrdered - it.qtyInvoiced - it.qtyCancelled
+          );
+          return remaining > 0
+            ? db.salesOrderItem.update({
+                where: { id: it.id },
+                data: { qtyCancelled: { increment: remaining } },
+              })
+            : null;
+        })
+        .filter((u): u is Exclude<typeof u, null> => u !== null);
+      if (lineUpdates.length > 0) {
+        await db.$transaction(lineUpdates);
+      }
       const updated = await db.salesOrder.update({
         where: { id },
         data: { status: "closed" },
         include: fullSoInclude,
       });
+      // Release any remaining bin reservations - the SO is no longer
+      // claiming stock for un-invoiced lines.
+      try {
+        await releaseSalesOrderReservations(id);
+      } catch (e) {
+        req.log?.warn({ err: e, soId: id }, "releaseSalesOrderReservations failed (close)");
+      }
       await recordChange("SalesOrder", id, "update", updated, req.user.sub);
       return updated;
+    }
+  );
+
+  // Spin off the un-invoiced remainder of a partially-fulfilled SO
+  // into a brand-new SO and close the parent. This is the
+  // "back-order" path for warehouse shortfalls: the customer still
+  // wants the missing units, but we've shipped/invoiced what we
+  // could from the original SO and want a clean slate (with its own
+  // pick-list, invoice, and AR commitment) for the rest.
+  //
+  // Effect:
+  //   • parent SO: qtyCancelled bumped to absorb the remainder,
+  //     status → 'closed'  (so it stops padding open AR)
+  //   • new SO: same lines/rates as parent but qty = remaining,
+  //     status = 'confirmed', linked to original via `notes`
+  //   • bin reservations released on parent, re-applied on the new SO
+  //
+  // 409 if there's nothing to back-order, or if the SO is in a
+  // state where we shouldn't fork it (cancelled / closed already).
+  app.post(
+    "/sales-orders/:id/back-order",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      const id = (req.params as { id: string }).id;
+      const parent = await db.salesOrder.findUnique({
+        where: { id },
+        include: {
+          items: {
+            include: {
+              product: { select: { gstRate: true } },
+              variant: { select: { gstRate: true } },
+            },
+          },
+          customer: true,
+        },
+      });
+      if (!parent) {
+        return reply.code(404).send({ error: { code: "not_found" } });
+      }
+      if (["cancelled", "closed"].includes(parent.status)) {
+        return reply.code(409).send({
+          error: {
+            code: "bad_state",
+            message: `SO is in '${parent.status}'; cannot create a back-order.`,
+          },
+        });
+      }
+
+      const remainingLines = parent.items
+        .map((it) => ({
+          item: it,
+          qty: Math.max(0, it.qtyOrdered - it.qtyInvoiced - it.qtyCancelled),
+        }))
+        .filter((l) => l.qty > 0);
+      if (remainingLines.length === 0) {
+        return reply.code(409).send({
+          error: {
+            code: "nothing_to_back_order",
+            message: "No un-invoiced remainder on this Sales Order.",
+          },
+        });
+      }
+
+      // Build the new SO totals using the parent's per-line rate.
+      const sub = remainingLines.reduce(
+        (s, l) => s + l.qty * l.item.rate,
+        0
+      );
+      const tax = remainingLines.reduce((s, l) => {
+        const gst = resolveGstRate(l.item.product, l.item.variant);
+        return s + l.qty * l.item.rate * (gst / 100);
+      }, 0);
+      const total = sub + tax;
+
+      const newSoNo = await nextDocNo("SO", 2026, 2001);
+      const newSo = await db.salesOrder.create({
+        data: {
+          soNo: newSoNo,
+          shareToken: mintShareToken(),
+          customerId: parent.customerId,
+          notes: `Back-order from ${parent.soNo}`,
+          subTotal: sub,
+          tax,
+          total,
+          status: "confirmed",
+          items: {
+            create: remainingLines.map((l) => ({
+              productId: l.item.productId,
+              variantId: l.item.variantId,
+              qtyOrdered: l.qty,
+              rate: l.item.rate,
+              amount: l.qty * l.item.rate,
+            })),
+          },
+        },
+        include: fullSoInclude,
+      });
+      await recordChange("SalesOrder", newSo.id, "insert", newSo, req.user.sub);
+
+      // Close the parent: bumps qtyCancelled on every remaining line
+      // so soCommitment goes to 0 (the commitment now lives on the
+      // back-order SO instead).
+      const cancelUpdates = remainingLines.map((l) =>
+        db.salesOrderItem.update({
+          where: { id: l.item.id },
+          data: { qtyCancelled: { increment: l.qty } },
+        })
+      );
+      if (cancelUpdates.length > 0) {
+        await db.$transaction(cancelUpdates);
+      }
+      const closedParent = await db.salesOrder.update({
+        where: { id: parent.id },
+        data: { status: "closed" },
+        include: fullSoInclude,
+      });
+      try {
+        await releaseSalesOrderReservations(parent.id);
+      } catch (e) {
+        req.log?.warn(
+          { err: e, soId: parent.id },
+          "releaseSalesOrderReservations failed (back-order parent)"
+        );
+      }
+      try {
+        await reserveSalesOrderStock(newSo.id);
+      } catch (e) {
+        req.log?.warn(
+          { err: e, soId: newSo.id },
+          "reserveSalesOrderStock failed (back-order child)"
+        );
+      }
+      await recordChange(
+        "SalesOrder",
+        parent.id,
+        "update",
+        closedParent,
+        req.user.sub
+      );
+
+      return { backOrder: newSo, parent: closedParent };
     }
   );
 
@@ -1092,6 +1745,7 @@ export const salesRoutes = async (app: FastifyInstance) => {
           gstRate: resolveGstRate(p.item.product, p.item.variant),
         }))
       );
+      const freight = computeGrandTotal(sub, tax, so.transportCharge ?? 0);
       const invoiceNo = await nextDocNo("INV", 2026, 5500);
       const wh = await db.warehouse.findFirst();
 
@@ -1101,7 +1755,10 @@ export const salesRoutes = async (app: FastifyInstance) => {
           shareToken: mintShareToken(),
           customerId: so.customerId,
           salesOrderId: so.id,
-          amount: sub + tax,
+          dispatchOptionId: so.dispatchOptionId,
+          transportCharge: so.transportCharge ?? 0,
+          transportTax: freight.transportTax,
+          amount: freight.total,
           tax,
           paymentMode: body.paymentMode,
           status: "issued",
@@ -1128,6 +1785,12 @@ export const salesRoutes = async (app: FastifyInstance) => {
         },
       });
 
+      // Sweep any standing customer advances against the new invoice
+      // FIFO so a prepayment recorded BEFORE this invoice was issued
+      // is absorbed immediately (invoice flips to 'paid' or 'partial'
+      // instead of staying 'issued' with cash sitting on account).
+      await applyAdvancesToInvoice(db, inv.id);
+
       // Decrement stock + ledger + SO line draw-down (sequential by line so
       // SQLite gets predictable transactions; each loop is small).
       for (const p of planned) {
@@ -1150,6 +1813,7 @@ export const salesRoutes = async (app: FastifyInstance) => {
           await db.stockLedger.create({
             data: {
               productId: p.item.productId,
+              variantId: p.item.variantId ?? null,
               warehouseId: wh.id,
               txnType: "Sale",
               qty: -p.qty,
@@ -1184,6 +1848,19 @@ export const salesRoutes = async (app: FastifyInstance) => {
           });
           await recordChange("SalesOrder", u.id, "update", u, req.user.sub);
         }
+      }
+      // Invoice draw-down shrinks each line's outstanding qty. Re-run
+      // reservation so SO reservations match the new remaining (and
+      // free up bin reservedQty for the invoiced portion). For fully
+      // invoiced SOs this reduces to release.
+      try {
+        if (refreshed?.status === "invoiced") {
+          await releaseSalesOrderReservations(so.id);
+        } else {
+          await reserveSalesOrderStock(so.id);
+        }
+      } catch (e) {
+        req.log?.warn({ err: e, soId: so.id }, "reserveSalesOrderStock failed (invoice)");
       }
       await recordChange("Invoice", inv.id, "insert", inv, req.user.sub);
       return inv;
@@ -1223,6 +1900,9 @@ export const materialiseSO = async (quoteId: string, actor: string) => {
       shareToken: mintShareToken(),
       quoteId: quote.id,
       customerId: quote.customerId,
+      dispatchOptionId: quote.dispatchOptionId,
+      transportCharge: quote.transportCharge,
+      transportTax: quote.transportTax,
       subTotal: quote.subTotal,
       tax: quote.tax,
       total: quote.total,
@@ -1249,6 +1929,14 @@ export const materialiseSO = async (quoteId: string, actor: string) => {
   // defensive ensureInvoiceForSalesOrder() guard in fulfilment.ts. This
   // matches the user's expectation that back-office SOs only carry an
   // invoice once the goods have actually been packed.
+
+  // Hard-reserve at confirm so the Reserved column on the warehouse
+  // bin views immediately reflects committed sales orders.
+  try {
+    await reserveSalesOrderStock(so.id);
+  } catch {
+    // Best-effort — shortages don't block conversion.
+  }
 
   await recordChange("SalesOrder", so.id, "insert", so, actor);
   await recordChange("Quote", quote.id, "update", { ...quote, status: "converted" }, actor);

@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
 import { api, type PublicInvoicePayload } from "@/lib/api";
 import { inr } from "@/lib/format";
+import { resolveBillingTotals, sumLineAmounts } from "@/lib/billingTotals";
 import { PublicDocShell, fmtPublicDate } from "@/components/public/PublicDocShell";
 
 const statusBadge = (status: string) => {
@@ -47,7 +48,15 @@ export const PublicInvoice = () => {
     };
   }, [token]);
 
-  const subTotal = data ? data.amount - data.tax : 0;
+  const billingTotals = data
+    ? resolveBillingTotals({
+        goodsSubTotal: sumLineAmounts(data.items),
+        goodsTax: data.tax,
+        transportCharge: data.transportCharge,
+        transportTax: data.transportTax,
+        total: data.amount,
+      })
+    : null;
   const badge = statusBadge(data?.status ?? "");
 
   const meta = data
@@ -123,16 +132,30 @@ export const PublicInvoice = () => {
           <div className="flex justify-end pb-6 border-b border-gray-200">
             <div className="w-72 space-y-1.5 text-sm">
               <div className="flex justify-between">
-                <span className="text-gray-600">Sub-total</span>
-                <span className="tabular-nums">{inr(subTotal)}</span>
+                <span className="text-gray-600">Sub-total (goods)</span>
+                <span className="tabular-nums">{inr(billingTotals!.goodsSubTotal)}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-600">Tax (GST)</span>
-                <span className="tabular-nums">{inr(data.tax)}</span>
+                <span className="text-gray-600">GST (goods)</span>
+                <span className="tabular-nums">{inr(billingTotals!.goodsTax)}</span>
               </div>
+              {(billingTotals!.transportCharge > 0 || billingTotals!.transportTax > 0) && (
+                <>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Freight / transport</span>
+                    <span className="tabular-nums">{inr(billingTotals!.transportCharge)}</span>
+                  </div>
+                  {billingTotals!.transportTax > 0 && (
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">GST on freight</span>
+                      <span className="tabular-nums">{inr(billingTotals!.transportTax)}</span>
+                    </div>
+                  )}
+                </>
+              )}
               <div className="flex justify-between text-lg pt-2 border-t border-gray-200 mt-1">
                 <span className="font-bold">Amount due</span>
-                <span className="font-bold tabular-nums">{inr(data.amount)}</span>
+                <span className="font-bold tabular-nums">{inr(billingTotals!.grandTotal)}</span>
               </div>
             </div>
           </div>

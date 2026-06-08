@@ -120,7 +120,13 @@ export const Quotes = () => {
   };
 
   const onSaved = (saved: QuoteRow) => {
-    showBanner(`Saved ${saved.quoteNo} (rev ${saved.revision}, ${saved.status}).`);
+    const submitted = saved.status === "submitted";
+    showBanner(
+      submitted
+        ? `Submitted ${saved.quoteNo} — find it in the list below.`
+        : `Saved ${saved.quoteNo} (rev ${saved.revision}, ${saved.status}).`,
+      submitted ? "success" : "info"
+    );
     void liveQuotes.refetch();
   };
 
@@ -406,7 +412,10 @@ export const Quotes = () => {
         <BulkOrderImportModal
           onClose={() => setImportOpen(false)}
           onCreated={(quoteId, quoteNo) => {
-            showBanner(`Quote ${quoteNo} created from Excel import.`, "success");
+            showBanner(
+              `Quote ${quoteNo} created from Excel import (draft). Open it and click Convert → Sales Order.`,
+              "success"
+            );
             void liveQuotes.refetch();
             void quoteId;
           }}

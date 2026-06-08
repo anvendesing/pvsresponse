@@ -11,7 +11,17 @@ interface FlatRow {
   sku: string;
   name: string;
   uom: string;
+  /**
+   * Variant SKU resolved from the *bin's own* `variantId`. NULL
+   * means this bin stores the parent product in bulk form. This used
+   * to take `m.matchedVariant?.sku`, which painted one matched
+   * variant across every bin (so a query for "CAOL" labelled all
+   * bins as the alphabetically-first variant `CAOL-AMU-5L-01`, even
+   * the bins holding 250ml/500ml/1L stock or bulk parent).
+   */
   variantSku: string | null;
+  variantSize: string | null;
+  variantUom: string | null;
   bin: InventoryLocationBinRow;
 }
 
@@ -22,7 +32,9 @@ function flatten(matches: InventoryLocationMatch[]): FlatRow[] {
       sku: m.sku,
       name: m.name,
       uom: m.uom,
-      variantSku: m.matchedVariant?.sku ?? null,
+      variantSku: b.variantSku ?? null,
+      variantSize: b.variantSize ?? null,
+      variantUom: b.variantUom ?? null,
       bin: b,
     }))
   );
@@ -31,9 +43,16 @@ function flatten(matches: InventoryLocationMatch[]): FlatRow[] {
 interface Props {
   seedProductId?: string;
   products: { id: string; sku: string; name: string }[];
+  /**
+   * Bump from the parent to force a fresh fetch (e.g. after an Adjust
+   * Stock post writes new bin quantities). The panel cached the bin
+   * list on mount before this prop was added, which made changes look
+   * like they didn't apply until a full page reload.
+   */
+  refreshKey?: number;
 }
 
-export const InventoryLocationsPanel = ({ seedProductId, products }: Props) => {
+export const InventoryLocationsPanel = ({ seedProductId, products, refreshKey = 0 }: Props) => {
   const navigate = useNavigate();
   const inputRef = useRef<HTMLInputElement>(null);
   const seed = products.find((p) => p.id === seedProductId);
@@ -43,14 +62,15 @@ export const InventoryLocationsPanel = ({ seedProductId, products }: Props) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Load all bins on mount, then filter client-side
+  // Load all bins on mount AND whenever the parent bumps refreshKey
+  // (e.g. after a stock adjustment posts new bin quantities).
   useEffect(() => {
     setLoading(true);
     api.inventoryLocations("")
       .then((matches) => { setAllRows(flatten(matches)); setError(null); })
       .catch((e: unknown) => setError((e as Error).message))
       .finally(() => setLoading(false));
-  }, []);
+  }, [refreshKey]);
 
   // If a seed product is passed (deep-link), pre-fill the search
   useEffect(() => {
@@ -142,9 +162,20 @@ export const InventoryLocationsPanel = ({ seedProductId, products }: Props) => {
                   className="border-t border-border hover:bg-canvas/70 transition-colors"
                 >
                   <td className="px-4 py-2.5">
-                    <div className="font-mono font-semibold text-primary text-caption">{r.sku}</div>
+                    <div className="font-mono font-semibold text-primary text-caption">
+                      {r.variantSku ?? r.sku}
+                    </div>
                     <div className="text-body-sm text-ink truncate max-w-[160px]" title={r.name}>{r.name}</div>
-                    {r.variantSku && <Chip size="sm" tone="info" className="mt-0.5">{r.variantSku}</Chip>}
+                    {r.variantSku ? (
+                      <Chip size="sm" tone="info" className="mt-0.5">
+                        {r.variantSize ? `${r.variantSize} · ` : ""}
+                        {r.variantUom ?? "variant"}
+                      </Chip>
+                    ) : (
+                      <Chip size="sm" tone="neutral" className="mt-0.5">
+                        bulk · {r.uom}
+                      </Chip>
+                    )}
                   </td>
                   <td className="px-4 py-2.5">
                     <div className="font-semibold text-ink">{r.bin.warehouseCode}</div>

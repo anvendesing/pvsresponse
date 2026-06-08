@@ -5,12 +5,14 @@
 //   2. Dry-run preview (accepted lines, rejected lines, stock warnings)
 //   3. Confirm → creates Quote draft, navigates to it
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   AlertTriangle,
   CheckCircle2,
   FileSpreadsheet,
+  Minus,
+  Plus,
   Upload,
   X,
   XCircle,
@@ -19,7 +21,6 @@ import { Button } from "@/components/common/Button";
 import {
   api,
   importQuoteXlsx,
-  type BulkOrderImportResult,
   type BulkOrderPreview,
 } from "@/lib/api";
 import { useApi } from "@/hooks/useApi";
@@ -42,9 +43,53 @@ export const BulkOrderImportModal = ({ onClose, onCreated }: Props) => {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<BulkOrderPreview | null>(null);
+  // Per-line edits applied between preview and confirm. Keyed by SKU
+  // because each accepted line has a unique SKU in the source sheet.
+  // - skipped: line was crossed out by the user, exclude from quote
+  // - qty: override of the imported qty (undefined = keep imported)
+  const [lineEdits, setLineEdits] = useState<Record<string, { skipped?: boolean; qty?: number }>>({});
   const fileRef = useRef<HTMLInputElement>(null);
 
   const { data: customers } = useApi(() => api.customers(), []);
+
+  // Effective lines = preview accepted minus skipped + qty overrides
+  // applied. Memoised so totals + the table both read the same view.
+  const effectiveAccepted = useMemo(() => {
+    if (!preview) return [];
+    return preview.accepted
+      .filter((l) => !lineEdits[l.sku]?.skipped)
+      .map((l) => {
+        const override = lineEdits[l.sku]?.qty;
+        const qty = override != null && override > 0 ? override : l.qty;
+        return {
+          ...l,
+          qty,
+          amount: Math.round(qty * l.rate * 100) / 100,
+        };
+      });
+  }, [preview, lineEdits]);
+
+  const effectiveSubTotal = useMemo(
+    () => effectiveAccepted.reduce((s, l) => s + l.amount, 0),
+    [effectiveAccepted]
+  );
+  // Re-derive tax linearly using the original ratio so users don't
+  // need a separate tax recompute round-trip just to preview edits.
+  const taxRate = preview && preview.subTotal > 0 ? preview.tax / preview.subTotal : 0.18;
+  const effectiveTax = Math.round(effectiveSubTotal * taxRate * 100) / 100;
+  const effectiveTotal = effectiveSubTotal + effectiveTax;
+
+  // Derived label used by the "Product" column: parent name plus
+  // size/uom when a variant is targeted, so 8 different agarbathi
+  // variants don't all read as just "Agarbathi".
+  const productLabel = (l: BulkOrderPreview["accepted"][number]): string => {
+    const bits: string[] = [l.productName];
+    if (l.variantSize) bits.push(l.variantSize);
+    if (l.variantUom && (!l.variantSize || !l.variantSize.toLowerCase().includes(l.variantUom.toLowerCase()))) {
+      bits.push(l.variantUom);
+    }
+    return bits.join(" · ");
+  };
 
   // ── File selection ──────────────────────────────────────────────
   const pickFile = (f: File) => {
@@ -78,6 +123,8 @@ export const BulkOrderImportModal = ({ onClose, onCreated }: Props) => {
         dryRun: true,
       });
       setPreview(result as BulkOrderPreview);
+      // Reset any prior edits when a fresh preview comes in.
+      setLineEdits({});
       setStep("preview");
     } catch (e) {
       setError((e as Error).message ?? "Preview failed.");
@@ -87,22 +134,38 @@ export const BulkOrderImportModal = ({ onClose, onCreated }: Props) => {
   };
 
   // ── Confirm import ──────────────────────────────────────────────
+  // Previously this re-uploaded the file with dryRun=false, which
+  // ignored any per-line skips/qty edits the user made on the
+  // preview screen. Now we send the (filtered + edited) accepted
+  // rows directly to POST /quotes — the price was already
+  // re-resolved server-side during the preview, so the call is
+  // safe to make from the client-side state.
   const confirmImport = async () => {
-    if (!file || !customerId) return;
+    if (!customerId) return;
+    if (effectiveAccepted.length === 0) {
+      setError("All lines were skipped — re-include at least one line or cancel.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
-      const result = await importQuoteXlsx(file, customerId, {
+      const created = await api.createQuote({
+        customerId,
         notes: notes || undefined,
-        dryRun: false,
+        items: effectiveAccepted.map((l) => ({
+          productId: l.productId,
+          variantId: l.variantId,
+          qty: l.qty,
+          rate: l.rate,
+          discount: l.discount,
+        })),
       });
-      const res = result as BulkOrderImportResult;
       setStep("done");
-      onCreated?.(res.quoteId, res.quoteNo);
+      onCreated?.(created.id, created.quoteNo);
       // Navigate after a short delay so the user sees the success message
       setTimeout(() => {
         onClose();
-        navigate(`/quotes?focus=${res.quoteId}`);
+        navigate(`/quotes?focus=${created.id}`);
       }, 1500);
     } catch (e) {
       setError((e as Error).message ?? "Import failed.");
@@ -111,10 +174,42 @@ export const BulkOrderImportModal = ({ onClose, onCreated }: Props) => {
     }
   };
 
+  // Per-line controls
+  const toggleSkip = (sku: string) =>
+    setLineEdits((prev) => ({
+      ...prev,
+      [sku]: { ...prev[sku], skipped: !prev[sku]?.skipped },
+    }));
+
+  const bumpQty = (sku: string, delta: number, fallback: number) => {
+    setLineEdits((prev) => {
+      const current = prev[sku]?.qty ?? fallback;
+      const next = Math.max(1, current + delta);
+      return { ...prev, [sku]: { ...prev[sku], qty: next } };
+    });
+  };
+
+  const setQty = (sku: string, value: string) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return;
+    setLineEdits((prev) => ({
+      ...prev,
+      [sku]: { ...prev[sku], qty: Math.max(1, Math.round(n)) },
+    }));
+  };
+
   // ── Render ──────────────────────────────────────────────────────
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm">
-      <div className="relative bg-surface rounded-xl shadow-xl w-full max-w-xl mx-4 flex flex-col max-h-[90vh]">
+      {/* Width auto-adjusts: narrow on the upload step, wide on
+          preview so the SKU + variant label + qty stepper + amount
+          + skip-button row gets enough room for long agarbathi /
+          siridhanyalu names without truncation. */}
+      <div
+        className={`relative bg-surface rounded-xl shadow-xl w-full mx-4 flex flex-col max-h-[90vh] ${
+          step === "preview" ? "max-w-5xl" : "max-w-xl"
+        }`}
+      >
         {/* Header */}
         <div className="flex items-center gap-3 px-5 py-4 border-b border-border bg-canvas rounded-t-xl flex-shrink-0">
           <FileSpreadsheet size={20} className="text-primary" />
@@ -126,7 +221,7 @@ export const BulkOrderImportModal = ({ onClose, onCreated }: Props) => {
               {step === "upload"
                 ? "Upload a bulk-order .xlsx exported from Price Lists"
                 : step === "preview"
-                ? `Preview — ${preview?.accepted.length ?? 0} lines accepted`
+                ? `Preview — ${effectiveAccepted.length} of ${preview?.accepted.length ?? 0} lines selected`
                 : "Quote created successfully"}
             </div>
           </div>
@@ -232,23 +327,35 @@ export const BulkOrderImportModal = ({ onClose, onCreated }: Props) => {
         {/* Step 2: Preview */}
         {step === "preview" && preview && (
           <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
-            {/* Summary */}
+            {/* Summary — uses live edits, not the raw preview */}
             <div className="grid grid-cols-3 gap-3">
-              <Kpi label="Lines accepted" value={String(preview.accepted.length)} tone="success" />
-              <Kpi label="Lines rejected" value={String(preview.rejected.length)} tone={preview.rejected.length > 0 ? "danger" : "neutral"} />
-              <Kpi label="Order total" value={inr(preview.total)} tone="neutral" />
+              <Kpi
+                label={
+                  effectiveAccepted.length === preview.accepted.length
+                    ? "Lines accepted"
+                    : `Lines selected (of ${preview.accepted.length})`
+                }
+                value={String(effectiveAccepted.length)}
+                tone="success"
+              />
+              <Kpi
+                label="Lines rejected"
+                value={String(preview.rejected.length)}
+                tone={preview.rejected.length > 0 ? "danger" : "neutral"}
+              />
+              <Kpi label="Order total" value={inr(effectiveTotal)} tone="neutral" />
             </div>
 
-            {/* Stock warnings */}
-            {preview.accepted.some((l) => l.stockWarning) && (
+            {/* Stock warnings — only flag lines whose live qty still exceeds stock */}
+            {effectiveAccepted.some((l) => l.qty > l.stockOnHand) && (
               <div className="rounded-md bg-warning-soft border border-warning/30 px-3 py-2 text-body-sm text-ink-strong">
                 <div className="flex items-center gap-1 font-semibold mb-1">
                   <AlertTriangle size={14} className="text-warning" />
                   Stock warnings — some quantities exceed available stock
                 </div>
                 <ul className="list-disc list-inside text-caption space-y-0.5">
-                  {preview.accepted
-                    .filter((l) => l.stockWarning)
+                  {effectiveAccepted
+                    .filter((l) => l.qty > l.stockOnHand)
                     .map((l) => (
                       <li key={l.sku}>
                         <span className="font-mono">{l.sku}</span> — requested{" "}
@@ -279,44 +386,130 @@ export const BulkOrderImportModal = ({ onClose, onCreated }: Props) => {
               </div>
             )}
 
-            {/* Accepted lines table */}
+            {/* Accepted lines table — supports per-line skip + qty edit */}
             <div>
-              <div className="text-caption font-semibold text-ink-muted uppercase mb-1">
-                Accepted lines ({preview.accepted.length})
+              <div className="flex items-center justify-between mb-1">
+                <div className="text-caption font-semibold text-ink-muted uppercase">
+                  Accepted lines ({effectiveAccepted.length} of {preview.accepted.length})
+                </div>
+                {Object.keys(lineEdits).length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setLineEdits({})}
+                    className="text-caption text-primary hover:underline"
+                  >
+                    Reset edits
+                  </button>
+                )}
               </div>
               <div className="border border-border rounded-md overflow-hidden">
-                <div className="grid grid-cols-[1fr_1fr_auto_auto] px-3 py-1.5 bg-canvas border-b border-border text-caption font-semibold text-ink-muted">
-                  <span>SKU</span><span>Product</span><span className="text-right">Qty</span><span className="text-right pr-1">Amount</span>
+                <div className="grid grid-cols-[220px_1fr_140px_120px_100px_32px] gap-3 px-3 py-1.5 bg-canvas border-b border-border text-caption font-semibold text-ink-muted">
+                  <span>SKU</span>
+                  <span>Product · Variant</span>
+                  <span className="text-center">Qty</span>
+                  <span className="text-right">Rate</span>
+                  <span className="text-right">Amount</span>
+                  <span />
                 </div>
-                <div className="divide-y divide-border max-h-60 overflow-y-auto">
-                  {preview.accepted.map((l) => (
-                    <div
-                      key={l.sku}
-                      className={`grid grid-cols-[1fr_1fr_auto_auto] px-3 py-1.5 text-body-sm ${l.stockWarning ? "bg-warning-soft/30" : ""}`}
-                    >
-                      <span className="font-mono text-caption text-primary">{l.sku}</span>
-                      <span className="text-ink-muted text-caption truncate pr-2">{l.productName}</span>
-                      <span className="text-right tnum font-semibold">{l.qty}</span>
-                      <span className="text-right tnum pr-1">{inr(l.amount)}</span>
-                    </div>
-                  ))}
+                <div className="divide-y divide-border max-h-[26rem] overflow-y-auto">
+                  {preview.accepted.map((l) => {
+                    const skipped = !!lineEdits[l.sku]?.skipped;
+                    const qtyOverride = lineEdits[l.sku]?.qty;
+                    const qty = qtyOverride != null ? qtyOverride : l.qty;
+                    const amount = Math.round(qty * l.rate * 100) / 100;
+                    const edited = qtyOverride != null && qtyOverride !== l.qty;
+                    return (
+                      <div
+                        key={l.sku}
+                        className={`grid grid-cols-[220px_1fr_140px_120px_100px_32px] gap-3 items-center px-3 py-1.5 text-body-sm ${
+                          skipped
+                            ? "bg-canvas opacity-50 line-through"
+                            : l.stockWarning
+                            ? "bg-warning-soft/30"
+                            : ""
+                        }`}
+                      >
+                        <span className="font-mono text-caption text-primary truncate" title={l.sku}>
+                          {l.sku}
+                        </span>
+                        <span className="text-ink text-caption truncate pr-2" title={productLabel(l)}>
+                          <span className="text-ink-strong">{l.productName}</span>
+                          {(l.variantSize || l.variantUom) && (
+                            <span className="text-ink-muted">
+                              {" · "}
+                              {l.variantSize ?? ""}
+                              {l.variantSize && l.variantUom ? " " : ""}
+                              {l.variantUom && (!l.variantSize || !l.variantSize.toLowerCase().includes(l.variantUom.toLowerCase()))
+                                ? l.variantUom
+                                : ""}
+                            </span>
+                          )}
+                        </span>
+                        {/* Qty cell: − N + */}
+                        <span className="flex items-center gap-1 justify-center">
+                          <button
+                            type="button"
+                            onClick={() => bumpQty(l.sku, -1, l.qty)}
+                            disabled={skipped || qty <= 1}
+                            className="h-6 w-6 grid place-items-center rounded border border-border bg-surface text-ink-muted hover:bg-canvas disabled:opacity-40 disabled:cursor-not-allowed"
+                            title="Decrease qty"
+                          >
+                            <Minus size={11} />
+                          </button>
+                          <input
+                            type="number"
+                            value={qty}
+                            min={1}
+                            disabled={skipped}
+                            onChange={(e) => setQty(l.sku, e.target.value)}
+                            className={`h-6 w-14 px-1.5 text-center tnum text-caption rounded border bg-surface focus:outline-none focus:ring-1 focus:ring-primary/40 ${
+                              edited ? "border-primary text-primary font-semibold" : "border-border"
+                            } disabled:opacity-50`}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => bumpQty(l.sku, +1, l.qty)}
+                            disabled={skipped}
+                            className="h-6 w-6 grid place-items-center rounded border border-border bg-surface text-ink-muted hover:bg-canvas disabled:opacity-40 disabled:cursor-not-allowed"
+                            title="Increase qty"
+                          >
+                            <Plus size={11} />
+                          </button>
+                        </span>
+                        <span className="text-right tnum text-caption text-ink-muted">{inr(l.rate)}</span>
+                        <span className="text-right tnum text-caption font-semibold">{inr(amount)}</span>
+                        <button
+                          type="button"
+                          onClick={() => toggleSkip(l.sku)}
+                          className={`h-6 w-6 grid place-items-center rounded ${
+                            skipped
+                              ? "text-success hover:bg-success-soft"
+                              : "text-ink-muted hover:bg-danger-soft hover:text-danger"
+                          }`}
+                          title={skipped ? "Re-include this line" : "Skip this line"}
+                        >
+                          {skipped ? <Plus size={13} /> : <X size={13} />}
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             </div>
 
-            {/* Totals */}
+            {/* Totals — recomputed from live edits */}
             <div className="border border-border rounded-md divide-y divide-border text-body-sm">
               <div className="flex justify-between px-3 py-1.5">
                 <span className="text-ink-muted">Subtotal</span>
-                <span className="tnum">{inr(preview.subTotal)}</span>
+                <span className="tnum">{inr(effectiveSubTotal)}</span>
               </div>
               <div className="flex justify-between px-3 py-1.5">
-                <span className="text-ink-muted">GST 18%</span>
-                <span className="tnum">{inr(preview.tax)}</span>
+                <span className="text-ink-muted">GST {Math.round(taxRate * 100)}%</span>
+                <span className="tnum">{inr(effectiveTax)}</span>
               </div>
               <div className="flex justify-between px-3 py-1.5 font-bold">
                 <span>Total</span>
-                <span className="tnum">{inr(preview.total)}</span>
+                <span className="tnum">{inr(effectiveTotal)}</span>
               </div>
             </div>
 
@@ -363,9 +556,9 @@ export const BulkOrderImportModal = ({ onClose, onCreated }: Props) => {
               size="sm"
               icon={<CheckCircle2 size={14} />}
               onClick={confirmImport}
-              disabled={busy || (preview?.accepted.length ?? 0) === 0}
+              disabled={busy || effectiveAccepted.length === 0}
             >
-              {busy ? "Creating…" : "Create Quote"}
+              {busy ? "Creating…" : `Create Quote (${effectiveAccepted.length})`}
             </Button>
           )}
         </div>

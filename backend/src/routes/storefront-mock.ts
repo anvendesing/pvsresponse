@@ -376,6 +376,7 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
           await tx.stockLedger.create({
             data: {
               productId: l.productId,
+              variantId: l.variantId ?? null,
               warehouseId: wh.id,
               txnType: "Sale",
               qty: -l.qty,

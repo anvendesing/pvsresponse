@@ -302,6 +302,63 @@ export const reportsRoutes = async (app: FastifyInstance) => {
     return out;
   });
 
+  // Workers who punched in on a given calendar day (for heatmap drill-down).
+  app.get("/reports/attendance-day", async (req, reply) => {
+    const dateStr = (req.query as { date?: string }).date;
+    if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+      return reply.code(400).send({
+        error: { code: "bad_request", message: "Query param date=YYYY-MM-DD is required." },
+      });
+    }
+    const start = new Date(`${dateStr}T00:00:00`);
+    const end = new Date(start.getTime() + 86400000);
+    const rows = await db.attendance.findMany({
+      where: { inAt: { gte: start, lt: end } },
+      include: {
+        worker: {
+          select: { id: true, empNo: true, name: true, shift: true, station: true },
+        },
+      },
+      orderBy: { inAt: "asc" },
+    });
+    const byWorker = new Map<
+      string,
+      {
+        workerId: string;
+        empNo: string;
+        name: string;
+        shift: string;
+        station: string;
+        inAt: string | null;
+        outAt: string | null;
+      }
+    >();
+    for (const row of rows) {
+      const existing = byWorker.get(row.workerId);
+      const inAt = row.inAt?.toISOString() ?? null;
+      const outAt = row.outAt?.toISOString() ?? null;
+      if (!existing) {
+        byWorker.set(row.workerId, {
+          workerId: row.workerId,
+          empNo: row.worker.empNo,
+          name: row.worker.name,
+          shift: row.worker.shift,
+          station: row.worker.station,
+          inAt,
+          outAt,
+        });
+        continue;
+      }
+      if (inAt && (!existing.inAt || inAt < existing.inAt)) existing.inAt = inAt;
+      if (outAt && (!existing.outAt || outAt > existing.outAt)) existing.outAt = outAt;
+    }
+    return {
+      date: dateStr,
+      presentCount: byWorker.size,
+      workers: [...byWorker.values()].sort((a, b) => a.empNo.localeCompare(b.empNo)),
+    };
+  });
+
   // GET /reports/transfer-throughput
   // Returns daily TransferOrder completion counts (done) over the last 30 days,
   // broken down by kind (putaway / replenishment / manual).

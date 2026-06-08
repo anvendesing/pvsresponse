@@ -369,6 +369,32 @@ const logOutput = z.object({
   goodQty: z.number().nonnegative().default(0),
   scrapQty: z.number().nonnegative().default(0),
   reworkQty: z.number().nonnegative().default(0),
+  // Optional per-batch byproduct yields. Each entry refers to a row
+  // on the MO's BOM byproduct list and posts the qty to inventory
+  // immediately (StockLedger + Bin). Once any byproduct is logged
+  // manually here, the auto-yield path on /complete is skipped so we
+  // never double-post.
+  byproducts: z
+    .array(
+      z.object({
+        bomByproductId: z.string().min(1),
+        qty: z.number().nonnegative(),
+      })
+    )
+    .default([]),
+});
+
+// Correction endpoint: SET the running totals to absolute values
+// (instead of adding to them like log-output does). Used when an
+// operator wrong-logged a batch (e.g. clicked "Log output" twice
+// and recorded 90 instead of the real 40). Optional `reason` is
+// stored as a freeform note in the change log so the audit trail
+// captures the why.
+const adjustOutput = z.object({
+  actualQty: z.number().nonnegative(),
+  scrapQty: z.number().nonnegative(),
+  reworkQty: z.number().nonnegative(),
+  reason: z.string().max(240).optional(),
 });
 
 const completeMo = z.object({
@@ -1477,7 +1503,14 @@ export const mfgRoutes = async (app: FastifyInstance) => {
           bom: {
             include: {
               product: { select: { id: true, sku: true, name: true, uom: true } },
-              byproducts: { select: { productId: true } },
+              // Pull the variant when the BOM is variant-scoped (e.g.
+              // a packaging BOM that turns bulk CAOL into 250ml CAOL
+              // bottles). Used to label the finished-goods card with
+              // the actual variant SKU and uom rather than the parent.
+              variant: {
+                select: { id: true, sku: true, size: true, uom: true, packSize: true },
+              },
+              byproducts: { select: { productId: true, variantId: true } },
               defaultWorkCenter: {
                 include: {
                   productionLineWarehouse: {
@@ -1493,14 +1526,24 @@ export const mfgRoutes = async (app: FastifyInstance) => {
 
       const plWh = po.bom.defaultWorkCenter?.productionLineWarehouse ?? null;
       const fgProductId = po.bom.productId;
-      const byproductProductIds = new Set(
-        po.bom.byproducts.map((b) => b.productId)
+      const fgVariantId = po.bom.variantId;
+      // For the byproduct check, key on (productId|variantId) because
+      // a single product can serve as a byproduct of multiple BOMs at
+      // different variant levels.
+      const byproductKeys = new Set(
+        po.bom.byproducts.map((b) => `${b.productId}|${b.variantId ?? ""}`)
       );
 
       const ledger = await db.stockLedger.findMany({
         where: { ref: po.orderNo },
         include: {
-          product: { select: { id: true, sku: true, name: true } },
+          product: { select: { id: true, sku: true, name: true, uom: true } },
+          // Variant link is the whole point of this fix — pulling
+          // sku/size/uom lets the trail UI show "CAOL-AMU-250ML-05"
+          // for a variant-scoped MO instead of the bare parent SKU.
+          variant: {
+            select: { id: true, sku: true, size: true, uom: true, packSize: true },
+          },
           warehouse: { select: { code: true, name: true, kind: true } },
         },
         orderBy: { date: "asc" },
@@ -1515,6 +1558,14 @@ export const mfgRoutes = async (app: FastifyInstance) => {
         productId: string;
         sku: string;
         name: string;
+        // Variant tag when the row applies to a sellable variant
+        // (e.g. packaging BOM output, variant byproduct). Null for
+        // parent / bulk rows.
+        variantId: string | null;
+        variantSku: string | null;
+        variantSize: string | null;
+        variantUom: string | null;
+        variantPackSize: number | null;
         warehouseCode: string;
         warehouseName: string;
         warehouseKind: string;
@@ -1523,8 +1574,14 @@ export const mfgRoutes = async (app: FastifyInstance) => {
         txnTypes: Set<string>;
         lastDate: Date;
       };
-      const aggKey = (productId: string, warehouseId: string, binPath: string) =>
-        `${productId}|${warehouseId}|${binPath}`;
+      // Key now includes variantId so a parent-bulk consume and a
+      // variant-tagged consume of the same product don't collide.
+      const aggKey = (
+        productId: string,
+        variantId: string | null,
+        warehouseId: string,
+        binPath: string
+      ) => `${productId}|${variantId ?? ""}|${warehouseId}|${binPath}`;
 
       const materialsMap = new Map<string, AggRow>();
       const finishedMap = new Map<string, AggRow>();
@@ -1532,14 +1589,23 @@ export const mfgRoutes = async (app: FastifyInstance) => {
 
       for (const row of ledger) {
         const binPath = row.bin?.trim() || "—";
-        const key = aggKey(row.productId, row.warehouseId, binPath);
+        const key = aggKey(row.productId, row.variantId, row.warehouseId, binPath);
+        const bpKey = `${row.productId}|${row.variantId ?? ""}`;
         const isBp =
-          byproductProductIds.has(row.productId) &&
+          byproductKeys.has(bpKey) &&
           !isConsumption(row.txnType, row.qty) &&
           row.qty > 0;
+        // Finished-goods test: same parent product AND, when the BOM
+        // is variant-scoped, same variant. Without the variant guard
+        // a variant-scoped MO that happens to use the parent in some
+        // intermediate row would drag that row into the FG card.
+        const isFg =
+          row.productId === fgProductId &&
+          (fgVariantId ? row.variantId === fgVariantId : true) &&
+          !isConsumption(row.txnType, row.qty);
         const target = isBp
           ? byproductsMap
-          : row.productId === fgProductId && !isConsumption(row.txnType, row.qty)
+          : isFg
             ? finishedMap
             : isConsumption(row.txnType, row.qty)
               ? materialsMap
@@ -1558,6 +1624,11 @@ export const mfgRoutes = async (app: FastifyInstance) => {
             productId: row.productId,
             sku: row.product.sku,
             name: row.product.name,
+            variantId: row.variantId ?? null,
+            variantSku: row.variant?.sku ?? null,
+            variantSize: row.variant?.size ?? null,
+            variantUom: row.variant?.uom ?? null,
+            variantPackSize: row.variant?.packSize ?? null,
             warehouseCode: row.warehouse.code,
             warehouseName: row.warehouse.name,
             warehouseKind: row.warehouse.kind,
@@ -1575,6 +1646,11 @@ export const mfgRoutes = async (app: FastifyInstance) => {
             productId: r.productId,
             sku: r.sku,
             name: r.name,
+            variantId: r.variantId,
+            variantSku: r.variantSku,
+            variantSize: r.variantSize,
+            variantUom: r.variantUom,
+            variantPackSize: r.variantPackSize,
             warehouseCode: r.warehouseCode,
             warehouseName: r.warehouseName,
             warehouseKind: r.warehouseKind,
@@ -1583,7 +1659,11 @@ export const mfgRoutes = async (app: FastifyInstance) => {
             txnTypes: [...r.txnTypes],
             lastDate: r.lastDate.toISOString(),
           }))
-          .sort((a, b) => a.sku.localeCompare(b.sku) || a.binPath.localeCompare(b.binPath));
+          .sort(
+            (a, b) =>
+              (a.variantSku ?? a.sku).localeCompare(b.variantSku ?? b.sku) ||
+              a.binPath.localeCompare(b.binPath)
+          );
 
       const transfers = await db.transferOrder.findMany({
         where: { productionOrderId: id },
@@ -1612,7 +1692,16 @@ export const mfgRoutes = async (app: FastifyInstance) => {
           productId: po.bom.product.id,
           sku: po.bom.product.sku,
           name: po.bom.product.name,
-          uom: po.bom.product.uom,
+          // For variant-scoped BOMs the FG ledger qty is in variant
+          // units (pieces), not the parent's bulk uom — return both
+          // so the UI can label "+N {variantUom}" correctly.
+          uom: po.bom.variant?.uom ?? po.bom.product.uom,
+          parentUom: po.bom.product.uom,
+          variantId: po.bom.variant?.id ?? null,
+          variantSku: po.bom.variant?.sku ?? null,
+          variantSize: po.bom.variant?.size ?? null,
+          variantUom: po.bom.variant?.uom ?? null,
+          variantPackSize: po.bom.variant?.packSize ?? null,
         },
         productionLineWarehouse: plWh
           ? { code: plWh.code, name: plWh.name, kind: plWh.kind }
@@ -2021,6 +2110,9 @@ export const mfgRoutes = async (app: FastifyInstance) => {
           await db.stockLedger.create({
             data: {
               productId: leaf.productId,
+              // BomItem currently only tracks the parent product, not a
+              // specific variant, so leave variantId null on issue rows.
+              variantId: null,
               warehouseId: bin.warehouseId,
               bin: `${bin.zone}/${bin.shelf}/${bin.bin}`,
               txnType: "Issue",
@@ -2096,6 +2188,12 @@ export const mfgRoutes = async (app: FastifyInstance) => {
   // POST /production-orders/:id/log-output
   // Adds to the running totals on the MO and on the first running
   // WorkOrder (so the WO progress bar moves too).
+  //
+  // When `byproducts` is non-empty, each entry posts immediately to
+  // inventory (StockLedger + Bin update), mirroring the byproduct
+  // logic on /complete. Manual logging here turns OFF the auto-yield
+  // path on /complete so we never double-post the same released
+  // component.
   app.post(
     "/production-orders/:id/log-output",
     { preHandler: [app.authenticate] },
@@ -2103,11 +2201,46 @@ export const mfgRoutes = async (app: FastifyInstance) => {
       if (!requireWriter(req, reply)) return;
       const id = (req.params as { id: string }).id;
       const body = logOutput.parse(req.body);
-      const po = await db.productionOrder.findUnique({ where: { id } });
+      const po = await db.productionOrder.findUnique({
+        where: { id },
+        include: {
+          bom: {
+            include: {
+              byproducts: {
+                include: {
+                  product: {
+                    select: { id: true, sku: true, name: true, uom: true },
+                  },
+                },
+              },
+              defaultWorkCenter: {
+                include: {
+                  productionLineWarehouse: { select: { id: true } },
+                },
+              },
+            },
+          },
+        },
+      });
       if (!po) return reply.code(404).send({ error: { code: "not_found" } });
       if (po.status === "completed") {
         return reply.code(409).send({ error: { code: "already_completed" } });
       }
+
+      // Validate every byproduct line maps to a row on this MO's BOM.
+      const bpById = new Map(po.bom.byproducts.map((b) => [b.id, b]));
+      const bpEntries = body.byproducts.filter((b) => b.qty > 0);
+      for (const entry of bpEntries) {
+        if (!bpById.has(entry.bomByproductId)) {
+          return reply.code(400).send({
+            error: {
+              code: "byproduct_not_on_bom",
+              message: `Byproduct ${entry.bomByproductId} is not on this MO's BOM.`,
+            },
+          });
+        }
+      }
+
       const newActual = po.actualQty + body.goodQty;
       const newScrap = po.scrapQty + body.scrapQty;
       const newRework = po.reworkQty + body.reworkQty;
@@ -2124,6 +2257,116 @@ export const mfgRoutes = async (app: FastifyInstance) => {
               : 0,
         },
       });
+
+      // Post each byproduct to inventory, picking a destination bin
+      // exactly like /complete does (putaway rule -> production-line
+      // warehouse -> any usable bin).
+      const productionLineWhId =
+        po.bom.defaultWorkCenter?.productionLineWarehouse?.id ?? null;
+      const landingWhId = productionLineWhId ?? null;
+
+      const byproductPostings: Array<{
+        bomByproductId: string;
+        productId: string;
+        variantId: string | null;
+        sku: string;
+        name: string;
+        qty: number;
+        uom: string;
+        bin: string;
+      }> = [];
+
+      for (const entry of bpEntries) {
+        const bp = bpById.get(entry.bomByproductId)!;
+        let stockQty = entry.qty;
+        try {
+          stockQty = convertUom(entry.qty, bp.uom, bp.product.uom, UOMS);
+        } catch {
+          stockQty = entry.qty;
+        }
+        const recvQty = Math.round(stockQty);
+        if (recvQty <= 0) continue;
+
+        const bpDest = await resolvePutawayDestination(
+          bp.productId,
+          bp.variantId,
+          landingWhId
+        );
+        let bpBin = bpDest?.binId
+          ? await db.bin.findUnique({ where: { id: bpDest.binId } })
+          : null;
+        if (!bpBin && bpDest?.warehouseId) {
+          bpBin = await pickBestBin(bpDest.warehouseId, bp.productId, {
+            allowEmptyBinFallback: !bpDest.fixedBin,
+          });
+        }
+        if (!bpBin) {
+          bpBin = await pickBinForReceive(
+            bpDest?.warehouseId ?? landingWhId,
+            bp.productId
+          );
+        }
+        if (!bpBin) {
+          return reply.code(409).send({
+            error: {
+              code: "no_byproduct_bin",
+              message: `No bin available to receive byproduct ${bp.product.sku}. Configure putaway or add bin capacity.`,
+            },
+          });
+        }
+
+        // Byproduct bin gets tagged with variantId when the byproduct
+        // is variant-scoped (e.g. lye recovered into a "Recycled NaOH
+        // 1kg" variant). Without this, the variant bin is invisible
+        // to the variant-aware AdjustStockModal and ATP logic.
+        await db.bin.update({
+          where: { id: bpBin.id },
+          data: {
+            qty: { increment: recvQty },
+            productId: bpBin.productId ?? bp.productId,
+            variantId: bpBin.variantId ?? bp.variantId ?? null,
+          },
+        });
+        await db.stockLedger.create({
+          data: {
+            productId: bp.productId,
+            variantId: bp.variantId,
+            warehouseId: bpBin.warehouseId,
+            bin: `${bpBin.zone}/${bpBin.shelf}/${bpBin.bin}`,
+            txnType: "Production",
+            ref: po.orderNo,
+            qty: recvQty,
+            balance: bpBin.qty + recvQty,
+            date: new Date(),
+          },
+        });
+        // Counter routing: variant-scoped byproducts credit the variant
+        // counter only; parent-scoped byproducts credit the parent.
+        // Crediting BOTH (the previous behaviour) double-counted the
+        // qty because the bin only physically received it once.
+        if (bp.variantId) {
+          await db.productVariant.update({
+            where: { id: bp.variantId },
+            data: { stockOnHand: { increment: recvQty } },
+          });
+        } else {
+          await db.product.update({
+            where: { id: bp.productId },
+            data: { stockOnHand: { increment: recvQty } },
+          });
+        }
+        byproductPostings.push({
+          bomByproductId: bp.id,
+          productId: bp.productId,
+          variantId: bp.variantId,
+          sku: bp.product.sku,
+          name: bp.product.name,
+          qty: recvQty,
+          uom: bp.product.uom,
+          bin: `${bpBin.zone}/${bpBin.shelf}/${bpBin.bin}`,
+        });
+      }
+
       // Best-effort: the first non-complete WO advances. Anything more
       // sophisticated is handled when the operator marks WOs directly.
       const wo = await db.workOrder.findFirst({
@@ -2141,6 +2384,93 @@ export const mfgRoutes = async (app: FastifyInstance) => {
         });
       }
       await recordChange("ProductionOrder", id, "update", updated, req.user.sub);
+      return { ...updated, byproductPostings };
+    }
+  );
+
+  // POST /production-orders/:id/adjust-output
+  // Correction endpoint for wrong-logged production. Unlike log-output
+  // (which ADDS deltas), this OVERWRITES actualQty / scrapQty /
+  // reworkQty with the absolute values supplied by the operator.
+  // Used when a batch was double-logged or mis-typed.
+  //
+  // Refuses on completed MOs (FG was already posted to inventory; use
+  // a stock adjustment instead). Mirrors the WO output rebase from
+  // log-output so the WO progress bar tracks the new actual.
+  app.post(
+    "/production-orders/:id/adjust-output",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      if (!requireWriter(req, reply)) return;
+      const id = (req.params as { id: string }).id;
+      const body = adjustOutput.parse(req.body);
+      const po = await db.productionOrder.findUnique({ where: { id } });
+      if (!po) return reply.code(404).send({ error: { code: "not_found" } });
+      if (po.status === "completed") {
+        return reply.code(409).send({
+          error: {
+            code: "already_completed",
+            message:
+              "Cannot adjust totals after completion - finished goods are already in inventory.",
+          },
+        });
+      }
+      // If nothing actually changed, no-op (avoid noisy audit rows).
+      const samePoTotals =
+        po.actualQty === body.actualQty &&
+        po.scrapQty === body.scrapQty &&
+        po.reworkQty === body.reworkQty;
+      if (samePoTotals) return po;
+
+      const nextStatus =
+        body.actualQty > 0 && po.status === "planned" ? "in-progress" : po.status;
+
+      const updated = await db.productionOrder.update({
+        where: { id },
+        data: {
+          actualQty: body.actualQty,
+          scrapQty: body.scrapQty,
+          reworkQty: body.reworkQty,
+          status: nextStatus,
+          efficiency:
+            po.plannedQty > 0
+              ? Math.round((body.actualQty / po.plannedQty) * 1000) / 10
+              : 0,
+        },
+      });
+
+      // Rebase the first non-complete WO output to the new actual.
+      // We only have one WO per MO in the current data model, so this
+      // matches the operator's mental model "fix the totals" without
+      // distributing the delta.
+      const wo = await db.workOrder.findFirst({
+        where: { productionOrderId: id, status: { not: "complete" } },
+        orderBy: { workOrderNo: "asc" },
+      });
+      if (wo) {
+        await db.workOrder.update({
+          where: { id: wo.id },
+          data: { output: body.actualQty },
+        });
+      }
+
+      await recordChange(
+        "ProductionOrder",
+        id,
+        "update",
+        {
+          ...updated,
+          _correction: {
+            reason: body.reason ?? null,
+            previous: {
+              actualQty: po.actualQty,
+              scrapQty: po.scrapQty,
+              reworkQty: po.reworkQty,
+            },
+          },
+        },
+        req.user.sub
+      );
       return updated;
     }
   );
@@ -2251,16 +2581,29 @@ export const mfgRoutes = async (app: FastifyInstance) => {
       }
 
       let putaway: { binId: string; bin: string; qty: number } | null = null;
+      // Tag the receive bin with productId AND variantId for
+      // variant-scoped BOMs. Without this, an MO that produces a
+      // variant (e.g. CAOL-AMU-250ML-05) lands its output in a bin
+      // tagged only with the parent SKU, and the AdjustStockModal /
+      // splitAcrossBins / ATP all conflate it with bulk parent stock.
+      // Existing tags are kept to avoid retroactively re-labeling a
+      // bin that already holds something else at the parent level.
       await db.bin.update({
         where: { id: receiveBin.id },
         data: {
           qty: { increment: finalQty },
           productId: receiveBin.productId ?? po.bom.productId,
+          variantId: receiveBin.variantId ?? po.bom.variantId ?? null,
         },
       });
       await db.stockLedger.create({
         data: {
           productId: po.bom.productId,
+          // Variant-scoped BOMs (e.g. "produce 250ml CAOL variant from
+          // bulk CAOL parent") tag the production row with the actual
+          // variant so the ledger UI can show the finished SKU and not
+          // just the parent SKU shared with the bulk consumed material.
+          variantId: po.bom.variantId,
           warehouseId: receiveBin.warehouseId,
           bin: `${receiveBin.zone}/${receiveBin.shelf}/${receiveBin.bin}`,
           txnType: "Production",
@@ -2303,7 +2646,26 @@ export const mfgRoutes = async (app: FastifyInstance) => {
         binId: string;
       }> = [];
 
-      for (const bp of po.bom.byproducts) {
+      // If the operator has been logging byproducts manually via
+      // /log-output, those rows are already in the StockLedger
+      // (txnType="Production", ref=orderNo, productId in BOM
+      // byproducts). In that case we skip the auto-yield path so we
+      // never double-post the same released component.
+      const bpProductIds = po.bom.byproducts.map((b) => b.productId);
+      const manualByproductCount =
+        bpProductIds.length === 0
+          ? 0
+          : await db.stockLedger.count({
+              where: {
+                ref: po.orderNo,
+                productId: { in: bpProductIds },
+                txnType: "Production",
+                qty: { gt: 0 },
+              },
+            });
+      const skipAutoByproducts = manualByproductCount > 0;
+
+      for (const bp of skipAutoByproducts ? [] : po.bom.byproducts) {
         const batchQty = (bp.qty / po.bom.outputQty) * finalQty;
         if (batchQty <= 0) continue;
         let stockQty = batchQty;
@@ -2348,11 +2710,17 @@ export const mfgRoutes = async (app: FastifyInstance) => {
           data: {
             qty: { increment: recvQty },
             productId: bpBin.productId ?? bp.productId,
+            // Tag bin with variantId when the byproduct is variant-scoped.
+            // See identical comment above on the main byproduct posting.
+            variantId: bpBin.variantId ?? bp.variantId ?? null,
           },
         });
         await db.stockLedger.create({
           data: {
             productId: bp.productId,
+            // By-product can also be variant-scoped (e.g. lye recovered
+            // into a "Recycled NaOH 1kg" variant).
+            variantId: bp.variantId,
             warehouseId: bpBin.warehouseId,
             bin: `${bpBin.zone}/${bpBin.shelf}/${bpBin.bin}`,
             txnType: "Production",
@@ -2362,13 +2730,16 @@ export const mfgRoutes = async (app: FastifyInstance) => {
             date: new Date(),
           },
         });
-        await db.product.update({
-          where: { id: bp.productId },
-          data: { stockOnHand: { increment: recvQty } },
-        });
+        // Variant-scoped byproducts credit the variant counter only;
+        // parent-scoped credit the parent. Don't double-count.
         if (bp.variantId) {
           await db.productVariant.update({
             where: { id: bp.variantId },
+            data: { stockOnHand: { increment: recvQty } },
+          });
+        } else {
+          await db.product.update({
+            where: { id: bp.productId },
             data: { stockOnHand: { increment: recvQty } },
           });
         }

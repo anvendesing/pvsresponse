@@ -659,6 +659,14 @@ export const bulkOrderRoutes = async (app: FastifyInstance) => {
         variantId: string | null;
         sku: string;
         productName: string;
+        // Variant attributes mirrored on each accepted row so the
+        // import preview UI can label lines with the actual variant
+        // (e.g. "Agarbathi · Jasmine 90 sticks") instead of just the
+        // bare parent product name shared across many variants.
+        variantSku: string | null;
+        variantSize: string | null;
+        variantUom: string | null;
+        variantPackSize: number | null;
         qty: number;
         rate: number;
         amount: number;
@@ -723,18 +731,38 @@ export const bulkOrderRoutes = async (app: FastifyInstance) => {
           continue;
         }
 
-        // Stock / ATP soft check
+        // Stock / ATP soft check + variant metadata for the preview
+        // label. One findUnique per variant covers both — saves a
+        // round-trip vs the previous active+gstRate split.
         let stockOnHand = 0;
+        let variantSku: string | null = null;
+        let variantSize: string | null = null;
+        let variantUom: string | null = null;
+        let variantPackSize: number | null = null;
+        let variantGstRate: number | null = null;
         if (ids.variantId) {
           const v = await db.productVariant.findUnique({
             where: { id: ids.variantId },
-            select: { stockOnHand: true, active: true },
+            select: {
+              stockOnHand: true,
+              active: true,
+              sku: true,
+              size: true,
+              uom: true,
+              packSize: true,
+              gstRate: true,
+            },
           });
           if (!v || !v.active) {
             rejected.push({ sku, row: rowNum, qty, reason: "SKU is inactive" });
             continue;
           }
           stockOnHand = v.stockOnHand;
+          variantSku = v.sku;
+          variantSize = v.size;
+          variantUom = v.uom;
+          variantPackSize = v.packSize;
+          variantGstRate = v.gstRate;
         } else {
           const p = await db.product.findUnique({
             where: { id: ids.productId },
@@ -751,14 +779,6 @@ export const bulkOrderRoutes = async (app: FastifyInstance) => {
           where: { id: ids.productId },
           select: { name: true, gstRate: true },
         });
-        const variantGstRate = ids.variantId
-          ? (
-              await db.productVariant.findUnique({
-                where: { id: ids.variantId },
-                select: { gstRate: true },
-              })
-            )?.gstRate ?? null
-          : null;
         const lineGstRate = variantGstRate ?? product?.gstRate ?? 18;
 
         accepted.push({
@@ -766,6 +786,10 @@ export const bulkOrderRoutes = async (app: FastifyInstance) => {
           variantId: ids.variantId,
           sku,
           productName: product?.name ?? sku,
+          variantSku,
+          variantSize,
+          variantUom,
+          variantPackSize,
           qty,
           rate,
           amount: Math.round(qty * rate * 100) / 100,

@@ -272,6 +272,14 @@ export const PublicQuote = () => {
             </table>
           </div>
 
+          {/* Dispatch */}
+          {data.dispatchOption && (
+            <div className="pb-4 text-sm text-gray-700">
+              <span className="text-gray-500">Dispatch mode: </span>
+              <span className="font-medium">{data.dispatchOption.name}</span>
+            </div>
+          )}
+
           {/* Totals */}
           <div className="flex justify-end pb-6 border-b border-gray-200">
             <div className="w-72 space-y-1.5 text-sm">
@@ -280,9 +288,21 @@ export const PublicQuote = () => {
                 <span className="tabular-nums">{inr(totals!.lineTotal)}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-gray-600">Tax</span>
+                <span className="text-gray-600">Tax (goods)</span>
                 <span className="tabular-nums">{inr(totals!.tax)}</span>
               </div>
+              {(data.transportCharge ?? 0) > 0 && (
+                <>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Transport</span>
+                    <span className="tabular-nums">{inr(data.transportCharge ?? 0)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Tax (freight)</span>
+                    <span className="tabular-nums">{inr(data.transportTax ?? 0)}</span>
+                  </div>
+                </>
+              )}
               <div className="flex justify-between text-lg pt-2 border-t border-gray-200 mt-1">
                 <span className="font-bold">Total</span>
                 <span className="font-bold tabular-nums">{inr(totals!.grand)}</span>

@@ -3,7 +3,7 @@
 // are linked quotes / sales orders / invoices.
 
 import { useMemo, useState } from "react";
-import { BookOpen, DollarSign, Filter, Pencil, Plus, Search, Trash2, X } from "lucide-react";
+import { AlertTriangle, BookOpen, DollarSign, Filter, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Chip } from "@/components/common/Chip";
 import { DataTable, type Column } from "@/components/common/DataTable";
@@ -666,6 +666,50 @@ const CustomerStatementPanel = ({
     [customer.id]
   );
   const stmt: CustomerStatement | null = stmtApi.data ?? null;
+  const [closingId, setClosingId] = useState<string | null>(null);
+  const [backOrderingId, setBackOrderingId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionInfo, setActionInfo] = useState<string | null>(null);
+
+  // Closing a partially-fulfilled SO accepts the warehouse shortfall:
+  // the backend bumps qtyCancelled on every line, drops the SO's
+  // soCommitment to 0, and the customer's open balance shrinks to
+  // match the actual issued invoice (not the original SO total).
+  const closePartialSo = async (soId: string) => {
+    setClosingId(soId);
+    setActionError(null);
+    setActionInfo(null);
+    try {
+      await api.closeSalesOrder(soId);
+      setActionInfo("SO closed. Open balance now matches the issued invoice.");
+      await stmtApi.refetch?.();
+    } catch (e) {
+      setActionError((e as Error).message);
+    } finally {
+      setClosingId(null);
+    }
+  };
+
+  // Back-order: spin off the un-invoiced remainder into a fresh SO
+  // (status='confirmed', new pick/pack/invoice flow) and close the
+  // parent. Useful when the customer still wants the missing units
+  // and the warehouse will fulfil them in a later batch.
+  const backOrderPartialSo = async (soId: string) => {
+    setBackOrderingId(soId);
+    setActionError(null);
+    setActionInfo(null);
+    try {
+      const r = await api.backOrderSalesOrder(soId);
+      setActionInfo(
+        `Back-order ${r.backOrder.soNo} created (${inr(r.backOrder.total)}). Parent ${r.parent.soNo} closed.`
+      );
+      await stmtApi.refetch?.();
+    } catch (e) {
+      setActionError((e as Error).message);
+    } finally {
+      setBackOrderingId(null);
+    }
+  };
 
   return (
     <div
@@ -729,6 +773,95 @@ const CustomerStatementPanel = ({
             ))}
           </div>
         )}
+
+        {/* Open-balance breakdown banner. The KPI strip's Open Balance
+            includes any un-invoiced commitment from partially-fulfilled
+            SOs (warehouse shortfalls / back-orders), which is why it
+            can be higher than the AR ledger's running balance. The
+            banner exposes the breakdown plus two one-tap actions per
+            SO: create a back-order SO (keep the commitment alive on a
+            fresh order) or close (accept the shortfall and write off
+            the remainder). */}
+        {stmt &&
+          stmt.partiallyInvoicedSOs &&
+          stmt.partiallyInvoicedSOs.length > 0 &&
+          (stmt.breakdown?.openSOCommitment ?? 0) > 0 && (
+            <div className="border-b border-warning/30 bg-warning-soft px-5 py-3 shrink-0">
+              <div className="flex items-start gap-2">
+                <AlertTriangle size={16} className="text-warning shrink-0 mt-0.5" />
+                <div className="flex-1 text-body-sm">
+                  <div className="font-semibold text-ink">
+                    Open balance includes {inr(stmt.breakdown!.openSOCommitment)}{" "}
+                    of un-invoiced commitment
+                  </div>
+                  <div className="text-caption text-ink-muted mt-0.5">
+                    Invoice remainder {inr(stmt.breakdown!.invoiceRemainder)}
+                    {stmt.breakdown!.unallocatedAdvance > 0 &&
+                      ` · advance on file ${inr(stmt.breakdown!.unallocatedAdvance)}`}
+                    . The SO{stmt.partiallyInvoicedSOs.length === 1 ? "" : "s"} below {stmt.partiallyInvoicedSOs.length === 1 ? "is" : "are"} keeping the
+                    remainder on the customer's books. Either spin off
+                    a back-order to fulfil it later, or close to accept
+                    the shortfall.
+                  </div>
+                  <div className="mt-2 space-y-2">
+                    {stmt.partiallyInvoicedSOs.map((s) => {
+                      const busy = closingId === s.id || backOrderingId === s.id;
+                      return (
+                        <div
+                          key={s.id}
+                          className="flex items-center gap-2 text-body-sm flex-wrap"
+                        >
+                          <span className="font-mono font-semibold text-primary">
+                            {s.soNo}
+                          </span>
+                          <span className="text-ink-muted">
+                            {Math.round(s.invoicedFraction * 100)}% invoiced ·
+                            ~{inr(s.remainingCommitment)} remaining
+                            {s.remainingQty > 0
+                              ? ` (${s.remainingQty} unit${s.remainingQty === 1 ? "" : "s"})`
+                              : ""}
+                          </span>
+                          <div className="flex-1" />
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={busy}
+                            onClick={() => backOrderPartialSo(s.id)}
+                            title="Spin the un-invoiced remainder off into a brand-new SO and close this one. Use when the customer still wants the missing units."
+                          >
+                            {backOrderingId === s.id
+                              ? "Creating…"
+                              : "Create back-order SO"}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={busy}
+                            onClick={() => closePartialSo(s.id)}
+                            title="Cancel the un-invoiced remainder and close this SO. Open balance drops to the issued invoice total."
+                          >
+                            {closingId === s.id
+                              ? "Closing…"
+                              : "Close (accept shortfall)"}
+                          </Button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  {actionInfo && (
+                    <div className="mt-2 text-caption text-success">
+                      {actionInfo}
+                    </div>
+                  )}
+                  {actionError && (
+                    <div className="mt-2 text-caption text-danger">
+                      {actionError}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
 
         {/* Ledger table */}
         <div className="flex-1 overflow-y-auto">

@@ -1,21 +1,31 @@
 /**
- * Bulk-reconcile Product.stockOnHand from actual bin quantities,
- * then redistribute the corrected total proportionally among variants.
+ * DEPRECATED — DO NOT RUN.
  *
- * Products with NO bins (counter-only) are skipped.
- * Variants of a product with bins are rescaled so:
- *   sum(variant.stockOnHand) == product.stockOnHand (= bin total)
+ * This script summed every bin under a productId (regardless of
+ * variantId) into the parent counter, then redistributed the total
+ * across variants. Under the variant-tagged-bin model, that
+ * conflates two separate inventory levels:
  *
- * If all variants currently show 0 the total is split evenly.
+ *   • parent.stockOnHand → bulk-only bins (variantId IS NULL)
+ *   • variant.stockOnHand → per-variant bins (variantId = X)
  *
- * Safe to re-run: already-correct products/variants are no-ops.
+ * Running this script after variant-aware tagging will re-introduce
+ * the "parent = sum of variants" drift that the Stock breakdown UI
+ * exposed (e.g. APKL parent reading 1998 kg = 999 + 999 from its two
+ * variant bins). If you need to reconcile counters with bins, use:
  *
- * Run:  npx tsx src/scripts/sync-stock-from-bins.ts
+ *   • scripts/backfill-orphan-variant-bins.ts — tag legacy untagged
+ *     bins to their owning variant.
+ *   • scripts/backfill-parent-bulk-counter.ts — recompute the parent
+ *     counter from variantId=NULL bins only.
+ *
+ * The body below is left in place as a reference; the entry point
+ * is now a no-op.
  */
 
 import { db } from "../db.js";
 
-async function main() {
+async function legacyMain_DO_NOT_USE() {
   const productsWithBins = await db.bin.groupBy({
     by: ["productId"],
     where: { productId: { not: null } },
@@ -135,6 +145,13 @@ async function main() {
     `\nDone. Products synced: ${productSynced}  already correct: ${productSkipped}  Variants adjusted: ${variantSynced}`
   );
   await db.$disconnect();
+}
+
+async function main() {
+  console.error(
+    "sync-stock-from-bins is DEPRECATED and now a no-op. See the file header for the variant-aware replacements."
+  );
+  void legacyMain_DO_NOT_USE; // keep referenced so TS doesn't strip the body
 }
 
 main().catch((e) => {
