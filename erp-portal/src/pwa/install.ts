@@ -23,33 +23,79 @@ const listeners = new Set<(ready: boolean) => void>();
 
 const isMobileRoute = () => window.location.pathname.startsWith("/m");
 
+// One-shot recovery: visiting /m/?reset=1 unregisters every service
+// worker, deletes every cache, and reloads. Use this when a phone is
+// stuck on a stale bundle and the natural update cycle is too slow.
+const handleResetIfRequested = async () => {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("reset") !== "1") return false;
+  try {
+    if ("serviceWorker" in navigator) {
+      const regs = await navigator.serviceWorker.getRegistrations();
+      await Promise.all(regs.map((r) => r.unregister()));
+    }
+    if ("caches" in window) {
+      const keys = await caches.keys();
+      await Promise.all(keys.map((k) => caches.delete(k)));
+    }
+  } catch (e) {
+    console.warn("[pwa] reset failed", e);
+  }
+  // Strip ?reset=1 then hard reload so the new SW + bundle install fresh.
+  const url = new URL(window.location.href);
+  url.searchParams.delete("reset");
+  window.location.replace(url.toString());
+  return true;
+};
+
 export const registerMobilePwa = () => {
   if (!isMobileRoute()) return;
   if (!("serviceWorker" in navigator)) return;
   // Register lazily so the desktop bundle never pulls the SW in.
-  window.addEventListener("load", () => {
-    navigator.serviceWorker
-      .register("/sw.js", { scope: "/m/" })
-      .then((reg) => {
-        // After a deploy, pick up the new shell + JS hashes without
-        // requiring the user to manually clear site data.
-        reg.addEventListener("updatefound", () => {
-          const worker = reg.installing;
-          if (!worker) return;
-          worker.addEventListener("statechange", () => {
-            if (
-              worker.state === "installed" &&
-              navigator.serviceWorker.controller
-            ) {
-              worker.postMessage("skipWaiting");
-              window.location.reload();
-            }
-          });
-        });
-      })
-      .catch((err) => {
-        console.warn("[pwa] service worker registration failed", err);
+  window.addEventListener("load", async () => {
+    if (await handleResetIfRequested()) return;
+    try {
+      const reg = await navigator.serviceWorker.register("/sw.js", {
+        scope: "/m/",
       });
+
+      // Force an update check now and every 60s while the app is open.
+      // Chrome only auto-checks sw.js on navigation; an installed
+      // standalone PWA can sit on a home screen for days without ever
+      // re-fetching it. Polling guarantees the v2+ SW with the
+      // skipWaiting handler eventually replaces the old one.
+      const triggerUpdate = () => {
+        reg.update().catch(() => undefined);
+      };
+      triggerUpdate();
+      setInterval(triggerUpdate, 60_000);
+
+      // When a fresh SW finishes installing alongside an existing
+      // controller, ask it to take over and reload the page so the
+      // user sees the new bundle without manual cache clearing.
+      reg.addEventListener("updatefound", () => {
+        const worker = reg.installing;
+        if (!worker) return;
+        worker.addEventListener("statechange", () => {
+          if (
+            worker.state === "installed" &&
+            navigator.serviceWorker.controller
+          ) {
+            worker.postMessage("skipWaiting");
+          }
+        });
+      });
+
+      // Reload exactly once when the controller swaps to the new SW.
+      let reloaded = false;
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        if (reloaded) return;
+        reloaded = true;
+        window.location.reload();
+      });
+    } catch (err) {
+      console.warn("[pwa] service worker registration failed", err);
+    }
   });
 };
 
