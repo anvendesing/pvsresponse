@@ -12,8 +12,9 @@
 //   4. Decrement ProductVariant.stockOnHand (or Product.stockOnHand for
 //      non-variant lines).
 //   5. Create paid Invoice (status="paid", paymentMode="upi") linked to
-//      the SO.
-//   6. Write StockLedger rows referencing the invoice number.
+//      the SO, plus a CustomerPayment + allocation so the AR statement
+//      shows the matching credit (prepaid at checkout).
+//   6. Stock ledger posts at pack-complete from the pick bin warehouse.
 //
 // After the transaction commits, the existing pick-list creator helper
 // drafts a PickList for the new SO. From then on, the order rides the
@@ -33,6 +34,7 @@ import { mintShareToken } from "../lib/share.js";
 import { recordChange } from "../sync/log.js";
 import { createPickListForSalesOrder } from "../services/pick-list-create.js";
 import { resolveGstRate, computeTax, lineTax } from "../lib/tax.js";
+import { nextPaymentNo } from "./customer-payments.js";
 
 const orderSchema = z.object({
   name: z.string().trim().min(1).max(120),
@@ -366,6 +368,25 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
         },
       });
 
+      // Prepaid checkout → record AR payment + allocation so the
+      // customer statement shows debit (invoice) and credit (payment)
+      // netting to zero. Without this, Open Balance is correct (paid
+      // invoices are excluded) but the ledger closing balance is wrong.
+      const paymentNo = await nextPaymentNo();
+      const payment = await tx.customerPayment.create({
+        data: {
+          paymentNo,
+          customerId: customer.id,
+          amount: total,
+          mode: "upi",
+          reference: invoiceNo,
+          notes: `Storefront prepaid · ${soNo}`,
+          allocations: {
+            create: [{ invoiceId: invoice.id, amount: total }],
+          },
+        },
+      });
+
       // Sale ledger rows are NOT posted here. The storefront doesn't
       // know which bin/warehouse will fulfil the order — that is
       // decided at pick/pack time (often WH-FG). Ledger posts happen
@@ -381,7 +402,7 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
       // ecommerce SOs instead, mirroring how B2B orders bump it at
       // /packing-slips/:id/invoice.
 
-      return { customer, account, so, invoice };
+      return { customer, account, so, invoice, payment };
     });
 
     // 7. Outside the transaction so we don't hold locks while the
@@ -396,6 +417,13 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
 
     await recordChange("SalesOrder", result.so.id, "insert", result.so, sysUserId);
     await recordChange("Invoice", result.invoice.id, "insert", result.invoice, sysUserId);
+    await recordChange(
+      "CustomerPayment",
+      result.payment.id,
+      "insert",
+      result.payment,
+      sysUserId
+    );
     // recordChange's verb enum doesn't include "upsert"; the storefront-mock
     // path either inserts a brand-new Customer or updates an existing one, so
     // surface the more accurate "insert" / "update" verb at the call site.
