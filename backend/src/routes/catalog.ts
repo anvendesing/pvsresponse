@@ -1058,11 +1058,19 @@ export const catalogRoutes = async (app: FastifyInstance) => {
       });
       if (!product) return reply.code(404).send({ error: { code: "not_found" } });
 
+      // Products with variants: parent counter tracks bulk-only bins
+      // (variantId IS NULL). Summing every bin under productId would
+      // roll variant-packaged stock into the parent and recreate the
+      // "parent = sum of variant sizes" drift we removed locally.
+      const variantCount = await db.productVariant.count({ where: { productId: id } });
       const agg = await db.bin.aggregate({
-        where: { productId: id },
+        where: {
+          productId: id,
+          ...(variantCount > 0 ? { variantId: null } : {}),
+        },
         _sum: { qty: true },
       });
-      const binTotal = agg._sum.qty ?? 0;
+      const binTotal = Math.round(agg._sum.qty ?? 0);
       const before = product.stockOnHand;
       const delta = binTotal - before;
 

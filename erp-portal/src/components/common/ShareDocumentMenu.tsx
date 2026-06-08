@@ -95,6 +95,35 @@ const buildGreeting = (d: ShareDescriptor, url: string) => {
   return `Hi ${d.customerName}, please find ${lbl} ${d.docNo}${tot}. View online: ${url}`;
 };
 
+/** Clipboard API is blocked on plain HTTP (typical IP-only VPS). Fall back
+ *  to execCommand so "Copy link" works without TLS. */
+const copyTextToClipboard = async (text: string): Promise<boolean> => {
+  if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // Secure-context requirement or permission denied — try fallback.
+    }
+  }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.left = "-9999px";
+    ta.style.top = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+};
+
 const buildEmail = (d: ShareDescriptor, url: string) => {
   const lbl = docLabel[d.kind];
   const subject = `${
@@ -124,6 +153,7 @@ export const ShareDocumentMenu = ({ descriptor, size = "md", label = "Share" }: 
   const [token, setToken] = useState<string | null>(descriptor.shareToken ?? null);
   const [working, setWorking] = useState<"mint" | "rotate" | null>(null);
   const [copied, setCopied] = useState(false);
+  const [copyError, setCopyError] = useState<string | null>(null);
   const triggerRef = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
@@ -205,12 +235,13 @@ export const ShareDocumentMenu = ({ descriptor, size = "md", label = "Share" }: 
 
   const onCopy = async () => {
     if (!url) return;
-    try {
-      await navigator.clipboard.writeText(url);
+    setCopyError(null);
+    const ok = await copyTextToClipboard(url);
+    if (ok) {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 2000);
-    } catch (e) {
-      console.error("clipboard failed", e);
+    } else {
+      setCopyError("Copy blocked — select the link above and copy manually (Ctrl+C).");
     }
   };
 
@@ -271,9 +302,15 @@ export const ShareDocumentMenu = ({ descriptor, size = "md", label = "Share" }: 
               <div className="text-caption text-ink-muted uppercase font-semibold">
                 Share this {lbl}
               </div>
-              <div className="text-body-sm font-mono mt-1 truncate" title={url}>
+              <div
+                className="text-body-sm font-mono mt-1 truncate select-all"
+                title={url}
+              >
                 {working === "mint" ? "Minting link…" : token ? url : "—"}
               </div>
+              {copyError ? (
+                <div className="text-caption text-warning mt-1">{copyError}</div>
+              ) : null}
             </div>
 
             <button

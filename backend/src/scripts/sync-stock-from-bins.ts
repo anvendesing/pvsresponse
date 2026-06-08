@@ -147,11 +147,60 @@ async function legacyMain_DO_NOT_USE() {
   await db.$disconnect();
 }
 
-async function main() {
-  console.error(
-    "sync-stock-from-bins is DEPRECATED and now a no-op. See the file header for the variant-aware replacements."
+/** Recompute parent.stockOnHand from bulk-only bins for products that
+ *  have variants. Safe to run on every deploy — idempotent. */
+async function reconcileParentBulkCounters() {
+  const productsWithVariants = await db.product.findMany({
+    where: { variants: { some: {} } },
+    select: {
+      id: true,
+      sku: true,
+      stockOnHand: true,
+      _count: { select: { variants: true } },
+    },
+    orderBy: { sku: "asc" },
+  });
+
+  if (productsWithVariants.length === 0) {
+    console.log("No variant-parent products — nothing to reconcile.");
+    return;
+  }
+
+  let unchanged = 0;
+  let updated = 0;
+
+  for (const p of productsWithVariants) {
+    const agg = await db.bin.aggregate({
+      where: { productId: p.id, variantId: null },
+      _sum: { qty: true },
+    });
+    const bulkOnly = Math.round(agg._sum.qty ?? 0);
+    if (bulkOnly === p.stockOnHand) {
+      unchanged++;
+      continue;
+    }
+    await db.product.update({
+      where: { id: p.id },
+      data: { stockOnHand: bulkOnly },
+    });
+    updated++;
+    console.log(
+      `  ${p.sku.padEnd(20)} parent ${p.stockOnHand} → ${bulkOnly} (bulk bins only)`
+    );
+  }
+
+  console.log(
+    `Parent bulk counters: updated=${updated}  unchanged=${unchanged}`
   );
+}
+
+async function main() {
+  console.log(
+    "db:sync-stock — reconciling parent bulk counters (variantId=NULL bins only)…"
+  );
+  await reconcileParentBulkCounters();
   void legacyMain_DO_NOT_USE; // keep referenced so TS doesn't strip the body
+  await db.$disconnect();
 }
 
 main().catch((e) => {
