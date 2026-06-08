@@ -30,6 +30,23 @@ export const registerMobilePwa = () => {
   window.addEventListener("load", () => {
     navigator.serviceWorker
       .register("/sw.js", { scope: "/m/" })
+      .then((reg) => {
+        // After a deploy, pick up the new shell + JS hashes without
+        // requiring the user to manually clear site data.
+        reg.addEventListener("updatefound", () => {
+          const worker = reg.installing;
+          if (!worker) return;
+          worker.addEventListener("statechange", () => {
+            if (
+              worker.state === "installed" &&
+              navigator.serviceWorker.controller
+            ) {
+              worker.postMessage("skipWaiting");
+              window.location.reload();
+            }
+          });
+        });
+      })
       .catch((err) => {
         console.warn("[pwa] service worker registration failed", err);
       });
