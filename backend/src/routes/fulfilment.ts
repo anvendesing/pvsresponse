@@ -26,6 +26,7 @@ import {
   reconcileInvoiceWithPack,
 } from "../services/invoice-create.js";
 import { consumeReservationsForPickedItems } from "../lib/so-reservations.js";
+import { createSaleLedgerFromPickBin } from "../lib/stock-ledger.js";
 import { recordChange } from "../sync/log.js";
 
 // Local alias kept so the rest of this file - which already uses
@@ -1154,7 +1155,16 @@ export const fulfilmentRoutes = async (app: FastifyInstance) => {
         }
       }
 
-      const wh = await db.warehouse.findFirst({ select: { id: true } });
+      // Invoice exists for ecommerce at order time; B2B gets one at SO
+      // confirm. We need the invoiceNo here so Sale ledger rows can
+      // reference the actual pick bin's warehouse (WH-FG etc.) instead
+      // of blindly pinning to warehouse.findFirst() (WH-MAIN).
+      const invoiceToAttach = await db.invoice.findFirst({
+        where: { salesOrderId: ps.salesOrderId },
+        orderBy: { createdAt: "asc" },
+        select: { id: true, invoiceNo: true, packingSlipId: true },
+      });
+
       let awbPatch: { awb?: string; carrier?: string } = {};
       if (so?.source === "ecommerce" && !ps.awb) {
         awbPatch = {
@@ -1203,17 +1213,25 @@ export const fulfilmentRoutes = async (app: FastifyInstance) => {
           where: { id: p.salesOrderItemId },
           data: { qtyInvoiced: { increment: packed } },
         });
+        // Sale ledger: always post at pack-complete from the pick bin's
+        // warehouse. Ecommerce used to post at order time against
+        // warehouse.findFirst() (WH-MAIN) even though picking happened
+        // in WH-FG — that mismatch is what the Inventory Ledger showed.
+        if (invoiceToAttach) {
+          await createSaleLedgerFromPickBin({
+            productId: p.productId,
+            variantId: p.variantId,
+            qty: packed,
+            ref: invoiceToAttach.invoiceNo,
+            binId: pi?.binId,
+          });
+        }
       }
 
       // Attach the pre-generated invoice to this slip and reconcile
       // its line quantities to match qtyPacked (so partial dispatches
       // produce a correct customer-facing invoice). Idempotent if
       // packingSlipId is already set.
-      const invoiceToAttach = await db.invoice.findFirst({
-        where: { salesOrderId: ps.salesOrderId },
-        orderBy: { createdAt: "asc" },
-        select: { id: true, invoiceNo: true, packingSlipId: true },
-      });
       if (invoiceToAttach) {
         if (invoiceToAttach.packingSlipId !== id) {
           await db.invoice.update({
@@ -1230,24 +1248,6 @@ export const fulfilmentRoutes = async (app: FastifyInstance) => {
             rate: p.rate,
           }))
         );
-        // Ledger row (B2B). Ecommerce already wrote ledger rows at
-        // order time so we don't double-post.
-        if (so?.source !== "ecommerce" && wh) {
-          for (const p of packLines) {
-            if (p.qtyPacked <= 0) continue;
-            await db.stockLedger.create({
-              data: {
-                productId: p.productId,
-                variantId: p.variantId ?? null,
-                warehouseId: wh.id,
-                txnType: "Sale",
-                qty: -Math.round(p.qtyPacked),
-                balance: 0,
-                ref: invoiceToAttach.invoiceNo,
-              },
-            });
-          }
-        }
       }
 
       const updated = await db.packingSlip.update({
@@ -1394,6 +1394,11 @@ export const fulfilmentRoutes = async (app: FastifyInstance) => {
           },
         });
         const pickItems = fullSlip?.pickList?.items ?? [];
+        const existingInv = await db.invoice.findFirst({
+          where: { salesOrderId: ps.salesOrderId, packingSlipId: null },
+          orderBy: { createdAt: "desc" },
+          select: { id: true, invoiceNo: true },
+        });
         for (const p of fullSlip?.items ?? []) {
           if (p.qtyPacked <= 0) continue;
           const pi = pickItems.find(
@@ -1414,12 +1419,16 @@ export const fulfilmentRoutes = async (app: FastifyInstance) => {
             where: { id: p.salesOrderItemId },
             data: { qtyInvoiced: { increment: packed } },
           });
+          if (existingInv) {
+            await createSaleLedgerFromPickBin({
+              productId: p.productId,
+              variantId: p.variantId,
+              qty: packed,
+              ref: existingInv.invoiceNo,
+              binId: pi?.binId,
+            });
+          }
         }
-        const existingInv = await db.invoice.findFirst({
-          where: { salesOrderId: ps.salesOrderId, packingSlipId: null },
-          orderBy: { createdAt: "desc" },
-          select: { id: true },
-        });
         if (existingInv) {
           await db.invoice.update({
             where: { id: existingInv.id },
@@ -1522,7 +1531,6 @@ export const fulfilmentRoutes = async (app: FastifyInstance) => {
             error: { code: "nothing_to_invoice", message: "No qtyPacked > 0." },
           });
         }
-        const wh = await db.warehouse.findFirst({ select: { id: true } });
         const pickItems = ps.pickList?.items ?? [];
         for (const p of positives) {
           const pi = pickItems.find(
@@ -1554,19 +1562,13 @@ export const fulfilmentRoutes = async (app: FastifyInstance) => {
             where: { id: p.salesOrderItemId },
             data: { qtyInvoiced: { increment: packed } },
           });
-          if (wh) {
-            await db.stockLedger.create({
-              data: {
-                productId: p.productId,
-                variantId: p.variantId ?? null,
-                warehouseId: wh.id,
-                txnType: "Sale",
-                qty: -packed,
-                balance: 0,
-                ref: preGen.invoiceNo,
-              },
-            });
-          }
+          await createSaleLedgerFromPickBin({
+            productId: p.productId,
+            variantId: p.variantId,
+            qty: packed,
+            ref: preGen.invoiceNo,
+            binId: pi?.binId,
+          });
         }
         await db.invoice.update({
           where: { id: preGen.id },

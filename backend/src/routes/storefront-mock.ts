@@ -366,26 +366,10 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
         },
       });
 
-      // 5. Stock-ledger rows referencing the invoice. We pin to the
-      //    first warehouse we find - the storefront doesn't pick a
-      //    warehouse explicitly, so this matches the existing billing
-      //    flow's shortcut.
-      const wh = await tx.warehouse.findFirst({ select: { id: true } });
-      if (wh) {
-        for (const l of lines) {
-          await tx.stockLedger.create({
-            data: {
-              productId: l.productId,
-              variantId: l.variantId ?? null,
-              warehouseId: wh.id,
-              txnType: "Sale",
-              qty: -l.qty,
-              balance: 0,
-              ref: invoice.invoiceNo,
-            },
-          });
-        }
-      }
+      // Sale ledger rows are NOT posted here. The storefront doesn't
+      // know which bin/warehouse will fulfil the order — that is
+      // decided at pick/pack time (often WH-FG). Ledger posts happen
+      // in POST /packing-slips/:id/pack from the pick bin's warehouse.
 
       // qtyInvoiced is intentionally left at 0 on the SO lines even
       // though the invoice exists. Reason: qtyInvoiced doubles as
