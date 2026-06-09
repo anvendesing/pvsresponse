@@ -11,7 +11,7 @@
 // A full offline write queue lands in Phase 1.5; this SW intentionally
 // stays small and dumb.
 
-const VERSION = "v1";
+const VERSION = "v3";
 const SHELL_CACHE = `nova-mobile-shell-${VERSION}`;
 
 const SHELL_ASSETS = [
