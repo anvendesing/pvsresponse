@@ -35,6 +35,7 @@
     "db:backfill-document-weights": "tsx scripts/backfill-document-weights.ts",
     "labels:bins": "tsx scripts/generate-bin-labels-pdf.ts",
     "labels:soap-room": "tsx scripts/seed-soap-room-bins.ts && tsx scripts/generate-soap-room-bin-labels-pdf.ts",
+    "labels:stock-room": "tsx scripts/seed-stock-room-bins.ts && tsx scripts/generate-stock-room-bin-labels-pdf.ts",
     "labels:test": "tsx scripts/generate-test-labels-pdf.ts",
     "labels:containers": "tsx scripts/generate-container-labels-pdf.ts",
     "setup": "prisma generate && prisma migrate dev --name init && tsx prisma/seed.ts && tsx scripts/import-pricelists.ts",

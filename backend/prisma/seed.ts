@@ -68,7 +68,7 @@ async function main() {
   const whSpec = [
     { code: "WH-MAIN", name: "Main Warehouse", city: "Pune" },
     { code: "WH-RAW", name: "Raw Materials Yard", city: "Pune" },
-    { code: "WH-FG", name: "Finished Goods Hub", city: "Pune" },
+    { code: "WH-FG", name: "Stock Room", city: "Pune" },
   ];
   for (const w of whSpec) await db.warehouse.create({ data: w });
   const warehouses = await db.warehouse.findMany();

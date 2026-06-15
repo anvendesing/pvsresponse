@@ -15,9 +15,9 @@
  * (ProductionFacility) and its default "Main Line" (ProductionLine). Additional
  * lines can be added later via Settings → Production facilities.
  *
- * **Finished goods:** use your **existing** finished-goods warehouse (default code
- * `WH-FG`). Scripts do **not** create or rename it. You must configure **putaway
- * rules for every variant** (and product) with destination = that warehouse and a
+ * **Stock Room (finished goods):** use your **existing** warehouse (default code
+ * `WH-FG`, display name "Stock Room"). Scripts do **not** create it. Configure
+ * **putaway rules for every variant** (and product) with destination = that warehouse and a
  * fixed bin — see README.
  *
  * **No separate ancillary warehouse:** the facility WH is the buffer. After
