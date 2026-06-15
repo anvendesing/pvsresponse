@@ -18,7 +18,7 @@ export async function removeObsoleteAncillaryWarehouses(): Promise<number> {
     orderBy: { code: "asc" },
     include: {
       _count: { select: { bins: true, ledger: true } },
-      productionWorkCenter: { select: { code: true } },
+      productionFacility: { select: { code: true } },
     },
   });
 
@@ -31,22 +31,22 @@ export async function removeObsoleteAncillaryWarehouses(): Promise<number> {
 
   let cleaned = 0;
   for (const wh of obsolete) {
-    const wc = wh.productionWorkCenter?.code;
+    const facility = wh.productionFacility?.code;
     const summary = `${wh.code} (${wh.name}) — ${wh._count.bins} bin(s), ${wh._count.ledger} ledger`;
 
     if (dryRun) {
-      log(`  [dry] remove ${summary}${wc ? `, linked WC ${wc}` : ""}`);
+      log(`  [dry] remove ${summary}${facility ? `, linked facility ${facility}` : ""}`);
       cleaned++;
       continue;
     }
 
-    // Unlink work center if it still points at ancillary WH (02 script should use WH-PROD-*).
-    if (wh.productionWorkCenter) {
-      await db.workCenter.update({
+    // Unlink facility if it still points at ancillary WH (02 script should use WH-PROD-*).
+    if (wh.productionFacility) {
+      await db.productionFacility.update({
         where: { productionLineWarehouseId: wh.id },
         data: { productionLineWarehouseId: null },
       });
-      log(`  ↪ Unlinked ${wc} from ${wh.code}`);
+      log(`  ↪ Unlinked ${facility} from ${wh.code}`);
     }
 
     await db.putawayRule.deleteMany({ where: { toWarehouseId: wh.id } });
