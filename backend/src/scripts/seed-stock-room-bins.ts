@@ -1,15 +1,17 @@
-#!/usr/bin/env tsx
 /**
  * Rename WH-FG → Stock Room, set scan prefix STR, seed zones A–D bins (Zone C layout).
  *
- * Run:
- *   cd backend
- *   npx tsx scripts/seed-stock-room-bins.ts
- *   npx tsx scripts/seed-stock-room-bins.ts --dry-run
+ * Local dev:
+ *   npm run db:seed-stock-room:dev
+ *   npm run db:seed-stock-room:dev -- --dry-run
+ *
+ * VPS (inside Docker — uses compiled dist/):
+ *   docker compose exec backend npm run db:seed-stock-room
+ *   docker compose exec backend npm run db:seed-stock-room -- --dry-run
  */
 
 import { PrismaClient } from "@prisma/client";
-import { binCodeFromRow } from "../src/lib/codes.js";
+import { binCodeFromRow } from "../lib/codes.js";
 import {
   STOCK_ROOM_BIN_COUNT,
   STOCK_ROOM_NAME,
@@ -17,7 +19,7 @@ import {
   STOCK_ROOM_WAREHOUSE_CODE,
   STOCK_ROOM_ZONE_C_BIN_COUNT,
   stockRoomBinRows,
-} from "./config/stock-room-layout.js";
+} from "../lib/stock-room-layout.js";
 
 const dryRun = process.argv.includes("--dry-run");
 const db = new PrismaClient();
@@ -119,7 +121,7 @@ async function main() {
   console.log(
     `\nExample: ${binCodeFromRow({ zone: "C", shelf: "S05", bin: "08" }, { code: wh.code, scanPrefix: wh.scanPrefix })}`
   );
-  console.log(`Total layout bins: ${STOCK_ROOM_BIN_COUNT}. Generate labels: npm run labels:stock-room`);
+  console.log(`Total layout bins: ${STOCK_ROOM_BIN_COUNT}.`);
 }
 
 main()

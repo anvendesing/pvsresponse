@@ -24,7 +24,7 @@ import {
   STOCK_ROOM_WAREHOUSE_CODE,
   STOCK_ROOM_ZONE_C_BIN_COUNT,
   stockRoomBinRows,
-} from "./config/stock-room-layout.js";
+} from "../src/lib/stock-room-layout.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = path.join(__dirname, "..", "output");

@@ -13,36 +13,29 @@ export type ShelfSpec = { shelf: string; binCount: number };
 
 /** Zone C — 31 shelves, 145 bins. */
 export const STOCK_ROOM_ZONE_C: readonly ShelfSpec[] = [
-  // 4 shelves × 5 bins
   ...Array.from({ length: 4 }, (_, i) => ({
     shelf: `S${String(i + 1).padStart(2, "0")}`,
     binCount: 5,
   })),
   { shelf: "S05", binCount: 10 },
-  // 7 shelves × 5 bins
   ...Array.from({ length: 7 }, (_, i) => ({
     shelf: `S${String(i + 6).padStart(2, "0")}`,
     binCount: 5,
   })),
-  // 2 shelves × 6 bins
   { shelf: "S13", binCount: 6 },
   { shelf: "S14", binCount: 6 },
-  // 6 shelves: 5, 5, 5, 5, 4, 4
   { shelf: "S15", binCount: 5 },
   { shelf: "S16", binCount: 5 },
   { shelf: "S17", binCount: 5 },
   { shelf: "S18", binCount: 5 },
   { shelf: "S19", binCount: 4 },
   { shelf: "S20", binCount: 4 },
-  // 2 shelves × 2 bins
   { shelf: "S21", binCount: 2 },
   { shelf: "S22", binCount: 2 },
-  // 4 shelves × 4 bins
   ...Array.from({ length: 4 }, (_, i) => ({
     shelf: `S${String(i + 23).padStart(2, "0")}`,
     binCount: 4,
   })),
-  // 4 shelves × 3 bins
   ...Array.from({ length: 4 }, (_, i) => ({
     shelf: `S${String(i + 27).padStart(2, "0")}`,
     binCount: 3,
