@@ -191,7 +191,21 @@ echo ""
 echo "=== Verification ==="
 "${COMPOSE[@]}" ps
 echo -n "Health: "
-curl -sf http://localhost/health && echo "" || echo "FAIL (check web proxy)"
+HEALTH_OK=0
+for i in $(seq 1 12); do
+  if curl -sf http://localhost/health >/dev/null 2>&1; then
+    curl -sf http://localhost/health && echo ""
+    HEALTH_OK=1
+    break
+  fi
+  if [ "$i" -lt 12 ]; then
+    echo -n "."
+    sleep 5
+  fi
+done
+if [ "$HEALTH_OK" -eq 0 ]; then
+  echo "FAIL (502/timeout — backend may still be running prisma migrate; try: ${COMPOSE[*]} logs backend --tail 80)"
+fi
 echo ""
 echo "=== Deploy complete ==="
 echo "ERP:  http://$(hostname -I 2>/dev/null | awk '{print $1}'):${WEB_PORT:-80}/"
