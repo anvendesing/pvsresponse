@@ -22,34 +22,40 @@ and torch all run in native Android code via the Capacitor plugin
 | Build type        | Debug (signed with Android default debug key)        |
 | Permissions       | INTERNET, CAMERA, FLASHLIGHT, VIBRATE, WAKE_LOCK, ACCESS_NETWORK_STATE |
 
-## What changed in this build
+## What changed in v1.2.0
+
+1. **Multi-container packing** — `/m/packs/:id` supports cartons/bags/boxes: add containers, allocate confirmed lines, seal with weight, then mark packed.
+2. **Compact bin scan codes** — Soap Room labels (`WSP.AS05.11`) resolve in Scan, Pick, and Pack flows.
+3. **Variant-aware bin detail** — `/m/bin/:binId` shows variant stock, search-to-reassign product/variant.
+4. **Transfer tasks** — `/m/tasks` Transfer tab for replenishment / putaway orders.
+5. **GRN + Returns** — under Tasks → More: `/m/grn`, `/m/returns`.
+6. **Slim mobile bundle** — warehouse-only `MobileApp` tree (~130 KB JS) synced via `npm run build:mobile`.
+
+## What changed in v1.1.0
 
 1. **Web app is now bundled inside the APK** — the React UI loads from
-   `assets/public/index.html` instead of `http://217.216.78.119/m/...`.
+   on-device assets instead of loading from the VPS URL.
    The app still talks to the live API at `http://217.216.78.119/v1/*`
    and pulls images from `/uploads/*`, but UI updates require an APK
    rebuild.
-2. **Native barcode scanner** — `BarcodeScanner.tsx` now detects
-   Capacitor at runtime and routes scans through Google ML Kit when
-   running inside the APK. Web `BarcodeDetector` is still the path used
-   for desktop testing. No more "browser doesn't support live barcode
-   scanning" message on warehouse phones.
-3. **Start URL forced to `/m/login`** — a tiny inline script in
-   `index.html` does `history.replaceState({}, "", "/m/login")` before
-   React Router boots, so the warehouse APK never lands on the desktop
-   dashboard.
+2. **Native barcode scanner** — Google ML Kit via Capacitor (not browser BarcodeDetector).
+3. **Start URL** — non-`/m/*` paths redirect to `/m/login` via `MobileApp.tsx`.
 
 ## Features
 
-All of the existing `/m/` PWA, now installable AND with a working scanner:
+All `/m/` PWA screens, installable with native ML Kit scanning:
 
 - **`/m/login`** — PIN sign-in + warehouse picker
-- **`/m/tasks`** — claimed pick lists & packing slips queue
-- **`/m/picks/:id` + `/m/picks/:id/line/:itemId`** — scan-to-confirm picking, walk-path order, "complete" guard against stale stock, auto-reset
-- **`/m/packs/:id`** — pack scan-confirm with reason codes (short pack / damage / substitute / other)
-- **`/m/scan`** — barcode → routes to the right pick line / bin (now native ML Kit)
-- **`/m/verify` + `/m/bin/:binId`** — bin-level cycle count = stock correction (qty before/after, reason, flagged anomaly feed)
+- **`/m/tasks`** — Pick / Pack / Transfer queues + More (GRN, Returns, Count)
+- **`/m/picks/:id` + line** — scan-to-confirm picking, walk-path, stale-stock guard
+- **`/m/packs/:id`** — legacy single-bundle OR multi-container packing with seal/weight
+- **`/m/transfers/:id`** — execute transfer / putaway
+- **`/m/scan`** — bin (`WSP.*`) or product barcode → location / bin detail
+- **`/m/verify` + `/m/bin/:binId`** — cycle count / stock correction, variant reassign
 - **`/m/loc/:code`** — location lookup
+- **`/m/grn` + `/m/grn/:poId`** — mobile GRN receive (role-gated)
+- **`/m/returns` + detail** — customer return decide/finalize
+- **`/m/count`** — cycle count list
 - **`/m/profile`** — sign-out / switch warehouse
 
 ## Install on a phone
@@ -79,31 +85,20 @@ public IP.
 
 ## Rebuild
 
-When you change web code (`erp-portal/`):
+When you change warehouse mobile code (`erp-portal/src/mobile/` or shared libs):
 
 ```powershell
 cd D:\coding\pvsresponse\erp-portal
-$env:VITE_API_URL = "http://217.216.78.119"
-npm run build
-
-# Copy the freshly-built dist into the wrapper, preserving the start-URL hack
-Remove-Item ..\mobile-erp\www\* -Recurse -Force
-Copy-Item dist\* ..\mobile-erp\www -Recurse -Force
-# Re-add the /m/login redirect line into the bundled index.html (see
-# mobile-erp/www/index.html in git for the exact snippet).
+cp .env.mobile.example .env.mobile   # set VITE_API_URL if needed
+npm run build:mobile                 # builds + syncs to mobile-erp/www/
 
 cd ..\mobile-erp
-npx cap sync android
-cd android
-.\gradlew.bat assembleDebug
+npm run build:android                # sync + assembleDebug APK
 ```
 
-The output APK lands at
-`mobile-erp/android/app/build/outputs/apk/debug/app-debug.apk`.
+Output: `mobile-erp/android/app/build/outputs/apk/debug/app-debug.apk` (~8 MB).
 
-When the only change is web (no plugin / native side updates), you can
-even skip `cap sync` if you re-run it afterwards manually with
-`npx cap copy android`.
+**Browser PWA** (no APK): open `http://217.216.78.119/m/tasks` on the phone — same screens, uses the VPS-hosted bundle (updates on each deploy).
 
 ## Production hardening (still TODO)
 
