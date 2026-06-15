@@ -46,7 +46,7 @@ export const Productivity = () => {
   // Real attendance heatmap (replaces the seeded sequence) and live
   // production-lines rollup for the Production lines panel below.
   const heatmap = useApi(() => api.attendanceHeatmap(28), []);
-  const linesResp = useApi(() => api.productionLines(), []);
+  const linesResp = useApi(() => api.productionLinesReport(), []);
   const lines = linesResp.data?.lines ?? [];
 
   const filtered = useMemo(

@@ -68,7 +68,7 @@ export const Manufacturing = () => {
   // Live per-WorkCenter rollup with machines + active orders. Drives
   // the right-rail "Production lines" panel; replaces the seeded mock
   // machine list that used to ship in this page.
-  const liveLines = useApi(() => api.productionLines(), []);
+  const liveLines = useApi(() => api.productionLinesReport(), []);
 
   const productionOrders = liveMo.data?.orders ?? [];
   const workOrders = liveMo.data?.workOrders ?? [];
@@ -594,7 +594,7 @@ export const Manufacturing = () => {
                   <div className="text-caption text-ink-muted flex items-center justify-between mt-1">
                     <span className="truncate max-w-[60%]">
                       {p.facility?.name ?? p.station ?? "—"}
-                      {p.lineId === null && p.status !== "completed" && p.status !== "cancelled" && (
+                      {p.lineId === null && !isClosedStatus(p.status) && (
                         <span className="ml-1 text-warning font-semibold">· awaiting line</span>
                       )}
                       {p.line && (
@@ -639,7 +639,7 @@ export const Manufacturing = () => {
                 <span>
                   {order.sku} ·{" "}
                   {order.facility?.name ?? order.station ?? "—"}
-                  {order.lineId === null && order.status !== "completed" && order.status !== "cancelled" ? (
+                  {order.lineId === null && !isClosedStatus(order.status) ? (
                     <span className="ml-1 text-warning font-semibold">awaiting line</span>
                   ) : order.line ? (
                     <span className="text-ink-muted"> › {order.line.name}</span>
@@ -650,9 +650,7 @@ export const Manufacturing = () => {
               actions={
                 <div className="flex items-center gap-2 flex-wrap">
                   <Chip tone={statusTone(order.status)}>{order.status}</Chip>
-                  {order.lineId === null &&
-                    order.status !== "completed" &&
-                    order.status !== "cancelled" && (
+                  {order.lineId === null && !isClosedStatus(order.status) && (
                       <Button
                         size="sm"
                         variant="outline"

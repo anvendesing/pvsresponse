@@ -3177,7 +3177,7 @@ export const api = {
     ),
   workersSummary: () =>
     fetcher<{ total: number; in: number; out: number }>("/reports/workers-summary"),
-  productionLines: () =>
+  productionLinesReport: () =>
     fetcher<{
       lines: Array<{
         id: string;
