@@ -23,6 +23,7 @@ import {
   STOCK_ROOM_SCAN_PREFIX,
   STOCK_ROOM_WAREHOUSE_CODE,
   STOCK_ROOM_ZONE_C_BIN_COUNT,
+  stockRoomBinRows,
 } from "./config/stock-room-layout.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -138,6 +139,15 @@ interface LabelRow {
   bin: string;
 }
 
+const layoutKeys =
+  zoneFilter === "C"
+    ? new Set(
+        stockRoomBinRows()
+          .filter((r) => r.zone === "C")
+          .map((r) => `${r.zone}/${r.shelf}/${r.bin}`)
+      )
+    : null;
+
 async function loadLabels(db: PrismaClient): Promise<LabelRow[]> {
   const wh = await db.warehouse.findUnique({
     where: { code: STOCK_ROOM_WAREHOUSE_CODE },
@@ -163,6 +173,8 @@ async function loadLabels(db: PrismaClient): Promise<LabelRow[]> {
 
   const labels: LabelRow[] = [];
   for (const b of bins) {
+    const key = `${b.zone}/${b.shelf}/${b.bin}`;
+    if (layoutKeys && !layoutKeys.has(key)) continue;
     let code = b.code;
     if (!code) {
       code = binCodeFromRow(b, wh);
