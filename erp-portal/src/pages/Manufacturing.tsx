@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   ClipboardList,
   Factory,
+  GitBranch,
   MapPin,
   Network,
   Package,
@@ -42,6 +43,7 @@ import { dd, num } from "@/lib/format";
 import { NewMoModal } from "@/components/manufacturing/NewMoModal";
 import { CorrectOutputModal } from "@/components/manufacturing/CorrectOutputModal";
 import { LogOutputModal } from "@/components/manufacturing/LogOutputModal";
+import { AssignLineModal } from "@/components/manufacturing/AssignLineModal";
 
 const statusTone = (s: ProductionOrder["status"]) => {
   switch (s) {
@@ -84,6 +86,7 @@ export const Manufacturing = () => {
   const [showNewMo, setShowNewMo] = useState(false);
   const [showCorrect, setShowCorrect] = useState(false);
   const [showLogOutput, setShowLogOutput] = useState(false);
+  const [showAssignLine, setShowAssignLine] = useState(false);
   const [okBanner, setOkBanner] = useState<string | null>(null);
   const [errBanner, setErrBanner] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -589,7 +592,15 @@ export const Manufacturing = () => {
                   </div>
                   <div className="text-body-sm font-semibold mt-1 truncate">{p.product}</div>
                   <div className="text-caption text-ink-muted flex items-center justify-between mt-1">
-                    <span>{p.station}</span>
+                    <span className="truncate max-w-[60%]">
+                      {p.facility?.name ?? p.station ?? "—"}
+                      {p.lineId === null && p.status !== "completed" && p.status !== "cancelled" && (
+                        <span className="ml-1 text-warning font-semibold">· awaiting line</span>
+                      )}
+                      {p.line && (
+                        <span className="text-ink-muted"> · {p.line.name}</span>
+                      )}
+                    </span>
                     <span className="tnum">{num(p.actualQty)}/{num(p.plannedQty)}</span>
                   </div>
                   <div className="mt-1.5 h-1 bg-canvas rounded-full overflow-hidden">
@@ -624,10 +635,34 @@ export const Manufacturing = () => {
                   <span>{order.product}</span>
                 </div>
               }
-              subtitle={`${order.sku} · ${order.station} · Due ${dd(order.dueDate)}`}
+              subtitle={
+                <span>
+                  {order.sku} ·{" "}
+                  {order.facility?.name ?? order.station ?? "—"}
+                  {order.lineId === null && order.status !== "completed" && order.status !== "cancelled" ? (
+                    <span className="ml-1 text-warning font-semibold">awaiting line</span>
+                  ) : order.line ? (
+                    <span className="text-ink-muted"> › {order.line.name}</span>
+                  ) : null}
+                  {" · "}Due {dd(order.dueDate)}
+                </span>
+              }
               actions={
                 <div className="flex items-center gap-2 flex-wrap">
                   <Chip tone={statusTone(order.status)}>{order.status}</Chip>
+                  {order.lineId === null &&
+                    order.status !== "completed" &&
+                    order.status !== "cancelled" && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        icon={<GitBranch size={14} />}
+                        onClick={() => setShowAssignLine(true)}
+                        title="Assign this MO to a production line"
+                      >
+                        Assign line
+                      </Button>
+                    )}
                   <Button
                     size="sm"
                     variant="outline"
@@ -1344,9 +1379,9 @@ export const Manufacturing = () => {
               >
                 {lines.length === 0 && (
                   <div className="px-4 py-6 text-caption text-ink-muted text-center">
-                    No work centers yet.
+                    No production lines yet.
                     <div className="mt-1">
-                      Add them in <strong>Settings › Production lines</strong>.
+                      Add them in <strong>Settings › Production facilities</strong>.
                     </div>
                   </div>
                 )}
@@ -1510,6 +1545,17 @@ export const Manufacturing = () => {
               refreshRequirements(order.id),
               refreshInventoryTrail(order.id),
             ]);
+          }}
+        />
+      )}
+      {showAssignLine && order && (
+        <AssignLineModal
+          mo={order}
+          onClose={() => setShowAssignLine(false)}
+          onAssigned={async () => {
+            setShowAssignLine(false);
+            setOkBanner("Line assigned.");
+            await refreshAll();
           }}
         />
       )}

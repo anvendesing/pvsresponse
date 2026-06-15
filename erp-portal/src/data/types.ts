@@ -56,6 +56,10 @@ export interface ProductVariant {
   packSize?: number | null;
   costPriceOverride?: number | null;
   sellingPriceOverride?: number | null;
+  // Optional per-variant gross weight (kg) used by the packing-container
+  // weight estimator. Null = inherit Product.weightKg (which may itself
+  // be null, in which case the size string is parsed as a last resort).
+  weightKg?: number | null;
   stockOnHand: number;
   active: boolean;
   imageUrl?: string | null;
@@ -78,6 +82,9 @@ export interface Product {
   hsn: string;
   // GST rate percentage e.g. 18 = 18%. Default 18.
   gstRate: number;
+  // Optional gross weight (kg) of one sellable unit at the parent UoM.
+  // Drives container weight estimation -> dispatch weight -> trip load.
+  weightKg?: number | null;
   batchTracked: boolean;
   imageUrl?: string | null;
   // Free-form storefront / catalogue description. Optional — older rows
@@ -97,6 +104,8 @@ export const effectiveUom = (
 ): string => {
   const v = (variant?.uom ?? "").trim();
   if (v.length > 0) return v;
+  // Sellable variants without an explicit UoM are counted in pieces.
+  if (variant) return "pc";
   return parent?.uom ?? "";
 };
 
@@ -170,6 +179,52 @@ export interface PurchaseOrder {
   shareToken?: string | null;
 }
 
+// Production master data — two-level hierarchy:
+//   ProductionFacility (e.g. "Soap Room") → ProductionLine (e.g. "Boiling Line")
+//   A facility owns one optional production warehouse (shared by all its lines).
+//   A line owns its machines.
+
+export interface ProductionFacility {
+  id: string;
+  code: string;
+  name: string;
+  description?: string | null;
+  capacityPerHour?: number | null;
+  productionLineWarehouseId?: string | null;
+  productionLineWarehouse?: { id: string; code: string; name: string; kind: string } | null;
+  active: boolean;
+  lines?: ProductionLine[];
+}
+
+export interface ProductionLine {
+  id: string;
+  code: string;
+  name: string;
+  description?: string | null;
+  facilityId: string;
+  facility?: { id: string; code: string; name: string } | null;
+  capacityPerHour?: number | null;
+  active: boolean;
+  machines?: Machine[];
+}
+
+export interface Machine {
+  id: string;
+  code: string;
+  name: string;
+  status: "running" | "idle" | "maintenance" | "broken";
+  description?: string | null;
+  active: boolean;
+  // New FK (preferred) — which line this machine is on.
+  productionLineId?: string | null;
+  productionLine?: {
+    id: string; code: string; name: string;
+    facility?: { id: string; code: string; name: string } | null;
+  } | null;
+  // Legacy FK kept for backfill reads — do not use in new code.
+  workCenterId?: string | null;
+}
+
 export interface ProductionOrder {
   id: string;
   orderNo: string;
@@ -184,7 +239,14 @@ export interface ProductionOrder {
   scrapQty: number;
   reworkQty: number;
   status: "planned" | "in-progress" | "qc" | "completed" | "delayed";
+  // Legacy text field — kept for backwards compat; new UI uses facility.name.
   station: string;
+  // New FK fields. facilityId is required for all new MOs.
+  // lineId is null until a supervisor assigns the MO to a specific line.
+  facilityId?: string | null;
+  facility?: { id: string; code: string; name: string } | null;
+  lineId?: string | null;
+  line?: { id: string; code: string; name: string } | null;
   startDate: string;
   dueDate: string;
   efficiency: number;
@@ -202,6 +264,9 @@ export interface WorkOrder {
   output: number;
   target: number;
   status: "queued" | "running" | "paused" | "complete";
+  // New FK fields set when the supervisor assigns the parent MO to a line.
+  lineId?: string | null;
+  machineId?: string | null;
 }
 
 export interface Worker {
@@ -294,11 +359,14 @@ export interface Bom {
   byproducts?: BomByproductRow[];
   outputQty: number;
   active: boolean;
-  // Optional defaults that flow into a new MO's station / machine
-  // fields. Both nullable: a BOM may pin neither, just a work center,
-  // or a work center + a specific machine on it.
-  defaultWorkCenterId?: string | null;
-  defaultWorkCenter?: { id: string; code: string; name: string } | null;
+  // New two-level production defaults:
+  //   defaultFacilityId — the facility (e.g. Soap Room) shown in MO modal.
+  //   defaultLineId     — optional line preference; supervisor can override.
+  //   defaultMachineId  — optional preferred machine on the chosen line.
+  defaultFacilityId?: string | null;
+  defaultFacility?: { id: string; code: string; name: string } | null;
+  defaultLineId?: string | null;
+  defaultLine?: { id: string; code: string; name: string } | null;
   defaultMachineId?: string | null;
   defaultMachine?: { id: string; code: string; name: string } | null;
 }

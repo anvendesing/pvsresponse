@@ -7,6 +7,7 @@ import { checkStockRules } from "../lib/stock-rules.js";
 import { resolveGstRate, computeTax, lineTax } from "../lib/tax.js";
 import { evaluateCreditGate } from "./sales.js";
 import { applyAdvancesToInvoice } from "./customer-payments.js";
+import { recomputeInvoiceWeight } from "../lib/document-weight.js";
 
 const invoiceCreate = z.object({
   customerId: z.string(),
@@ -234,6 +235,9 @@ export const billingRoutes = async (app: FastifyInstance) => {
         customer: true,
       },
     });
+    // Direct/walk-in invoice — derive weight from line items
+    // (no packing slip yet).
+    await recomputeInvoiceWeight(db, inv.id);
     await recordChange("Invoice", inv.id, "insert", inv, req.user.sub);
 
     // Sweep any standing customer advances against this invoice. For
@@ -341,11 +345,12 @@ export const billingRoutes = async (app: FastifyInstance) => {
         },
         items: {
           include: {
-            product: { select: { id: true, sku: true, name: true, uom: true, hsn: true } },
+            product: { select: { id: true, sku: true, name: true, uom: true, hsn: true, barcode: true } },
             variant: {
               select: {
                 id: true,
                 sku: true,
+                barcode: true,
                 size: true,
                 color: true,
                 grade: true,
@@ -407,6 +412,14 @@ export const billingRoutes = async (app: FastifyInstance) => {
   //      walk-in flow).
   // Either way: weightKg, etaHours, destination are per-dispatch
   // overrides. Destination defaults to the customer's city.
+  //
+  // weightKg defaults to 0 in the schema but if the caller leaves it
+  // out (or sets it to 0) we now auto-derive it from the linked
+  // packing slip's container rollup: prefer
+  // totalActualWeightKg (scale readings) when any container has one,
+  // otherwise totalEstWeightKg (estimated). This is what lets trip
+  // planners trust the per-dispatch weight chip without typing it
+  // manually for every drop.
   const dispatchCreate = z
     .object({
       invoiceId: z.string().min(1),
@@ -415,7 +428,7 @@ export const billingRoutes = async (app: FastifyInstance) => {
       driver: z.string().optional(),
       destination: z.string().optional(),
       etaHours: z.number().int().nonnegative().default(0),
-      weightKg: z.number().nonnegative().default(0),
+      weightKg: z.number().nonnegative().optional(),
       status: z
         .enum(["planned", "loading", "in-transit", "delivered", "delayed"])
         .default("planned"),
@@ -424,6 +437,29 @@ export const billingRoutes = async (app: FastifyInstance) => {
       (b) => Boolean(b.tripId) || (b.vehicle && b.driver),
       "Either tripId or both vehicle+driver are required."
     );
+
+  // Helper: derive the weight for a dispatch from the invoice's
+  // packing slip totals. Returns 0 when no slip is linked (the
+  // dispatcher will hand-type it).
+  const deriveDispatchWeight = async (invoiceId: string): Promise<number> => {
+    const inv = await db.invoice.findUnique({
+      where: { id: invoiceId },
+      select: {
+        totalWeightKg: true,
+        packingSlip: {
+          select: { totalActualWeightKg: true, totalEstWeightKg: true },
+        },
+      },
+    });
+    if (!inv) return 0;
+    // Prefer packing slip (closest to physical reality) > invoice
+    // weight (computed from line items) > 0.
+    const slip = inv.packingSlip;
+    if (slip?.totalActualWeightKg != null) return slip.totalActualWeightKg;
+    if (slip?.totalEstWeightKg) return slip.totalEstWeightKg;
+    if (inv.totalWeightKg) return inv.totalWeightKg;
+    return 0;
+  };
 
   app.post(
     "/dispatches",
@@ -472,6 +508,14 @@ export const billingRoutes = async (app: FastifyInstance) => {
       const lastN = last ? parseInt(last.dispatchNo.split("-").pop() ?? "9000", 10) : 9000;
       const dispatchNo = `DSP-2026-${lastN + 1}`;
 
+      // Use the caller's override when set; else fall back to the
+      // packing-slip container rollup so dispatchers don't have to
+      // hand-type the same number the packer already weighed.
+      const effectiveWeight =
+        body.weightKg != null && body.weightKg > 0
+          ? body.weightKg
+          : await deriveDispatchWeight(inv.id);
+
       const created = await db.dispatchOrder.create({
         data: {
           dispatchNo,
@@ -483,13 +527,38 @@ export const billingRoutes = async (app: FastifyInstance) => {
           driver: trip ? null : (body.driver ?? null),
           destination: body.destination?.trim() || inv.customer.city || inv.customer.name,
           etaHours: body.etaHours,
-          weightKg: body.weightKg,
+          weightKg: effectiveWeight,
           status: body.status,
         },
         include: { invoice: { include: { customer: true } }, trip: true },
       });
       await recordChange("DispatchOrder", created.id, "insert", created, req.user.sub);
       return created;
+    }
+  );
+
+  // Recompute a dispatch's weightKg from the packing slip rollup.
+  // Surfaced as a "Recompute weight" action on the dispatch / trip
+  // detail screen so dispatchers can refresh after a packer corrected
+  // an actual weight on a container post-pack.
+  app.post(
+    "/dispatches/:id/recompute-weight",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      const id = (req.params as { id: string }).id;
+      const ex = await db.dispatchOrder.findUnique({
+        where: { id },
+        select: { id: true, invoiceId: true, weightKg: true },
+      });
+      if (!ex) return reply.code(404).send({ error: { code: "not_found" } });
+      const derived = await deriveDispatchWeight(ex.invoiceId);
+      const updated = await db.dispatchOrder.update({
+        where: { id },
+        data: { weightKg: derived },
+        include: { invoice: { include: { customer: true } }, trip: true },
+      });
+      await recordChange("DispatchOrder", id, "update", updated, req.user.sub);
+      return { ...updated, previousWeightKg: ex.weightKg, derivedWeightKg: derived };
     }
   );
 

@@ -1,5 +1,9 @@
 import type { FastifyInstance } from "fastify";
+import { z } from "zod";
 import { db } from "../db.js";
+import { containerCode } from "../lib/container-codes.js";
+import { csvAttachment, toCsv } from "../lib/csv.js";
+import { lineItemUom } from "../lib/line-item.js";
 
 export const reportsRoutes = async (app: FastifyInstance) => {
   app.get("/reports/dashboard", async () => {
@@ -123,40 +127,42 @@ export const reportsRoutes = async (app: FastifyInstance) => {
   // Productivity "Production lines" overview.
   //
   // Returns one row per active WorkCenter with:
-  //   * machines        - id/code/name/status, plus a derived
-  //                       'busy' flag if any in-progress MO ran
-  //                       through them today.
-  //   * activeOrders    - count of MOs whose station name == WC name
-  //                       and status == 'in-progress'.
-  //   * outputToday     - sum of WorkOrder.output rows whose station
-  //                       == WC name AND startTime is today (or
-  //                       updatedAt today as a fallback when startTime
-  //                       wasn't recorded).
-  //   * utilisationPct  - outputToday / (capacityPerHour * 8h) * 100,
-  //                       capped at 100. null when capacity unknown.
+  //   * lines           - each ProductionLine inside the facility with
+  //                       machine + active MO drill-down.
+  //   * activeOrders    - count of in-progress MOs for this facility
+  //                       (matched by facilityId FK, not station name).
+  //   * outputToday     - sum of WO output rows whose lineId belongs to
+  //                       this facility, startTime today.
+  //   * utilisationPct  - outputToday / (capacityPerHour * 8h) * 100.
   //
-  // Only active WorkCenters are returned. Inactive ones are treated as
-  // historical and excluded from rollups.
-  app.get("/reports/production-lines", async () => {
-    const workCenters = await db.workCenter.findMany({
+  // The legacy /reports/production-lines endpoint is kept as an alias
+  // and redirects to this same handler.
+  const productionFacilitiesReport = async () => {
+    const facilities = await db.productionFacility.findMany({
       where: { active: true },
       include: {
-        machines: {
+        lines: {
           where: { active: true },
           orderBy: { code: "asc" },
+          include: {
+            machines: {
+              where: { active: true },
+              orderBy: { code: "asc" },
+            },
+          },
         },
       },
       orderBy: { code: "asc" },
     });
-    if (workCenters.length === 0) {
-      return { lines: [], totals: { activeOrders: 0, outputToday: 0 } };
+    if (facilities.length === 0) {
+      return { facilities: [], totals: { activeOrders: 0, outputToday: 0 } };
     }
-    const wcNames = workCenters.map((wc) => wc.name);
-    // Active MOs whose station matches one of our WC names.
+    const facilityIds = facilities.map((f) => f.id);
+    // Active MOs matched by facilityId FK.
     const activeMOs = await db.productionOrder.findMany({
       where: {
         status: { in: ["in-progress", "delayed"] },
-        station: { in: wcNames },
+        facilityId: { in: facilityIds },
       },
       include: {
         bom: {
@@ -165,22 +171,23 @@ export const reportsRoutes = async (app: FastifyInstance) => {
             variant: { select: { sku: true, size: true } },
           },
         },
+        line: { select: { id: true, name: true } },
       },
     });
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
     const tomorrowStart = new Date(todayStart.getTime() + 86400000);
-    // WO.output sums for today, grouped by station (== WC name).
-    const woAgg = await db.workOrder.groupBy({
-      by: ["station"],
+
+    // Collect all line IDs across all active facilities.
+    const allLineIds = facilities.flatMap((f) => f.lines.map((l) => l.id));
+
+    // WO output sums for today grouped by lineId.
+    const woRows = await db.workOrder.findMany({
       where: {
-        station: { in: wcNames },
+        lineId: { in: allLineIds },
         OR: [
           { startTime: { gte: todayStart, lt: tomorrowStart } },
           {
-            // Fall back to updatedAt when WO never had a start time
-            // recorded (older rows). We compare on updatedAt only when
-            // there's a non-zero output to avoid pulling idle rows.
             AND: [
               { startTime: null },
               { output: { gt: 0 } },
@@ -189,55 +196,63 @@ export const reportsRoutes = async (app: FastifyInstance) => {
           },
         ],
       },
-      _sum: { output: true },
+      select: { lineId: true, output: true },
     });
-    const outputByStation = new Map<string, number>();
-    for (const r of woAgg) outputByStation.set(r.station, r._sum.output ?? 0);
-
-    const ordersByStation = new Map<
-      string,
-      Array<(typeof activeMOs)[number]>
-    >();
-    for (const mo of activeMOs) {
-      const list = ordersByStation.get(mo.station) ?? [];
-      list.push(mo);
-      ordersByStation.set(mo.station, list);
+    const outputByLineId = new Map<string, number>();
+    for (const r of woRows) {
+      if (r.lineId) {
+        outputByLineId.set(r.lineId, (outputByLineId.get(r.lineId) ?? 0) + r.output);
+      }
     }
-    // Machines whose code/name appears as the machine field of an
-    // active WorkOrder are flagged busy. We check by name because the
-    // WO.machine column is free-text.
+
+    const ordersByFacilityId = new Map<string, Array<(typeof activeMOs)[number]>>();
+    for (const mo of activeMOs) {
+      if (!mo.facilityId) continue;
+      const list = ordersByFacilityId.get(mo.facilityId) ?? [];
+      list.push(mo);
+      ordersByFacilityId.set(mo.facilityId, list);
+    }
+
+    // Machines busy if they have a running/queued WO via machineId or name.
     const activeWOs = await db.workOrder.findMany({
       where: { status: { in: ["running", "queued"] } },
-      select: { machine: true, station: true },
+      select: { machine: true, machineId: true },
     });
-    const busyMachineNames = new Set<string>(
-      activeWOs.map((w) => w.machine).filter((m) => m && m !== "—")
-    );
+    const busyMachineIds = new Set<string>(activeWOs.map((w) => w.machineId).filter(Boolean) as string[]);
+    const busyMachineNames = new Set<string>(activeWOs.map((w) => w.machine).filter((m): m is string => !!m && m !== "—"));
 
-    const lines = workCenters.map((wc) => {
-      const orders = ordersByStation.get(wc.name) ?? [];
-      const outputToday = outputByStation.get(wc.name) ?? 0;
-      // 8h shift assumption is a sensible default - operators can
-      // override later via Settings if needed.
+    const result = facilities.map((fac) => {
+      const orders = ordersByFacilityId.get(fac.id) ?? [];
+      const outputToday = fac.lines.reduce(
+        (sum, l) => sum + (outputByLineId.get(l.id) ?? 0),
+        0
+      );
       const dailyCapacity =
-        wc.capacityPerHour && wc.capacityPerHour > 0
-          ? wc.capacityPerHour * 8
+        fac.capacityPerHour && fac.capacityPerHour > 0
+          ? fac.capacityPerHour * 8
           : null;
       const utilisationPct =
         dailyCapacity !== null
           ? Math.min(100, Math.round((outputToday / dailyCapacity) * 100))
           : null;
       return {
-        id: wc.id,
-        code: wc.code,
-        name: wc.name,
-        capacityPerHour: wc.capacityPerHour,
-        machines: wc.machines.map((m) => ({
-          id: m.id,
-          code: m.code,
-          name: m.name,
-          status: m.status,
-          busy: busyMachineNames.has(m.name),
+        id: fac.id,
+        code: fac.code,
+        name: fac.name,
+        capacityPerHour: fac.capacityPerHour,
+        lines: fac.lines.map((l) => ({
+          id: l.id,
+          code: l.code,
+          name: l.name,
+          capacityPerHour: l.capacityPerHour,
+          outputToday: outputByLineId.get(l.id) ?? 0,
+          machines: l.machines.map((m) => ({
+            id: m.id,
+            code: m.code,
+            name: m.name,
+            status: m.status,
+            busy: busyMachineIds.has(m.id) || busyMachineNames.has(m.name),
+          })),
         })),
         activeOrders: orders.length,
         orders: orders.map((o) => ({
@@ -248,6 +263,8 @@ export const reportsRoutes = async (app: FastifyInstance) => {
           actualQty: o.actualQty,
           productSku: o.bom.variant?.sku ?? o.bom.product.sku,
           productName: o.bom.product.name,
+          lineId: o.lineId,
+          lineName: o.line?.name ?? null,
         })),
         outputToday,
         dailyCapacity,
@@ -255,13 +272,19 @@ export const reportsRoutes = async (app: FastifyInstance) => {
       };
     });
     return {
-      lines,
+      facilities: result,
+      // Legacy field alias so existing frontend code that reads `.lines` keeps working.
+      lines: result,
       totals: {
         activeOrders: activeMOs.length,
-        outputToday: lines.reduce((s, l) => s + l.outputToday, 0),
+        outputToday: result.reduce((s, f) => s + f.outputToday, 0),
       },
     };
-  });
+  };
+
+  app.get("/reports/production-facilities", productionFacilitiesReport);
+  // Legacy alias — keep for one release.
+  app.get("/reports/production-lines", productionFacilitiesReport);
 
   // Real attendance heatmap - replaces the seeded sequence the
   // Productivity page used to show. Returns an array of `days` rows,
@@ -418,5 +441,870 @@ export const reportsRoutes = async (app: FastifyInstance) => {
       uom: p.uom,
       stockOnHand: p.stockOnHand,
     }));
+  });
+
+  // =====================================================================
+  // Multi-container packing reports
+  //
+  // Four endpoints intended for ops + floor supervisors:
+  //   1. /reports/pack-manifest/:packingSlipId
+  //        Container-by-container breakdown of a packing slip. The packer
+  //        prints this to confirm "what is in box 01 vs box 02" before
+  //        sealing the trip. Also used as the customer-facing manifest
+  //        when a delivery is split across multiple cartons.
+  //   2. /reports/item-container-history?productId=&variantId=&days=
+  //        For a given product/variant, the most-recent containers it has
+  //        been packed into. Used by customer-care when a buyer reports
+  //        a missing/damaged item and we need to trace which container.
+  //   3. /reports/trip-manifest/:tripId
+  //        Roll-up of every container across every dispatch on a trip.
+  //        The loader prints this to verify the truck before departure;
+  //        the totals match DispatchOrder.weightKg / Trip capacityKg.
+  //   4. /reports/pack-throughput?days=30
+  //        Daily counts of slips packed and containers sealed + total kg.
+  //        Powers a small productivity widget on the dashboard.
+  //
+  // All four support `?format=csv` for download. Schemas validate the
+  // querystring with zod so we get explicit 400s rather than silent
+  // fallbacks.
+  // =====================================================================
+
+  const formatQ = z.object({ format: z.enum(["json", "csv"]).optional() });
+
+  /** Sum of `qty` across a list of container items. */
+  const sumQty = (entries: { qty: number }[]) =>
+    entries.reduce((s, e) => s + e.qty, 0);
+
+  // Stable string for null-safe display of a variant key.
+  const variantKey = (
+    v: { sku?: string | null; size?: string | null; color?: string | null } | null | undefined
+  ): string => {
+    if (!v) return "";
+    return [v.sku, v.size, v.color].filter(Boolean).join(" / ");
+  };
+
+  // -------------------------------------------------------------------
+  // 1. Pack manifest (per packing slip)
+  // -------------------------------------------------------------------
+  app.get<{ Params: { packingSlipId: string }; Querystring: { format?: "json" | "csv" } }>(
+    "/reports/pack-manifest/:packingSlipId",
+    async (req, reply) => {
+      const { format } = formatQ.parse(req.query);
+      const slip = await db.packingSlip.findUnique({
+        where: { id: req.params.packingSlipId },
+        include: {
+          salesOrder: {
+            select: {
+              id: true,
+              soNo: true,
+              customer: { select: { id: true, code: true, name: true, city: true } },
+            },
+          },
+          invoice: {
+            select: {
+              id: true,
+              invoiceNo: true,
+              dispatches: {
+                select: {
+                  id: true,
+                  dispatchNo: true,
+                  status: true,
+                  trip: { select: { id: true, tripNo: true, scheduledDate: true } },
+                },
+              },
+            },
+          },
+          items: {
+            include: {
+              product: { select: { id: true, sku: true, name: true, uom: true, barcode: true } },
+              variant: {
+                select: {
+                  id: true,
+                  sku: true,
+                  size: true,
+                  color: true,
+                  barcode: true,
+                  uom: true,
+                },
+              },
+              containerEntries: { select: { qty: true, containerId: true } },
+            },
+          },
+          containers: {
+            orderBy: { seq: "asc" },
+            include: {
+              containerType: { select: { code: true, name: true, kind: true, tareKg: true } },
+              items: {
+                include: {
+                  packingSlipItem: {
+                    select: {
+                      id: true,
+                      qtyPacked: true,
+                      product: {
+                        select: { id: true, sku: true, name: true, uom: true, barcode: true },
+                      },
+                      variant: {
+                        select: {
+                          id: true,
+                          sku: true,
+                          size: true,
+                          color: true,
+                          barcode: true,
+                          uom: true,
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+      if (!slip) {
+        reply.code(404);
+        return { error: "not_found" };
+      }
+
+      const containers = slip.containers.map((c) => {
+        const lines = c.items.map((ci) => ({
+          packingSlipItemId: ci.packingSlipItemId,
+          productId: ci.packingSlipItem.product.id,
+          productSku: ci.packingSlipItem.product.sku,
+          productName: ci.packingSlipItem.product.name,
+          productBarcode: ci.packingSlipItem.product.barcode ?? null,
+          // Effective UoM: variant.uom wins (e.g. "pc" for a bottled
+          // pack), falling back to "pc" when the line has a variant
+          // but no explicit UoM, and to the bulk product.uom otherwise.
+          uom: lineItemUom(
+            ci.packingSlipItem.product,
+            ci.packingSlipItem.variant
+          ),
+          variantId: ci.packingSlipItem.variant?.id ?? null,
+          variant: variantKey(ci.packingSlipItem.variant),
+          variantBarcode: ci.packingSlipItem.variant?.barcode ?? null,
+          qty: ci.qty,
+          qtyPacked: ci.packingSlipItem.qtyPacked,
+        }));
+        return {
+          id: c.id,
+          seq: c.seq,
+          label: c.label,
+          code: containerCode(slip.packingSlipNo, c.seq),
+          status: c.status,
+          containerType: c.containerType
+            ? {
+                code: c.containerType.code,
+                name: c.containerType.name,
+                kind: c.containerType.kind,
+                tareKg: c.containerType.tareKg,
+              }
+            : null,
+          estWeightKg: c.estWeightKg,
+          actualWeightKg: c.actualWeightKg,
+          tareKgOverride: c.tareKgOverride,
+          notes: c.notes,
+          sealedAt: c.sealedAt,
+          sealedById: c.sealedById,
+          itemCount: lines.length,
+          unitCount: sumQty(c.items),
+          lines,
+        };
+      });
+
+      // Any slip line that isn't fully allocated across sealed containers
+      // is surfaced so the manifest viewer can flag stragglers (e.g. a
+      // line still half open in container 02).
+      const unallocated = slip.items
+        .map((it) => {
+          const allocated = sumQty(it.containerEntries);
+          return {
+            packingSlipItemId: it.id,
+            productSku: it.product.sku,
+            productName: it.product.name,
+            variant: variantKey(it.variant),
+            uom: lineItemUom(it.product, it.variant),
+            qtyPacked: it.qtyPacked,
+            allocated,
+            shortage: Math.max(0, it.qtyPacked - allocated),
+          };
+        })
+        .filter((r) => r.shortage > 1e-6);
+
+      const payload = {
+        slip: {
+          id: slip.id,
+          packingSlipNo: slip.packingSlipNo,
+          status: slip.status,
+          packedAt: slip.packedAt,
+          totalEstWeightKg: slip.totalEstWeightKg,
+          totalActualWeightKg: slip.totalActualWeightKg,
+        },
+        salesOrder: slip.salesOrder,
+        invoice: slip.invoice,
+        containers,
+        unallocated,
+        totals: {
+          containerCount: containers.length,
+          sealedCount: containers.filter((c) => c.status === "sealed").length,
+          unitCount: containers.reduce((s, c) => s + c.unitCount, 0),
+          estWeightKg: slip.totalEstWeightKg,
+          actualWeightKg: slip.totalActualWeightKg,
+        },
+      };
+
+      if (format === "csv") {
+        const headers = [
+          "container_label",
+          "container_code",
+          "container_type",
+          "status",
+          "est_weight_kg",
+          "actual_weight_kg",
+          "product_sku",
+          "product_barcode",
+          "product_name",
+          "variant",
+          "variant_barcode",
+          "qty_in_container",
+          "uom",
+          "line_qty_packed",
+        ];
+        const rows: unknown[][] = [];
+        for (const c of containers) {
+          if (c.lines.length === 0) {
+            rows.push([
+              c.label,
+              c.code,
+              c.containerType?.code ?? "",
+              c.status,
+              c.estWeightKg,
+              c.actualWeightKg,
+              "",
+              "",
+              "(empty)",
+              "",
+              "",
+              0,
+              "",
+              "",
+            ]);
+            continue;
+          }
+          for (const ln of c.lines) {
+            rows.push([
+              c.label,
+              c.code,
+              c.containerType?.code ?? "",
+              c.status,
+              c.estWeightKg,
+              c.actualWeightKg,
+              ln.productSku,
+              ln.productBarcode ?? "",
+              ln.productName,
+              ln.variant,
+              ln.variantBarcode ?? "",
+              ln.qty,
+              ln.uom,
+              ln.qtyPacked,
+            ]);
+          }
+        }
+        reply.header("Content-Type", "text/csv; charset=utf-8");
+        reply.header(
+          "Content-Disposition",
+          csvAttachment(`pack-manifest-${slip.packingSlipNo}.csv`)
+        );
+        return toCsv(headers, rows);
+      }
+
+      return payload;
+    }
+  );
+
+  // -------------------------------------------------------------------
+  // 2. Item -> container history
+  // -------------------------------------------------------------------
+  const itemHistoryQ = z.object({
+    productId: z.string().optional(),
+    variantId: z.string().optional(),
+    barcode: z.string().optional(),
+    sku: z.string().optional(),
+    days: z.coerce.number().int().min(1).max(365).optional(),
+    limit: z.coerce.number().int().min(1).max(500).optional(),
+    format: z.enum(["json", "csv"]).optional(),
+  });
+  app.get("/reports/item-container-history", async (req, reply) => {
+    const q = itemHistoryQ.parse(req.query);
+    if (!q.productId && !q.variantId && !q.barcode && !q.sku) {
+      reply.code(400);
+      return { error: "missing_filter", message: "Provide productId, variantId, sku, or barcode." };
+    }
+
+    // Resolve sku/barcode to product/variant ids when given. We accept
+    // either, case-insensitive — mirrors the rest of the search APIs.
+    let productId = q.productId;
+    let variantId = q.variantId;
+    if (!productId && !variantId && (q.sku || q.barcode)) {
+      const code = (q.sku ?? q.barcode ?? "").trim();
+      if (code) {
+        // SQLite Prisma doesn't support `mode: "insensitive"` — match
+        // exact + uppercase variant explicitly, matching the pattern
+        // used by /scan resolvers.
+        const upper = code.toUpperCase();
+        const variant = await db.productVariant.findFirst({
+          where: {
+            OR: [
+              { sku: { equals: code } },
+              { sku: { equals: upper } },
+              { barcode: { equals: code } },
+              { barcode: { equals: upper } },
+            ],
+          },
+          select: { id: true, productId: true },
+        });
+        if (variant) {
+          variantId = variant.id;
+        } else {
+          const product = await db.product.findFirst({
+            where: {
+              OR: [
+                { sku: { equals: code } },
+                { sku: { equals: upper } },
+                { barcode: { equals: code } },
+                { barcode: { equals: upper } },
+              ],
+            },
+            select: { id: true },
+          });
+          if (product) productId = product.id;
+        }
+      }
+    }
+
+    if (!productId && !variantId) {
+      reply.code(404);
+      return { error: "item_not_found" };
+    }
+
+    const sinceDate = q.days
+      ? new Date(Date.now() - q.days * 86400000)
+      : new Date(Date.now() - 90 * 86400000);
+
+    const where: {
+      packingSlipItem: {
+        productId?: string;
+        variantId?: string;
+        packingSlip: { packedAt: { gte: Date } };
+      };
+    } = {
+      packingSlipItem: {
+        ...(productId ? { productId } : {}),
+        ...(variantId ? { variantId } : {}),
+        packingSlip: { packedAt: { gte: sinceDate } },
+      },
+    };
+
+    const entries = await db.packingContainerItem.findMany({
+      where,
+      take: q.limit ?? 200,
+      orderBy: { id: "desc" }, // proxy for createdAt; this table has no timestamp.
+      include: {
+        container: {
+          include: {
+            containerType: { select: { code: true, kind: true } },
+            packingSlip: {
+              select: {
+                id: true,
+                packingSlipNo: true,
+                packedAt: true,
+                status: true,
+                salesOrder: {
+                  select: {
+                    id: true,
+                    soNo: true,
+                    customer: { select: { id: true, code: true, name: true } },
+                  },
+                },
+                invoice: {
+                  select: {
+                    id: true,
+                    invoiceNo: true,
+                    dispatches: {
+                      select: {
+                        id: true,
+                        dispatchNo: true,
+                        status: true,
+                        trip: { select: { id: true, tripNo: true, scheduledDate: true } },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        packingSlipItem: {
+          select: {
+            qtyPacked: true,
+            product: { select: { id: true, sku: true, name: true, uom: true, barcode: true } },
+            variant: {
+              select: {
+                id: true,
+                sku: true,
+                size: true,
+                color: true,
+                barcode: true,
+                uom: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    // Sort newest-first by the slip's packedAt for the response — the
+    // SQL `id desc` ordering is just a stable cursor proxy.
+    const rows = entries
+      .filter((e) => !!e.container.packingSlip.packedAt)
+      .sort((a, b) => {
+        const ta = a.container.packingSlip.packedAt?.getTime() ?? 0;
+        const tb = b.container.packingSlip.packedAt?.getTime() ?? 0;
+        return tb - ta;
+      })
+      .map((e) => ({
+        packingSlipId: e.container.packingSlip.id,
+        packingSlipNo: e.container.packingSlip.packingSlipNo,
+        packedAt: e.container.packingSlip.packedAt,
+        slipStatus: e.container.packingSlip.status,
+        containerId: e.container.id,
+        containerSeq: e.container.seq,
+        containerLabel: e.container.label,
+        containerCode: containerCode(
+          e.container.packingSlip.packingSlipNo,
+          e.container.seq
+        ),
+        containerType: e.container.containerType?.code ?? null,
+        containerStatus: e.container.status,
+        qty: e.qty,
+        qtyPacked: e.packingSlipItem.qtyPacked,
+        // Surface variant.uom inside the product blob so client renders
+        // that don't know about variant fall-through still display the
+        // right "pc" / "kg" / "L" suffix.
+        product: {
+          ...e.packingSlipItem.product,
+          uom: lineItemUom(
+            e.packingSlipItem.product,
+            e.packingSlipItem.variant
+          ),
+        },
+        variant: e.packingSlipItem.variant,
+        salesOrder: e.container.packingSlip.salesOrder,
+        invoiceNo: e.container.packingSlip.invoice?.invoiceNo ?? null,
+        dispatches:
+          e.container.packingSlip.invoice?.dispatches.map((d) => ({
+            dispatchNo: d.dispatchNo,
+            status: d.status,
+            tripNo: d.trip?.tripNo ?? null,
+            scheduledDate: d.trip?.scheduledDate ?? null,
+          })) ?? [],
+      }));
+
+    if (q.format === "csv") {
+      const headers = [
+        "packed_at",
+        "packing_slip_no",
+        "container_label",
+        "container_code",
+        "container_type",
+        "container_status",
+        "product_sku",
+        "product_barcode",
+        "product_name",
+        "variant",
+        "qty_in_container",
+        "uom",
+        "so_no",
+        "customer",
+        "invoice_no",
+        "dispatch_no",
+        "trip_no",
+      ];
+      const csvRows = rows.map((r) => [
+        r.packedAt,
+        r.packingSlipNo,
+        r.containerLabel,
+        r.containerCode,
+        r.containerType ?? "",
+        r.containerStatus,
+        r.product.sku,
+        r.product.barcode ?? "",
+        r.product.name,
+        variantKey(r.variant),
+        r.qty,
+        r.product.uom,
+        r.salesOrder?.soNo ?? "",
+        r.salesOrder?.customer?.name ?? "",
+        r.invoiceNo ?? "",
+        r.dispatches.map((d) => d.dispatchNo).join(" / "),
+        r.dispatches.map((d) => d.tripNo ?? "").join(" / "),
+      ]);
+      reply.header("Content-Type", "text/csv; charset=utf-8");
+      reply.header(
+        "Content-Disposition",
+        csvAttachment(
+          `item-container-history-${variantId ?? productId ?? "item"}.csv`
+        )
+      );
+      return toCsv(headers, csvRows);
+    }
+
+    return {
+      productId: productId ?? null,
+      variantId: variantId ?? null,
+      sinceDate,
+      count: rows.length,
+      rows,
+    };
+  });
+
+  // -------------------------------------------------------------------
+  // 3. Trip manifest
+  // -------------------------------------------------------------------
+  app.get<{ Params: { tripId: string }; Querystring: { format?: "json" | "csv" } }>(
+    "/reports/trip-manifest/:tripId",
+    async (req, reply) => {
+      const { format } = formatQ.parse(req.query);
+      const trip = await db.trip.findUnique({
+        where: { id: req.params.tripId },
+        include: {
+          dispatches: {
+            include: {
+              invoice: {
+                select: {
+                  id: true,
+                  invoiceNo: true,
+                  amount: true,
+                  customer: { select: { id: true, code: true, name: true, city: true } },
+                  packingSlip: {
+                    include: {
+                      containers: {
+                        orderBy: { seq: "asc" },
+                        include: {
+                          containerType: { select: { code: true, kind: true, tareKg: true } },
+                          items: {
+                            include: {
+                              packingSlipItem: {
+                                select: {
+                                  id: true,
+                                  qtyPacked: true,
+                                  product: {
+                                    select: {
+                                      id: true,
+                                      sku: true,
+                                      name: true,
+                                      uom: true,
+                                      barcode: true,
+                                    },
+                                  },
+                                  variant: {
+                                    select: {
+                                      id: true,
+                                      sku: true,
+                                      size: true,
+                                      color: true,
+                                      barcode: true,
+                                      uom: true,
+                                    },
+                                  },
+                                },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      });
+      if (!trip) {
+        reply.code(404);
+        return { error: "not_found" };
+      }
+
+      const stops = trip.dispatches.map((d) => {
+        const slip = d.invoice.packingSlip;
+        const containers = (slip?.containers ?? []).map((c) => {
+          const slipNo = slip?.packingSlipNo ?? "";
+          const lines = c.items.map((ci) => ({
+            productSku: ci.packingSlipItem.product.sku,
+            productName: ci.packingSlipItem.product.name,
+            productBarcode: ci.packingSlipItem.product.barcode ?? null,
+            // Effective UoM: variant wins over parent product.
+            uom: lineItemUom(
+              ci.packingSlipItem.product,
+              ci.packingSlipItem.variant
+            ),
+            variant: variantKey(ci.packingSlipItem.variant),
+            variantBarcode: ci.packingSlipItem.variant?.barcode ?? null,
+            qty: ci.qty,
+          }));
+          return {
+            id: c.id,
+            seq: c.seq,
+            label: c.label,
+            code: containerCode(slipNo, c.seq),
+            status: c.status,
+            containerType: c.containerType,
+            estWeightKg: c.estWeightKg,
+            actualWeightKg: c.actualWeightKg,
+            unitCount: sumQty(c.items),
+            lines,
+          };
+        });
+        const slipEst = slip?.totalEstWeightKg ?? 0;
+        const slipActual = slip?.totalActualWeightKg ?? null;
+        return {
+          dispatchId: d.id,
+          dispatchNo: d.dispatchNo,
+          status: d.status,
+          weightKg: d.weightKg,
+          invoiceNo: d.invoice.invoiceNo,
+          customer: d.invoice.customer,
+          packingSlip: slip
+            ? {
+                id: slip.id,
+                packingSlipNo: slip.packingSlipNo,
+                totalEstWeightKg: slipEst,
+                totalActualWeightKg: slipActual,
+              }
+            : null,
+          containers,
+          containerCount: containers.length,
+          unitCount: containers.reduce((s, c) => s + c.unitCount, 0),
+          estWeightKg: slipEst,
+          actualWeightKg: slipActual,
+        };
+      });
+
+      const payload = {
+        trip: {
+          id: trip.id,
+          tripNo: trip.tripNo,
+          scheduledDate: trip.scheduledDate,
+          status: trip.status,
+          vehicle: trip.vehicle,
+          driver: trip.driver,
+          route: trip.route,
+          capacityKg: trip.capacityKg,
+        },
+        stops,
+        totals: {
+          stopCount: stops.length,
+          containerCount: stops.reduce((s, st) => s + st.containerCount, 0),
+          unitCount: stops.reduce((s, st) => s + st.unitCount, 0),
+          // Sum of DispatchOrder.weightKg — this is the canonical value
+          // driving load planning. Falls back to per-stop est when a
+          // dispatch's weight wasn't recomputed yet.
+          weightKg:
+            Math.round(
+              stops.reduce((s, st) => s + (st.weightKg || st.estWeightKg), 0) *
+                100
+            ) / 100,
+          capacityKg: trip.capacityKg,
+        },
+      };
+
+      if (format === "csv") {
+        const headers = [
+          "dispatch_no",
+          "customer",
+          "customer_city",
+          "invoice_no",
+          "packing_slip_no",
+          "container_label",
+          "container_code",
+          "container_type",
+          "container_status",
+          "container_est_kg",
+          "container_actual_kg",
+          "product_sku",
+          "product_barcode",
+          "product_name",
+          "variant",
+          "qty_in_container",
+          "uom",
+        ];
+        const rows: unknown[][] = [];
+        for (const st of stops) {
+          if (st.containers.length === 0) {
+            rows.push([
+              st.dispatchNo,
+              st.customer?.name ?? "",
+              st.customer?.city ?? "",
+              st.invoiceNo,
+              st.packingSlip?.packingSlipNo ?? "",
+              "(no containers)",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+              "",
+            ]);
+            continue;
+          }
+          for (const c of st.containers) {
+            if (c.lines.length === 0) {
+              rows.push([
+                st.dispatchNo,
+                st.customer?.name ?? "",
+                st.customer?.city ?? "",
+                st.invoiceNo,
+                st.packingSlip?.packingSlipNo ?? "",
+                c.label,
+                c.code,
+                c.containerType?.code ?? "",
+                c.status,
+                c.estWeightKg,
+                c.actualWeightKg,
+                "",
+                "",
+                "(empty)",
+                "",
+                "",
+                "",
+              ]);
+              continue;
+            }
+            for (const ln of c.lines) {
+              rows.push([
+                st.dispatchNo,
+                st.customer?.name ?? "",
+                st.customer?.city ?? "",
+                st.invoiceNo,
+                st.packingSlip?.packingSlipNo ?? "",
+                c.label,
+                c.code,
+                c.containerType?.code ?? "",
+                c.status,
+                c.estWeightKg,
+                c.actualWeightKg,
+                ln.productSku,
+                ln.productBarcode ?? "",
+                ln.productName,
+                ln.variant,
+                ln.qty,
+                ln.uom,
+              ]);
+            }
+          }
+        }
+        reply.header("Content-Type", "text/csv; charset=utf-8");
+        reply.header(
+          "Content-Disposition",
+          csvAttachment(`trip-manifest-${trip.tripNo}.csv`)
+        );
+        return toCsv(headers, rows);
+      }
+
+      return payload;
+    }
+  );
+
+  // -------------------------------------------------------------------
+  // 4. Pack throughput (daily)
+  // -------------------------------------------------------------------
+  const throughputQ = z.object({
+    days: z.coerce.number().int().min(1).max(180).optional(),
+    format: z.enum(["json", "csv"]).optional(),
+  });
+  app.get("/reports/pack-throughput", async (req, reply) => {
+    const q = throughputQ.parse(req.query);
+    const days = q.days ?? 14;
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    start.setTime(start.getTime() - (days - 1) * 86400000);
+
+    const [slips, containers] = await Promise.all([
+      db.packingSlip.findMany({
+        where: { packedAt: { gte: start } },
+        select: { id: true, packedAt: true, totalEstWeightKg: true, totalActualWeightKg: true },
+      }),
+      db.packingContainer.findMany({
+        where: { sealedAt: { gte: start } },
+        select: { sealedAt: true, estWeightKg: true, actualWeightKg: true },
+      }),
+    ]);
+
+    type Bucket = {
+      day: string;
+      slips: number;
+      containers: number;
+      estKg: number;
+      actualKg: number;
+    };
+    const buckets = new Map<string, Bucket>();
+    const fmt = (d: Date) => d.toISOString().slice(0, 10); // yyyy-mm-dd
+    for (let i = 0; i < days; i++) {
+      const d = new Date(start.getTime() + i * 86400000);
+      const key = fmt(d);
+      buckets.set(key, { day: key, slips: 0, containers: 0, estKg: 0, actualKg: 0 });
+    }
+    for (const s of slips) {
+      if (!s.packedAt) continue;
+      const key = fmt(s.packedAt);
+      const b = buckets.get(key);
+      if (!b) continue;
+      b.slips += 1;
+    }
+    for (const c of containers) {
+      if (!c.sealedAt) continue;
+      const key = fmt(c.sealedAt);
+      const b = buckets.get(key);
+      if (!b) continue;
+      b.containers += 1;
+      b.estKg += c.estWeightKg;
+      if (c.actualWeightKg != null) b.actualKg += c.actualWeightKg;
+    }
+    const rows = [...buckets.values()].map((b) => ({
+      day: b.day,
+      slips: b.slips,
+      containers: b.containers,
+      estKg: Math.round(b.estKg * 100) / 100,
+      actualKg: Math.round(b.actualKg * 100) / 100,
+    }));
+
+    if (q.format === "csv") {
+      const headers = ["day", "slips_packed", "containers_sealed", "est_weight_kg", "actual_weight_kg"];
+      const csvRows = rows.map((r) => [r.day, r.slips, r.containers, r.estKg, r.actualKg]);
+      reply.header("Content-Type", "text/csv; charset=utf-8");
+      reply.header(
+        "Content-Disposition",
+        csvAttachment(`pack-throughput-${days}d.csv`)
+      );
+      return toCsv(headers, csvRows);
+    }
+
+    return {
+      rangeStart: start,
+      days,
+      totals: {
+        slips: rows.reduce((s, r) => s + r.slips, 0),
+        containers: rows.reduce((s, r) => s + r.containers, 0),
+        estKg: Math.round(rows.reduce((s, r) => s + r.estKg, 0) * 100) / 100,
+        actualKg: Math.round(rows.reduce((s, r) => s + r.actualKg, 0) * 100) / 100,
+      },
+      rows,
+    };
   });
 };

@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Chip } from "@/components/common/Chip";
+import { primaryScanCode } from "@/lib/scanCode";
 import { Input } from "@/components/common/Input";
 import {
   api,
@@ -458,7 +459,9 @@ export const PickListEditor = ({ pickListId, onClose, onCompleted, onChanged }: 
                             {head.product?.name}
                           </div>
                           <div className="text-caption text-ink-muted font-mono">
-                            {head.variant?.sku ?? head.product?.sku}
+                            {head.variant
+                              ? primaryScanCode(head.variant)
+                              : primaryScanCode(head.product ?? { sku: "—", barcode: null })}
                             {head.variant &&
                               (head.variant.size || head.variant.color || head.variant.grade) && (
                                 <span className="ml-2">

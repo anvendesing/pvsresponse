@@ -11,6 +11,7 @@
 import type { FastifyInstance } from "fastify";
 import { db } from "../db.js";
 import { mintShareToken } from "../lib/share.js";
+import { lineItemCode, lineItemUom, variantAttrsLine } from "../lib/line-item.js";
 
 export const shareRoutes = async (app: FastifyInstance) => {
   // --------------------------------------------------------- INVOICE
@@ -27,10 +28,11 @@ export const shareRoutes = async (app: FastifyInstance) => {
         packingSlip: { select: { packingSlipNo: true } },
         items: {
           include: {
-            product: { select: { name: true, sku: true, uom: true, hsn: true } },
+            product: { select: { name: true, sku: true, uom: true, hsn: true, barcode: true } },
             variant: {
               select: {
                 sku: true,
+                barcode: true,
                 size: true,
                 color: true,
                 grade: true,
@@ -61,12 +63,11 @@ export const shareRoutes = async (app: FastifyInstance) => {
       items: inv.items.map((it) => ({
         productName: it.product.name,
         productSku: it.product.sku,
+        lineCode: lineItemCode(it.product, it.variant),
         hsn: it.product.hsn,
-        uom: it.product.uom,
+        uom: lineItemUom(it.product, it.variant),
         variantSku: it.variant?.sku ?? null,
-        variantAttrs: [it.variant?.size, it.variant?.color, it.variant?.grade]
-          .filter((x) => x && String(x).trim())
-          .join(" · "),
+        variantAttrs: variantAttrsLine(it.variant),
         qty: it.qty,
         rate: it.rate,
         amount: it.amount,
@@ -102,10 +103,11 @@ export const shareRoutes = async (app: FastifyInstance) => {
         quote: { select: { quoteNo: true } },
         items: {
           include: {
-            product: { select: { name: true, sku: true, uom: true, hsn: true } },
+            product: { select: { name: true, sku: true, uom: true, hsn: true, barcode: true } },
             variant: {
               select: {
                 sku: true,
+                barcode: true,
                 size: true,
                 color: true,
                 grade: true,
@@ -134,12 +136,11 @@ export const shareRoutes = async (app: FastifyInstance) => {
       items: so.items.map((it) => ({
         productName: it.product.name,
         productSku: it.product.sku,
+        lineCode: lineItemCode(it.product, it.variant),
         hsn: it.product.hsn,
-        uom: it.product.uom,
+        uom: lineItemUom(it.product, it.variant),
         variantSku: it.variant?.sku ?? null,
-        variantAttrs: [it.variant?.size, it.variant?.color, it.variant?.grade]
-          .filter((x) => x && String(x).trim())
-          .join(" · "),
+        variantAttrs: variantAttrsLine(it.variant),
         qtyOrdered: it.qtyOrdered,
         qtyInvoiced: it.qtyInvoiced,
         qtyCancelled: it.qtyCancelled,
@@ -184,10 +185,11 @@ export const shareRoutes = async (app: FastifyInstance) => {
         invoice: { select: { invoiceNo: true } },
         items: {
           include: {
-            product: { select: { name: true, sku: true, uom: true, hsn: true } },
+            product: { select: { name: true, sku: true, uom: true, hsn: true, barcode: true } },
             variant: {
               select: {
                 sku: true,
+                barcode: true,
                 size: true,
                 color: true,
                 grade: true,
@@ -212,12 +214,11 @@ export const shareRoutes = async (app: FastifyInstance) => {
       items: ps.items.map((it) => ({
         productName: it.product.name,
         productSku: it.product.sku,
+        lineCode: lineItemCode(it.product, it.variant),
         hsn: it.product.hsn,
-        uom: it.product.uom,
+        uom: lineItemUom(it.product, it.variant),
         variantSku: it.variant?.sku ?? null,
-        variantAttrs: [it.variant?.size, it.variant?.color, it.variant?.grade]
-          .filter((x) => x && String(x).trim())
-          .join(" · "),
+        variantAttrs: variantAttrsLine(it.variant),
         qtyOrdered: it.qtyOrdered,
         qtyPicked: it.qtyPicked,
         qtyPacked: it.qtyPacked,

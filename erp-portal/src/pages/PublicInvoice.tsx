@@ -112,7 +112,7 @@ export const PublicInvoice = () => {
                         <div className="text-xs text-gray-500 mt-0.5">{it.variantAttrs}</div>
                       )}
                       <div className="text-xs text-gray-400 mt-0.5 tabular-nums">
-                        SKU {it.variantSku ?? it.productSku}
+                        {it.lineCode ?? it.variantSku ?? it.productSku}
                         {it.hsn && <span> · HSN {it.hsn}</span>}
                       </div>
                     </td>

@@ -30,14 +30,17 @@ import { ShareDocumentMenu } from "@/components/common/ShareDocumentMenu";
 import { InvoiceDetail } from "@/components/billing/InvoiceDetail";
 import { useApi } from "@/hooks/useApi";
 import type { Invoice, Product, ProductVariant } from "@/data/types";
+import { effectiveUom } from "@/data/types";
 import { dd, dt, inr } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { effectivePrice, searchProductsForSale, variantLabel } from "@/lib/productSearch";
+import { formatScanRef, primaryScanCode } from "@/lib/scanCode";
 
 interface Line {
   productId: string;
   variantId: string | null;
   sku: string;
+  barcode: string | null;
   name: string;
   qty: number;
   price: number;
@@ -211,11 +214,12 @@ export const Billing = () => {
           productId: p.id,
           variantId: v?.id ?? null,
           sku: v?.sku ?? p.sku,
+          barcode: v?.barcode ?? p.barcode ?? null,
           name: p.name,
           qty: 1,
           price: fallback,
           resolvedPrice: fallback,
-          uom: p.uom,
+          uom: effectiveUom(p, v) || "Nos",
           attributes: v ? variantLabel(v) : "",
         },
       ];
@@ -227,16 +231,19 @@ export const Billing = () => {
   const addByCode = () => {
     const code = scan.trim();
     if (!code) return;
+    const lc = code.toLowerCase();
     let matchedProduct: Product | undefined;
     let matchedVariant: ProductVariant | null = null;
 
     for (const p of products) {
-      if (p.barcode === code || p.sku.toLowerCase() === code.toLowerCase()) {
+      if (p.barcode.toLowerCase() === lc || p.sku.toLowerCase() === lc) {
         matchedProduct = p;
         break;
       }
       const v = (p.variants ?? []).find(
-        (vv) => vv.barcode === code || vv.sku.toLowerCase() === code.toLowerCase()
+        (vv) =>
+          (vv.barcode ?? "").toLowerCase() === lc ||
+          vv.sku.toLowerCase() === lc
       );
       if (v) {
         matchedProduct = p;
@@ -289,10 +296,23 @@ export const Billing = () => {
           productId: it.productId,
           variantId: it.variantId ?? null,
           sku: it.variant?.sku ?? it.product?.sku ?? "—",
+          barcode: (() => {
+            const p = products.find((x) => x.id === it.productId);
+            const v = it.variantId
+              ? p?.variants?.find((vv) => vv.id === it.variantId)
+              : null;
+            return v?.barcode ?? p?.barcode ?? null;
+          })(),
           name: it.product?.name ?? "—",
           qty: remaining,
           price: it.rate,
-          uom: it.product?.uom ?? "Nos",
+          uom: (() => {
+            const p = products.find((x) => x.id === it.productId);
+            const v = it.variantId
+              ? p?.variants?.find((vv) => vv.id === it.variantId)
+              : null;
+            return effectiveUom(p ?? { uom: it.product?.uom }, v) || "Nos";
+          })(),
           attributes: it.variant
             ? [it.variant.size, it.variant.color, it.variant.grade]
                 .filter(Boolean)
@@ -700,7 +720,9 @@ export const Billing = () => {
                             <div className="flex-1 min-w-0">
                               <div className="font-semibold truncate">{r.product.name}</div>
                               <div className="text-caption text-ink-muted font-mono truncate">
-                                {r.variant ? r.variant.sku : r.product.sku}
+                                {r.variant
+                                  ? formatScanRef(r.variant)
+                                  : formatScanRef(r.product)}
                                 {r.variant && (
                                   <span className="ml-2 text-ink">· {r.label}</span>
                                 )}
@@ -759,7 +781,7 @@ export const Billing = () => {
                             )}
                           </div>
                           <div className="text-caption text-ink-muted font-mono">
-                            {l.sku} · {l.uom}
+                            {primaryScanCode({ sku: l.sku, barcode: l.barcode })} · {l.uom}
                           </div>
                         </div>
                         <div className="col-span-2 text-right tnum">

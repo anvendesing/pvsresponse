@@ -218,6 +218,13 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
         sellingPrice: Number(form.sellingPrice) || 0,
         reorderLevel: Number(form.reorderLevel) || 0,
         stockOnHand: Number(form.stockOnHand) || 0,
+        // Send null when the operator cleared the value so the backend
+        // un-pins the override and the packing estimator falls back to
+        // the size-string parser.
+        weightKg:
+          form.weightKg === null || form.weightKg === undefined || form.weightKg === ("" as unknown as number)
+            ? null
+            : Number(form.weightKg),
         batchTracked: !!form.batchTracked,
         // Send null when the user cleared the field so the backend
         // explicitly drops the previous value.
@@ -246,6 +253,10 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
             v.sellingPriceOverride === null || v.sellingPriceOverride === undefined
               ? null
               : Number(v.sellingPriceOverride),
+          weightKg:
+            v.weightKg === null || v.weightKg === undefined || (v.weightKg as unknown as string) === ""
+              ? null
+              : Number(v.weightKg),
           stockOnHand: Number(v.stockOnHand) || 0,
           active: v.active !== false,
         })),
@@ -507,6 +518,20 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
                 onChange={(e) => update("sellingPrice", Number(e.target.value))}
               />
             </Field>
+            <Field label="Weight per unit (kg)">
+              <Input
+                type="number"
+                step="0.001"
+                value={form.weightKg == null ? "" : String(form.weightKg)}
+                onChange={(e) =>
+                  update(
+                    "weightKg",
+                    (e.target.value.trim() === "" ? null : Number(e.target.value)) as unknown as number
+                  )
+                }
+                placeholder="Optional — packing weight estimator"
+              />
+            </Field>
             <Field label="Batch tracked">
               <label className="flex items-center gap-2 h-9">
                 <input
@@ -755,7 +780,22 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
                           }
                         />
                       </div>
-                      <div className="col-span-5 flex items-center gap-2 pb-1.5">
+                      <div className="col-span-3">
+                        <Label>Weight (kg)</Label>
+                        <Input
+                          type="number"
+                          step="0.001"
+                          value={v.weightKg == null ? "" : String(v.weightKg)}
+                          onChange={(e) =>
+                            updateVariant(i, {
+                              weightKg:
+                                e.target.value.trim() === "" ? null : Number(e.target.value),
+                            })
+                          }
+                          placeholder="auto"
+                        />
+                      </div>
+                      <div className="col-span-2 flex items-center gap-2 pb-1.5">
                         <label className="flex items-center gap-1 text-caption text-ink-muted">
                           <input
                             type="checkbox"

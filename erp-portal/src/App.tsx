@@ -23,6 +23,7 @@ import { RequireRole } from "./components/common/RequireRole";
 import { PriceLists } from "./pages/PriceLists";
 import { Transport } from "./pages/Transport";
 import { Reports } from "./pages/Reports";
+import { ContainerReports } from "./pages/ContainerReports";
 import { WarehouseAudit } from "./pages/WarehouseAudit";
 import { Approvals } from "./pages/Approvals";
 import { Settings } from "./pages/Settings";
@@ -137,6 +138,7 @@ const App = () => {
 
         <Route path="/billing"        element={<RequireRole roles={["billing"]}><Billing /></RequireRole>} />
         <Route path="/reports"        element={<RequireRole roles={["supervisor","billing","procurement"]}><Reports /></RequireRole>} />
+        <Route path="/reports/containers" element={<RequireRole roles={["supervisor","billing","warehouse"]}><ContainerReports /></RequireRole>} />
         <Route path="/approvals"      element={<RequireRole roles={["supervisor","billing"]}><Approvals /></RequireRole>} />
         <Route path="/settings"       element={<RequireRole roles={["admin"]}><Settings /></RequireRole>} />
       </Route>

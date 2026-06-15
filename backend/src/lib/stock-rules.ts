@@ -69,7 +69,9 @@ const createAutoMo = async (
     bom: {
       id: string;
       outputQty: number;
-      defaultWorkCenter: { name: string } | null;
+      defaultFacilityId: string | null;
+      defaultFacility: { id: string; name: string } | null;
+      defaultLineId: string | null;
       defaultMachine: { name: string } | null;
     } | null;
   },
@@ -78,11 +80,14 @@ const createAutoMo = async (
   if (!rule.bomId || !rule.bom) {
     return { created: null, skippedReason: "no_bom" } as const;
   }
+  if (!rule.bom.defaultFacilityId) {
+    return { created: null, skippedReason: "no_default_facility" } as const;
+  }
   if (await hasOpenMoForBom(rule.bomId)) {
     return { created: null, skippedReason: "open_mo_exists" } as const;
   }
   const plannedQty = Math.max(1, Math.round(rule.bom.outputQty));
-  const station = rule.bom.defaultWorkCenter?.name ?? "Assembly 1";
+  const station = rule.bom.defaultFacility?.name ?? "Assembly 1";
   const machine = rule.bom.defaultMachine?.name ?? "—";
   const orderNo = await nextMoNo();
   const due = new Date();
@@ -92,6 +97,8 @@ const createAutoMo = async (
       orderNo,
       bomId: rule.bom.id,
       station,
+      facilityId: rule.bom.defaultFacilityId,
+      lineId: rule.bom.defaultLineId ?? null,
       plannedQty,
       startDate: new Date(),
       dueDate: due,
@@ -105,6 +112,7 @@ const createAutoMo = async (
       machine,
       workers: "",
       target: plannedQty,
+      lineId: rule.bom.defaultLineId ?? null,
     },
   });
   await recordChange("ProductionOrder", created.id, "insert", created, userId);
@@ -206,7 +214,7 @@ export const checkStockRules = async (
     include: {
       bom: {
         include: {
-          defaultWorkCenter: { select: { name: true } },
+          defaultFacility: { select: { id: true, name: true } },
           defaultMachine: { select: { name: true } },
         },
       },

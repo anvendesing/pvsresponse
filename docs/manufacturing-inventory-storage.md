@@ -20,7 +20,7 @@ How raw materials and finished goods move through warehouses and bins in PVS ERP
 ```mermaid
 flowchart LR
   subgraph config [Master data]
-    WC[Work center]
+    FAC[Production facility]
     PR[Putaway rules]
     SR[Stock rules]
   end
@@ -79,7 +79,7 @@ Bins are keyed by **parent product**, not variant. Variant-level counters use `P
 | `storage` | Long-term FG and raw material storage |
 | `production` | Shop-floor / line buffer (`WH-PROD-*`) |
 
-Each **work center** may own one `productionLineWarehouse` (1:1). Issue materials prefer that warehouse when set.
+Each **production facility** owns one `productionLineWarehouse` (1:1, shared by all its lines). Issue materials prefer that warehouse when set.
 
 ### Putaway rule (`PutawayRule`)
 
@@ -98,7 +98,7 @@ Declares where finished goods should land after production.
 
 1. Active variant-specific rule (lowest `priority`)
 2. Active product-level rule (`variantId` null)
-3. Fallback: `landingWhId` from work center or request body, else first active storage warehouse
+3. Fallback: `landingWhId` from facility or request body, else first active storage warehouse
 
 ### Stock rule (`StockRule`)
 
@@ -162,7 +162,7 @@ planned → in-progress → (optional qc) → completed
 ### Release (`POST /production-orders/:id/release`)
 
 - Only allowed when MO status is **`planned`**.
-- Explodes BOM; checks stock at **production-line warehouse** (if work center has one).
+- Explodes BOM; checks stock at **facility production warehouse** (if the MO's facility has one).
 - Creates **replenishment** transfer orders from storage bins to the line for shortages.
 - Does not consume stock.
 
@@ -224,7 +224,7 @@ Ledger: `txnType: Production`, `ref: orderNo`.
 **Setup checklist**
 
 - [ ] Work center with **production-line warehouse** (Settings → Production lines → **Auto-create** or link WH)
-- [ ] BOM **default work center** (+ `variantId` on BOM if applicable)
+- [ ] BOM **default facility** (+ optional default line) (+ `variantId` on BOM if applicable)
 - [ ] **Putaway rules:** product, variant, warehouse, **destination bin** (required in UI)
 - [ ] Bins at line WH and at each destination bin
 - [ ] Optional **stock rules** on FG monitor bins
@@ -244,7 +244,7 @@ Ledger: `txnType: Production`, `ref: orderNo`.
 **Setup checklist**
 
 - [ ] Putaway rules with **fixed `toBinId`** in storage WH (e.g. `WH-FG`)
-- [ ] Either **no** production-line WH on work center, **or** line WH = same site as storage rule
+- [ ] Either **no** facility production WH, **or** line WH = same site as storage rule
 
 **Runtime**
 
@@ -282,7 +282,7 @@ When `monitorBin.qty < minQty`:
 
 - Creates **planned** MO from `bomId`
 - `plannedQty = Bom.outputQty` (batch size from BOM, not shortage qty)
-- Station/machine from BOM default work center
+- Facility/line from BOM default facility/line
 - Skips if open MO already exists for that BOM
 
 ### Trigger type: Auto transfer (`transfer`)
@@ -387,7 +387,7 @@ Component quantities in explosion are scaled by `outputQty`.
 
 | Action | Result |
 |--------|--------|
-| **Auto-create** on new work center | Creates `WH-PROD-{WC_CODE}`, `kind: production`, default bin `PROD/01/01` |
+| **Auto-create** on new facility | Creates `WH-PROD-{FAC_CODE}`, `kind: production`, default bin `PROD/01/01` |
 | **Edit → Prod. warehouse** dropdown | Link existing warehouse |
 
 **Script (bulk backfill):** `backend/scripts/backfill-production-warehouses.ts`
@@ -461,15 +461,15 @@ Component quantities in explosion are scaled by `outputQty`.
 
 ## Example: MO-2026-2214
 
-Legacy MO before full putaway/work-center setup:
+Legacy MO before full putaway/facility setup:
 
 | Event | Location |
 |-------|----------|
 | Materials issued | `WH-FG` · `A/S1/B2` (−99), `SMK/S1/01` (−100) |
 | FG on complete | `WH-FG` · `C/S1/B4` (+90, SKU 6RKS) |
-| Putaway TO | None — no production-line WH on BOM work center |
+| Putaway TO | None — no facility production WH configured |
 
-**To align with current features:** assign work center + production-line WH, add putaway rule (variant + **fixed bin**), optional stock rule on `C/S1/B4` with min qty 20 and BOM for auto-replenish MO.
+**To align with current features:** assign facility + production WH, add putaway rule (variant + **fixed bin**), optional stock rule on `C/S1/B4` with min qty 20 and BOM for auto-replenish MO.
 
 ---
 
@@ -494,4 +494,4 @@ Legacy MO before full putaway/work-center setup:
 | Scheduled stock-rule job | Today event-driven + manual check-all |
 | Putaway rule without `toBinId` in UI | API allows; UI requires bin for operator clarity |
 
-*Last updated: 2026-05-31 — reflects putaway direct-post, stock rules, inventory trail, and Settings UI.*
+*Last updated: 2026-06-15 — reflects ProductionFacility/ProductionLine refactor: work centers split into facility (room) + lines (floor lines); MOs now carry `facilityId` (required) and `lineId` (supervisor-assigned); BOM defaults updated to facility + line.*

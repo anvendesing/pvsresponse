@@ -85,12 +85,12 @@ export const Products = () => {
       return (
         p.name.toLowerCase().includes(t) ||
         p.sku.toLowerCase().includes(t) ||
-        p.barcode.includes(q) ||
+        p.barcode.toLowerCase().includes(t) ||
         (p.category?.name ?? "").toLowerCase().includes(t) ||
         (p.variants ?? []).some(
           (v) =>
             v.sku.toLowerCase().includes(t) ||
-            (v.barcode ?? "").includes(q) ||
+            (v.barcode ?? "").toLowerCase().includes(t) ||
             (v.size ?? "").toLowerCase().includes(t) ||
             (v.color ?? "").toLowerCase().includes(t)
         )
@@ -712,7 +712,7 @@ const stockClass = (tone: ReturnType<typeof stockTone>) =>
 // hovering reveals the per-variant breakdown when a product has variants
 // (or the parent reorder context for non-variant products). Built with a
 // portal to escape the table's overflow:auto clipping.
-const POPOVER_WIDTH = 340;
+const POPOVER_WIDTH = 380;
 
 const VariantStockCell = ({ product }: { product: Product }) => {
   const triggerRef = useRef<HTMLDivElement | null>(null);
@@ -811,6 +811,7 @@ const VariantStockCell = ({ product }: { product: Product }) => {
                     <thead className="text-caption text-ink-muted uppercase">
                       <tr className="bg-canvas">
                         <th className="px-3 py-1.5 text-left font-semibold">Variant</th>
+                        <th className="px-3 py-1.5 text-left font-semibold">Barcode</th>
                         <th className="px-3 py-1.5 text-left font-semibold">Attributes</th>
                         <th className="px-3 py-1.5 text-right font-semibold">On Hand</th>
                       </tr>
@@ -831,6 +832,11 @@ const VariantStockCell = ({ product }: { product: Product }) => {
                                 >
                                   1 {vu} = <b>{pack}</b> {product.uom}
                                 </div>
+                              )}
+                            </td>
+                            <td className="px-3 py-1.5 font-mono text-caption text-primary">
+                              {v.barcode?.trim() || (
+                                <span className="text-ink-muted">—</span>
                               )}
                             </td>
                             <td className="px-3 py-1.5 text-ink-muted">
@@ -859,6 +865,7 @@ const VariantStockCell = ({ product }: { product: Product }) => {
                         <td className="px-3 py-1.5 text-caption text-ink-muted uppercase font-semibold">
                           Parent (bulk)
                         </td>
+                        <td className="px-3 py-1.5 text-caption text-ink-muted">—</td>
                         <td className="px-3 py-1.5 text-caption text-ink-muted">
                           loose bulk only
                         </td>
@@ -898,6 +905,12 @@ const VariantStockCell = ({ product }: { product: Product }) => {
                 </div>
               ) : (
                 <div className="p-3 space-y-1.5 text-body-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-ink-muted">Barcode</span>
+                    <span className="font-mono text-caption text-primary">
+                      {product.barcode?.trim() || "—"}
+                    </span>
+                  </div>
                   <div className="flex items-center justify-between">
                     <span className="text-ink-muted">On hand</span>
                     <span

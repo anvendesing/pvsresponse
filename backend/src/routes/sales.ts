@@ -15,6 +15,12 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { db } from "../db.js";
 import { mintShareToken } from "../lib/share.js";
+import { lineItemCode, lineItemUom, variantAttrsLine } from "../lib/line-item.js";
+import {
+  recomputeInvoiceWeight,
+  recomputeQuoteWeight,
+  recomputeSalesOrderWeight,
+} from "../lib/document-weight.js";
 import { recordChange } from "../sync/log.js";
 import { resolveGstRate, computeTax, computeGrandTotal } from "../lib/tax.js";
 import {
@@ -280,6 +286,7 @@ export const evaluateCreditGate = async (
 const variantLineSelect = {
   id: true,
   sku: true,
+  barcode: true,
   size: true,
   color: true,
   grade: true,
@@ -304,7 +311,7 @@ const fullQuoteInclude = {
   dispatchOption: { select: dispatchOptionSelect },
   items: {
     include: {
-      product: { select: { id: true, sku: true, name: true, uom: true, stockOnHand: true } },
+      product: { select: { id: true, sku: true, name: true, uom: true, stockOnHand: true, barcode: true } },
       variant: { select: variantLineSelect },
     },
   },
@@ -316,7 +323,7 @@ const fullSoInclude = {
   dispatchOption: { select: dispatchOptionSelect },
   items: {
     include: {
-      product: { select: { id: true, sku: true, name: true, uom: true, stockOnHand: true } },
+      product: { select: { id: true, sku: true, name: true, uom: true, stockOnHand: true, barcode: true } },
       variant: { select: variantLineSelect },
       // Hard-reservation rows for the SO line. The desktop SO detail
       // panel sums these up to render "Reserved X / Y" per line.
@@ -704,8 +711,8 @@ export const salesRoutes = async (app: FastifyInstance) => {
         dispatchOption: { select: { code: true, name: true, category: true } },
         items: {
           include: {
-            product: { select: { name: true, sku: true, uom: true, hsn: true } },
-            variant: { select: { sku: true, size: true, color: true, grade: true } },
+            product: { select: { name: true, sku: true, uom: true, hsn: true, barcode: true } },
+            variant: { select: { sku: true, barcode: true, size: true, color: true, grade: true, uom: true } },
           },
         },
       },
@@ -736,12 +743,11 @@ export const salesRoutes = async (app: FastifyInstance) => {
       items: quote.items.map((it) => ({
         productName: it.product.name,
         productSku: it.product.sku,
+        lineCode: lineItemCode(it.product, it.variant),
         hsn: it.product.hsn,
-        uom: it.product.uom,
+        uom: lineItemUom(it.product, it.variant),
         variantSku: it.variant?.sku ?? null,
-        variantAttrs: [it.variant?.size, it.variant?.color, it.variant?.grade]
-          .filter((x) => x && String(x).trim())
-          .join(" · "),
+        variantAttrs: variantAttrsLine(it.variant),
         qty: it.qty,
         rate: it.rate,
         discount: it.discount,
@@ -809,8 +815,16 @@ export const salesRoutes = async (app: FastifyInstance) => {
       },
       include: fullQuoteInclude,
     });
-    await recordChange("Quote", created.id, "insert", created, req.user.sub);
-    return created;
+    // Stamp totalWeightKg derived from the catalogue. Refetch so the
+    // response carries the rolled-up value alongside the rest of the
+    // newly-created quote.
+    await recomputeQuoteWeight(db, created.id);
+    const withWeight = await db.quote.findUnique({
+      where: { id: created.id },
+      include: fullQuoteInclude,
+    });
+    await recordChange("Quote", created.id, "insert", withWeight ?? created, req.user.sub);
+    return withWeight ?? created;
   });
 
   app.patch("/quotes/:id", { preHandler: [app.authenticate] }, async (req, reply) => {
@@ -900,8 +914,18 @@ export const salesRoutes = async (app: FastifyInstance) => {
       data: headerData,
       include: fullQuoteInclude,
     });
-    await recordChange("Quote", id, "update", updated, req.user.sub);
-    return updated;
+    // Items may have been replaced wholesale above; re-derive weight.
+    // No-op when only the header changed but cheap enough to skip the
+    // branching.
+    if (items !== undefined) {
+      await recomputeQuoteWeight(db, id);
+    }
+    const final = await db.quote.findUnique({
+      where: { id },
+      include: fullQuoteInclude,
+    });
+    await recordChange("Quote", id, "update", final ?? updated, req.user.sub);
+    return final ?? updated;
   });
 
   app.post("/quotes/:id/submit", { preHandler: [app.authenticate] }, async (req, reply) => {
@@ -1268,6 +1292,9 @@ export const salesRoutes = async (app: FastifyInstance) => {
       },
       include: fullSoInclude,
     });
+    // Stamp totalWeightKg from the catalogue so trip planners can see
+    // load weight before a packing slip exists.
+    await recomputeSalesOrderWeight(db, so.id);
     await recordChange("SalesOrder", so.id, "insert", so, req.user.sub);
 
     // SO is born "confirmed" → hard-reserve stock against bins so the
@@ -1489,6 +1516,9 @@ export const salesRoutes = async (app: FastifyInstance) => {
         data: { status: "closed" },
         include: fullSoInclude,
       });
+      // Cancelled qty drops out of the weight rollup (see
+      // recomputeSalesOrderWeight: it uses qtyOrdered - qtyCancelled).
+      await recomputeSalesOrderWeight(db, id);
       // Release any remaining bin reservations - the SO is no longer
       // claiming stock for un-invoiced lines.
       try {
@@ -1614,6 +1644,11 @@ export const salesRoutes = async (app: FastifyInstance) => {
         data: { status: "closed" },
         include: fullSoInclude,
       });
+      // Both ends of the split need their weight recomputed: the
+      // parent loses the cancelled remainder and the back-order
+      // child carries it onward.
+      await recomputeSalesOrderWeight(db, parent.id);
+      await recomputeSalesOrderWeight(db, newSo.id);
       try {
         await releaseSalesOrderReservations(parent.id);
       } catch (e) {
@@ -1785,6 +1820,11 @@ export const salesRoutes = async (app: FastifyInstance) => {
         },
       });
 
+      // Stamp Invoice.totalWeightKg from its line items so trip
+      // planning / freight rules can use it before a packing slip
+      // exists (this is the multi-invoice draw-down path).
+      await recomputeInvoiceWeight(db, inv.id);
+
       // Sweep any standing customer advances against the new invoice
       // FIFO so a prepayment recorded BEFORE this invoice was issued
       // is absorbed immediately (invoice flips to 'paid' or 'partial'
@@ -1906,6 +1946,11 @@ export const materialiseSO = async (quoteId: string, actor: string) => {
       subTotal: quote.subTotal,
       tax: quote.tax,
       total: quote.total,
+      // Inherit weight from the quote (already rolled up at quote
+      // create/update). The post-create recompute below makes this
+      // resilient to any divergence — e.g. a catalogue weight tweak
+      // between quote.accept and quote.convert.
+      totalWeightKg: quote.totalWeightKg,
       items: {
         create: quote.items.map((it) => ({
           productId: it.productId,
@@ -1918,6 +1963,7 @@ export const materialiseSO = async (quoteId: string, actor: string) => {
     },
     include: fullSoInclude,
   });
+  await recomputeSalesOrderWeight(db, so.id);
   await db.quote.update({
     where: { id: quote.id },
     data: { status: "converted", convertedSalesOrderId: so.id },

@@ -13,8 +13,10 @@ import { binCodeFromRow } from "../src/lib/codes.js";
 const db = new PrismaClient();
 
 (async () => {
-  const warehouses = await db.warehouse.findMany();
-  const whByCode = new Map(warehouses.map((w) => [w.id, w.code]));
+  const warehouses = await db.warehouse.findMany({
+    select: { id: true, code: true, scanPrefix: true },
+  });
+  const whById = new Map(warehouses.map((w) => [w.id, w]));
   const bins = await db.bin.findMany({
     select: {
       id: true,
@@ -29,15 +31,15 @@ const db = new PrismaClient();
   let skipped = 0;
   let failed = 0;
   for (const b of bins) {
-    const whCode = whByCode.get(b.warehouseId);
-    if (!whCode) {
-      console.warn(`SKIP ${b.id}: warehouse ${b.warehouseId} has no code`);
+    const wh = whById.get(b.warehouseId);
+    if (!wh) {
+      console.warn(`SKIP ${b.id}: warehouse ${b.warehouseId} not found`);
       failed += 1;
       continue;
     }
     let target: string;
     try {
-      target = binCodeFromRow(b, whCode);
+      target = binCodeFromRow(b, wh);
     } catch (e) {
       console.warn(`SKIP ${b.id}: encode failed - ${(e as Error).message}`);
       failed += 1;

@@ -18,40 +18,40 @@ datasource db {
 // =====================================================================
 
 model User {
-  id           String   @id @default(cuid())
-  username     String   @unique
-  passwordHash String
-  pin          String? // 6-digit operator PIN (hashed)
-  name         String
-  role         String // admin | supervisor | warehouse | procurement | billing | worker
-  email        String?  @unique
-  active       Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  sessions     Session[]
-  auditLogs    AuditLog[]
+  id                  String            @id @default(cuid())
+  username            String            @unique
+  passwordHash        String
+  pin                 String? // 6-digit operator PIN (hashed)
+  name                String
+  role                String // admin | supervisor | warehouse | procurement | billing | worker
+  email               String?           @unique
+  active              Boolean           @default(true)
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+  sessions            Session[]
+  auditLogs           AuditLog[]
   // Reverse relations for warehouse-mobile features
-  worker             Worker?       @relation("WorkerUser")
-  pickListClaims     PickList[]    @relation("PickListAssignee")
-  packingSlipClaims  PackingSlip[] @relation("PackingSlipAssignee")
-  binCounts          BinCount[]
-  scanEvents         ScanEvent[]
-  transferOrderClaims  TransferOrder[] @relation("TransferOrderAssignee")
-  transferOrderPicks   TransferOrder[] @relation("TransferOrderPicker")
-  transferOrderDrops   TransferOrder[] @relation("TransferOrderDropper")
-  enquiriesAssigned    Enquiry[]       @relation("EnquiryAssignee")
-  enquiriesCreated     Enquiry[]       @relation("EnquiryCreator")
-  enquiryActivities    EnquiryActivity[]
+  worker              Worker?           @relation("WorkerUser")
+  pickListClaims      PickList[]        @relation("PickListAssignee")
+  packingSlipClaims   PackingSlip[]     @relation("PackingSlipAssignee")
+  binCounts           BinCount[]
+  scanEvents          ScanEvent[]
+  transferOrderClaims TransferOrder[]   @relation("TransferOrderAssignee")
+  transferOrderPicks  TransferOrder[]   @relation("TransferOrderPicker")
+  transferOrderDrops  TransferOrder[]   @relation("TransferOrderDropper")
+  enquiriesAssigned   Enquiry[]         @relation("EnquiryAssignee")
+  enquiriesCreated    Enquiry[]         @relation("EnquiryCreator")
+  enquiryActivities   EnquiryActivity[]
 }
 
 model Session {
-  id          String   @id @default(cuid())
-  userId      String
-  device      String
-  ip          String
-  createdAt   DateTime @default(now())
-  lastSeenAt  DateTime @default(now())
-  user        User     @relation(fields: [userId], references: [id])
+  id         String   @id @default(cuid())
+  userId     String
+  device     String
+  ip         String
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id])
 
   @@index([userId])
 }
@@ -87,7 +87,7 @@ model Session {
 model UomCategory {
   id          String   @id @default(cuid())
   code        String   @unique // e.g. "weight", "volume", "length", "unit"
-  name        String           // e.g. "Weight", "Volume", "Length", "Unit"
+  name        String // e.g. "Weight", "Volume", "Length", "Unit"
   description String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -95,64 +95,68 @@ model UomCategory {
 }
 
 model Uom {
-  id          String   @id @default(cuid())
+  id          String      @id @default(cuid())
   // Canonical short code stored in records (e.g. "kg", "g", "L", "mL",
   // "m", "cm", "pc", "dozen"). Lower-cased ISO style where possible.
-  code        String   @unique
+  code        String      @unique
   // Display name e.g. "Kilogram", "Litre", "Piece".
   name        String
   // Conversion factor relative to the category reference UoM.
-  factor      Float    @default(1.0)
+  factor      Float       @default(1.0)
   // True for the one reference UoM in each category. Enforced in
   // application code: at most one Uom per category may be reference.
-  isReference Boolean  @default(false)
+  isReference Boolean     @default(false)
   // Whether this UoM is offered to users in dropdowns. Inactive UoMs
   // are kept for historical records but not picked for new entries.
-  active      Boolean  @default(true)
+  active      Boolean     @default(true)
   // For sorting in pickers (lower = shown first).
-  rounding    Float    @default(0.001)
+  rounding    Float       @default(0.001)
   categoryId  String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
   category    UomCategory @relation(fields: [categoryId], references: [id])
 
   @@index([categoryId])
 }
 
 model Warehouse {
-  id        String   @id @default(cuid())
-  code      String   @unique
-  name      String
-  city      String
+  id                 String              @id @default(cuid())
+  code               String              @unique
+  name               String
+  city               String
+  // Short scan alias for compact bin barcodes (2–4 chars, e.g. WSP for WH-PROD-SOAP).
+  // When set, bin labels use WSP.AS05.11 instead of B.WH-PROD-SOAP.A.S05.11.
+  scanPrefix         String?             @unique
   // "storage" = normal stock warehouse; "production" = production-line holding area
-  // Each WorkCenter optionally owns one production warehouse.
-  kind      String   @default("storage")
-  active    Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  bins      Bin[]
-  ledger    StockLedger[]
-  // Reverse relation: the WorkCenter that owns this production warehouse
-  productionWorkCenter WorkCenter? @relation("WorkCenterProductionWarehouse")
-  putawayRulesTo       PutawayRule[] @relation("PutawayRuleTo")
-  stockRulesTo         StockRule[] @relation("StockRuleToWarehouse")
-  transferOrdersFrom   TransferOrder[] @relation("TransferOrderFromWarehouse")
-  transferOrdersTo     TransferOrder[] @relation("TransferOrderToWarehouse")
+  // Each ProductionFacility optionally owns one production warehouse.
+  kind               String              @default("storage")
+  active             Boolean             @default(true)
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  bins               Bin[]
+  ledger             StockLedger[]
+  // Reverse relation: the ProductionFacility that owns this production warehouse
+  productionFacility ProductionFacility? @relation("FacilityProductionWarehouse")
+  putawayRulesTo     PutawayRule[]       @relation("PutawayRuleTo")
+  stockRulesTo       StockRule[]         @relation("StockRuleToWarehouse")
+  transferOrdersFrom TransferOrder[]     @relation("TransferOrderFromWarehouse")
+  transferOrdersTo   TransferOrder[]     @relation("TransferOrderToWarehouse")
 }
 
 model Bin {
-  id           String     @id @default(cuid())
-  warehouseId  String
-  zone         String
-  shelf        String
-  bin          String
-  // Mobile-scan code "B.<warehouseCode>.<zone>.<shelf>.<bin>".
-  // Materialised on insert/update for O(1) lookup from the camera scanner;
-  // existing rows are backfilled by scripts/backfill-bin-codes.ts.
-  code         String?    @unique
-  capacity     Int        @default(100)
-  occupied     Int        @default(0)
-  productId    String?
+  id                     String                  @id @default(cuid())
+  warehouseId            String
+  zone                   String
+  shelf                  String
+  bin                    String
+  // Mobile-scan code. Compact when warehouse.scanPrefix is set:
+  //   WSP.AS05.11  (prefix + zone+shelf merged + bin)
+  // Legacy otherwise:
+  //   B.<warehouseCode>.<zone>.<shelf>.<bin>
+  code                   String?                 @unique
+  capacity               Int                     @default(100)
+  occupied               Int                     @default(0)
+  productId              String?
   // The specific variant of `productId` this bin physically holds.
   // Optional because (a) products without variants put units straight
   // into bins with `variantId = null`, and (b) legacy bins from before
@@ -160,108 +164,114 @@ model Bin {
   // `computeAtp` and `/inventory/locations` honour this column when
   // present so a 1KG-pack bin and a 500g-pack bin under the same
   // parent product no longer get conflated.
-  variantId    String?
-  qty          Int        @default(0)
+  variantId              String?
+  qty                    Int                     @default(0)
   // Quantity reserved by completed pick lists but not yet shipped.
   // Free-to-pick = qty - reservedQty. This prevents double-picking the
   // same physical stock from a bin while pack/dispatch is pending.
-  reservedQty  Int        @default(0)
-  batch        String?
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
-  warehouse    Warehouse  @relation(fields: [warehouseId], references: [id])
-  product      Product?   @relation(fields: [productId], references: [id])
-  variant      ProductVariant? @relation(fields: [variantId], references: [id])
-  pickListItems PickListItem[]
-  binCounts    BinCount[]
-  putawayRules  PutawayRule[]
-  stockRulesMonitor StockRule[] @relation("StockRuleMonitor")
-  stockRulesSource  StockRule[] @relation("StockRuleSource")
-  stockRulesDest    StockRule[] @relation("StockRuleDest")
+  reservedQty            Int                     @default(0)
+  batch                  String?
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+  warehouse              Warehouse               @relation(fields: [warehouseId], references: [id])
+  product                Product?                @relation(fields: [productId], references: [id])
+  variant                ProductVariant?         @relation(fields: [variantId], references: [id])
+  pickListItems          PickListItem[]
+  binCounts              BinCount[]
+  putawayRules           PutawayRule[]
+  stockRulesMonitor      StockRule[]             @relation("StockRuleMonitor")
+  stockRulesSource       StockRule[]             @relation("StockRuleSource")
+  stockRulesDest         StockRule[]             @relation("StockRuleDest")
   salesOrderReservations SalesOrderReservation[]
-  transferItemsFrom TransferOrderItem[] @relation("TransferItemFromBin")
-  transferItemsTo   TransferOrderItem[] @relation("TransferItemToBin")
+  transferItemsFrom      TransferOrderItem[]     @relation("TransferItemFromBin")
+  transferItemsTo        TransferOrderItem[]     @relation("TransferItemToBin")
 
   @@unique([warehouseId, zone, shelf, bin])
   @@index([productId])
 }
 
 model ProductCategory {
-  id        String   @id @default(cuid())
-  slug      String   @unique
+  id        String    @id @default(cuid())
+  slug      String    @unique
   name      String
-  sortOrder Int      @default(0)
-  active    Boolean  @default(true)
+  sortOrder Int       @default(0)
+  active    Boolean   @default(true)
   imageUrl  String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
   products  Product[]
 }
 
 model Product {
-  id            String   @id @default(cuid())
-  sku           String   @unique
-  name          String
-  type          String // raw | semi | finished | consumable | service
-  uom           String
-  barcode       String   @unique
-  state         String   @default("active") // draft | active | discontinued | blocked
-  categoryId    String?
-  category      ProductCategory? @relation(fields: [categoryId], references: [id])
-  hsn           String
-  gstRate       Float    @default(18) // GST percentage e.g. 18 = 18%
-  costPrice     Float
-  sellingPrice  Float
-  reorderLevel  Int      @default(0)
-  stockOnHand   Int      @default(0)
-  batchTracked  Boolean  @default(false)
+  id                 String               @id @default(cuid())
+  sku                String               @unique
+  name               String
+  type               String // raw | semi | finished | consumable | service
+  uom                String
+  barcode            String               @unique
+  state              String               @default("active") // draft | active | discontinued | blocked
+  categoryId         String?
+  category           ProductCategory?     @relation(fields: [categoryId], references: [id])
+  hsn                String
+  gstRate            Float                @default(18) // GST percentage e.g. 18 = 18%
+  costPrice          Float
+  sellingPrice       Float
+  reorderLevel       Int                  @default(0)
+  stockOnHand        Int                  @default(0)
+  batchTracked       Boolean              @default(false)
+  // Gross weight (kg) of one sellable unit at parent UoM. Used to
+  // estimate packing-container weights, which roll up into the trip
+  // load. Variant.weightKg overrides this when set. Optional - items
+  // with no weight simply contribute 0 to container estimates and the
+  // packer can correct with an actual scale reading on the container.
+  weightKg           Float?
   // Storefront-facing copy
-  description   String?  // short product description shown on detail page
-  ingredients   String?  // free-form ingredients / what's inside text
-  tags          String?  // comma-separated search/filter tags
-  imageHint     String?  // e.g. "oils" | "millets" | "soap" for PackagingArt
-  imageUrl      String?  // optional product photo path (relative to API origin) e.g. /uploads/products/abc.jpg
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  bins          Bin[]
-  bomItems      BomItem[]
-  bomByproducts BomByproduct[]
-  bomsAsParent  Bom[]
-  ledger        StockLedger[]
-  poItems       PurchaseOrderItem[]
-  invoiceItems  InvoiceItem[]
-  variants      ProductVariant[]
-  quoteItems    QuoteItem[]
-  salesOrderItems SalesOrderItem[]
-  pickListItems PickListItem[]
-  returnItems   CustomerReturnItem[]
-  creditNoteItems CreditNoteItem[]
-  packingSlipItems PackingSlipItem[]
-  priceListItems PriceListItem[]
-  putawayRules  PutawayRule[]
-  stockRules    StockRule[]
+  description        String? // short product description shown on detail page
+  ingredients        String? // free-form ingredients / what's inside text
+  tags               String? // comma-separated search/filter tags
+  imageHint          String? // e.g. "oils" | "millets" | "soap" for PackagingArt
+  imageUrl           String? // optional product photo path (relative to API origin) e.g. /uploads/products/abc.jpg
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  bins               Bin[]
+  bomItems           BomItem[]
+  bomByproducts      BomByproduct[]
+  bomsAsParent       Bom[]
+  ledger             StockLedger[]
+  poItems            PurchaseOrderItem[]
+  invoiceItems       InvoiceItem[]
+  variants           ProductVariant[]
+  quoteItems         QuoteItem[]
+  salesOrderItems    SalesOrderItem[]
+  pickListItems      PickListItem[]
+  returnItems        CustomerReturnItem[]
+  creditNoteItems    CreditNoteItem[]
+  packingSlipItems   PackingSlipItem[]
+  priceListItems     PriceListItem[]
+  putawayRules       PutawayRule[]
+  stockRules         StockRule[]
   transferOrderItems TransferOrderItem[]
-  enquiryItems  EnquiryItem[]
+  enquiryItems       EnquiryItem[]
 }
 
 model ProductVariant {
-  id                  String   @id @default(cuid())
-  productId           String
-  sku                 String   @unique
-  barcode             String?  @unique
+  id                   String               @id @default(cuid())
+  productId            String
+  sku                  String               @unique
+  barcode              String?              @unique
   // Optional per-variant HSN and GST rate. Null = inherit from parent product.
-  hsn                 String?
-  gstRate             Float?   // override; null = inherit parent.gstRate
+  hsn                  String?
+  gstRate              Float? // override; null = inherit parent.gstRate
   // Free-form variant axes (size / color / grade per PRD).
-  size                String?
-  color               String?
-  grade               String?
+  size                 String?
+  color                String?
+  grade                String?
   // Selling unit-of-measure for the variant. Null = inherit from parent.
   // Pattern: parent holds bulk (e.g. coconut oil parent in "L"); each
   // variant defines its sellable unit (e.g. "1L bottle" sold as "pc",
   // "100g pouch" sold as "pc"). Selling and billing use this column;
   // parent.uom is reserved for bulk stock monitoring and price tracking.
-  uom                 String?
+  uom                  String?
   // Conversion factor: how many parent.uom units one variant unit
   // represents. Used to roll variant sales up to bulk consumption.
   // Defaults to 1 (variant unit == parent unit, the trivial case).
@@ -269,87 +279,92 @@ model ProductVariant {
   //   variant "1L bottle"  on parent uom "L"  -> packSize 1
   //   variant "5L can"     on parent uom "L"  -> packSize 5
   //   variant "100g pouch" on parent uom "kg" -> packSize 0.1
-  packSize            Float    @default(1)
+  packSize             Float                @default(1)
+  // Gross weight (kg) of one variant unit. Overrides Product.weightKg
+  // when set. Drives container-weight estimation -> dispatch weight ->
+  // trip load. Null = inherit Product.weightKg (which may itself be
+  // null, in which case the variant contributes 0 to estimates).
+  weightKg             Float?
   // Optional price overrides; null = inherit from parent product.
-  costPriceOverride   Float?
+  costPriceOverride    Float?
   sellingPriceOverride Float?
-  stockOnHand         Int      @default(0)
-  active              Boolean  @default(true)
+  stockOnHand          Int                  @default(0)
+  active               Boolean              @default(true)
   // Optional per-variant image (falls back to parent Product.imageUrl at read time).
-  imageUrl            String?  // relative path e.g. /uploads/products/variants/<id>.jpg
-  createdAt           DateTime @default(now())
-  updatedAt           DateTime @updatedAt
-  product             Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-  invoiceItems        InvoiceItem[]
-  quoteItems          QuoteItem[]
-  salesOrderItems     SalesOrderItem[]
-  pickListItems       PickListItem[]
-  packingSlipItems    PackingSlipItem[]
-  priceListItems      PriceListItem[]
-  boms                Bom[]
-  bomByproducts       BomByproduct[]
-  returnItems         CustomerReturnItem[]
-  creditNoteItems     CreditNoteItem[]
-  putawayRules        PutawayRule[]
-  stockRules          StockRule[]
-  transferOrderItems  TransferOrderItem[]
-  enquiryItems        EnquiryItem[]
-  ledger              StockLedger[]
-  bins                Bin[]
+  imageUrl             String? // relative path e.g. /uploads/products/variants/<id>.jpg
+  createdAt            DateTime             @default(now())
+  updatedAt            DateTime             @updatedAt
+  product              Product              @relation(fields: [productId], references: [id], onDelete: Cascade)
+  invoiceItems         InvoiceItem[]
+  quoteItems           QuoteItem[]
+  salesOrderItems      SalesOrderItem[]
+  pickListItems        PickListItem[]
+  packingSlipItems     PackingSlipItem[]
+  priceListItems       PriceListItem[]
+  boms                 Bom[]
+  bomByproducts        BomByproduct[]
+  returnItems          CustomerReturnItem[]
+  creditNoteItems      CreditNoteItem[]
+  putawayRules         PutawayRule[]
+  stockRules           StockRule[]
+  transferOrderItems   TransferOrderItem[]
+  enquiryItems         EnquiryItem[]
+  ledger               StockLedger[]
+  bins                 Bin[]
 
   @@index([productId])
 }
 
 model Vendor {
-  id            String   @id @default(cuid())
-  code          String   @unique
-  name          String
-  gst           String
-  contact       String
+  id           String          @id @default(cuid())
+  code         String          @unique
+  name         String
+  gst          String
+  contact      String
   // Optional contact details captured during onboarding. Email is the
   // canonical channel for sending PO copies; address is printed on
   // PO PDFs.
-  email         String?
-  address       String?
-  rating        Float    @default(0)
-  leadTimeDays  Int      @default(7)
-  city          String
+  email        String?
+  address      String?
+  rating       Float           @default(0)
+  leadTimeDays Int             @default(7)
+  city         String
   // Default payment terms label printed on POs (e.g. "Net 30",
   // "Advance 50%"). Free-text by design - operators may have very
   // contract-specific phrasing.
-  paymentTerms  String?
-  active        Boolean  @default(true)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  pos           PurchaseOrder[]
+  paymentTerms String?
+  active       Boolean         @default(true)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  pos          PurchaseOrder[]
 }
 
 model Customer {
-  id          String   @id @default(cuid())
-  code        String   @unique
-  name        String
-  gst         String?
-  city        String?
-  contact     String?
+  id              String            @id @default(cuid())
+  code            String            @unique
+  name            String
+  gst             String?
+  city            String?
+  contact         String?
   // Total credit we extend to this customer. Outstanding (unpaid) invoice
   // balance is computed at runtime and compared against this when accepting
   // quotes. 0 = no credit allowed (cash-only).
-  creditLimit Float    @default(0)
+  creditLimit     Float             @default(0)
   // Which price tier this customer is on (Retail, Dealer, Distributor ...).
   // null => fall through to product default selling price.
-  priceListId String?
-  priceList   PriceList? @relation(fields: [priceListId], references: [id])
-  active      Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  invoices    Invoice[]
-  quotes      Quote[]
-  salesOrders SalesOrder[]
-  account     CustomerAccount?
-  payments    CustomerPayment[]
+  priceListId     String?
+  priceList       PriceList?        @relation(fields: [priceListId], references: [id])
+  active          Boolean           @default(true)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  invoices        Invoice[]
+  quotes          Quote[]
+  salesOrders     SalesOrder[]
+  account         CustomerAccount?
+  payments        CustomerPayment[]
   customerReturns CustomerReturn[]
   creditNotes     CreditNote[]
-  enquiries   Enquiry[]
+  enquiries       Enquiry[]
 
   @@index([priceListId])
 }
@@ -360,45 +375,45 @@ model Customer {
 // or anything else. It moves through a pipeline (new → contacted → qualified
 // → proposal → won/lost) and, when won, is linked to (or creates) a Customer.
 model Enquiry {
-  id                String    @id @default(cuid())
-  enquiryNo         String    @unique
-  type              String    @default("product")  // product | dealership | farm_visit | other
-  stage             String    @default("new")      // new | contacted | qualified | proposal | won | lost
-  source            String    @default("walk_in")  // walk_in | phone | website | whatsapp | referral | exhibition | social | other
-  priority          String    @default("medium")   // low | medium | high
+  id        String @id @default(cuid())
+  enquiryNo String @unique
+  type      String @default("product") // product | dealership | farm_visit | other
+  stage     String @default("new") // new | contacted | qualified | proposal | won | lost
+  source    String @default("walk_in") // walk_in | phone | website | whatsapp | referral | exhibition | social | other
+  priority  String @default("medium") // low | medium | high
 
   // Lead contact — captured even when the lead is not yet a Customer.
-  contactName       String
-  phone             String?
-  email             String?
-  company           String?
-  city              String?
+  contactName String
+  phone       String?
+  email       String?
+  company     String?
+  city        String?
 
   subject           String
-  requirement       String?                          // free-form description of the need
-  estimatedValue    Float     @default(0)             // pipeline value for forecasting
+  requirement       String? // free-form description of the need
+  estimatedValue    Float     @default(0) // pipeline value for forecasting
   expectedCloseDate DateTime?
-  nextFollowUpAt    DateTime?                         // denormalised from the earliest open task for quick filtering
+  nextFollowUpAt    DateTime? // denormalised from the earliest open task for quick filtering
 
   // Pipeline outcome
-  lostReason        String?
-  wonAt             DateTime?
-  lostAt            DateTime?
+  lostReason String?
+  wonAt      DateTime?
+  lostAt     DateTime?
 
   // Links
-  customerId        String?                           // existing customer, or the one created on conversion
-  customer          Customer? @relation(fields: [customerId], references: [id])
-  assignedToId      String?
-  assignedTo        User?     @relation("EnquiryAssignee", fields: [assignedToId], references: [id])
-  createdById       String?
-  createdBy         User?     @relation("EnquiryCreator", fields: [createdById], references: [id])
-  convertedQuoteId  String?                           // optional deep-link if a quote is later raised
+  customerId       String? // existing customer, or the one created on conversion
+  customer         Customer? @relation(fields: [customerId], references: [id])
+  assignedToId     String?
+  assignedTo       User?     @relation("EnquiryAssignee", fields: [assignedToId], references: [id])
+  createdById      String?
+  createdBy        User?     @relation("EnquiryCreator", fields: [createdById], references: [id])
+  convertedQuoteId String? // optional deep-link if a quote is later raised
 
-  createdAt         DateTime  @default(now())
-  updatedAt         DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  items             EnquiryItem[]
-  activities        EnquiryActivity[]
+  items      EnquiryItem[]
+  activities EnquiryActivity[]
 
   @@index([stage])
   @@index([type])
@@ -415,7 +430,7 @@ model EnquiryItem {
   enquiryId   String
   productId   String?
   variantId   String?
-  description String?          // free text when product not in catalog
+  description String? // free text when product not in catalog
   qty         Float           @default(1)
   notes       String?
   enquiry     Enquiry         @relation(fields: [enquiryId], references: [id], onDelete: Cascade)
@@ -428,17 +443,17 @@ model EnquiryItem {
 // Timeline entry on an enquiry. Doubles as a follow-up task when dueAt is set
 // (open task = dueAt set & completedAt null).
 model EnquiryActivity {
-  id          String   @id @default(cuid())
+  id          String    @id @default(cuid())
   enquiryId   String
-  type        String   // note | call | email | meeting | whatsapp | visit | stage_change
+  type        String // note | call | email | meeting | whatsapp | visit | stage_change
   body        String
   outcome     String?
   dueAt       DateTime?
   completedAt DateTime?
   createdById String?
-  createdBy   User?    @relation(fields: [createdById], references: [id])
-  createdAt   DateTime @default(now())
-  enquiry     Enquiry  @relation(fields: [enquiryId], references: [id], onDelete: Cascade)
+  createdBy   User?     @relation(fields: [createdById], references: [id])
+  createdAt   DateTime  @default(now())
+  enquiry     Enquiry   @relation(fields: [enquiryId], references: [id], onDelete: Cascade)
 
   @@index([enquiryId])
   @@index([dueAt])
@@ -448,17 +463,17 @@ model EnquiryActivity {
 // A single payment can be allocated across multiple invoices
 // (CustomerPaymentAllocation). Auto-allocation is oldest-first.
 model CustomerPayment {
-  id          String   @id @default(cuid())
-  paymentNo   String   @unique
+  id          String                      @id @default(cuid())
+  paymentNo   String                      @unique
   customerId  String
-  amount      Float    // total amount of this payment
-  mode        String   // cash | upi | bank_transfer | cheque | credit_note
-  reference   String?  // cheque no / UTR / bank ref number
+  amount      Float // total amount of this payment
+  mode        String // cash | upi | bank_transfer | cheque | credit_note
+  reference   String? // cheque no / UTR / bank ref number
   notes       String?
-  paymentDate DateTime @default(now())
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  customer    Customer @relation(fields: [customerId], references: [id])
+  paymentDate DateTime                    @default(now())
+  createdAt   DateTime                    @default(now())
+  updatedAt   DateTime                    @updatedAt
+  customer    Customer                    @relation(fields: [customerId], references: [id])
   allocations CustomerPaymentAllocation[]
 
   @@index([customerId])
@@ -511,47 +526,47 @@ model CustomerAccount {
 //   3. ProductVariant.sellingPriceOverride ?? Product.sellingPrice (fallback)
 
 model PriceList {
-  id         String   @id @default(cuid())
-  code       String   @unique // RETAIL, DEALER, DISTRIBUTOR
-  name       String
+  id          String          @id @default(cuid())
+  code        String          @unique // RETAIL, DEALER, DISTRIBUTOR
+  name        String
   description String?
-  currency   String   @default("INR")
+  currency    String          @default("INR")
   // When a SKU has no explicit override in this list, derive price as
   // basis * multiplier. basis is the field on Product to use.
-  basis      String   @default("selling") // "selling" | "cost"
-  multiplier Float    @default(1.0)
-  active     Boolean  @default(true)
-  isDefault  Boolean  @default(false)
-  validFrom  DateTime?
-  validUntil DateTime?
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  items      PriceListItem[]
-  customers  Customer[]
+  basis       String          @default("selling") // "selling" | "cost"
+  multiplier  Float           @default(1.0)
+  active      Boolean         @default(true)
+  isDefault   Boolean         @default(false)
+  validFrom   DateTime?
+  validUntil  DateTime?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  items       PriceListItem[]
+  customers   Customer[]
 }
 
 model PriceListItem {
-  id           String   @id @default(cuid())
-  priceListId  String
-  productId    String
-  variantId    String?
+  id          String          @id @default(cuid())
+  priceListId String
+  productId   String
+  variantId   String?
   // Absolute price for this SKU in this list at >= minQty units.
-  price        Float
+  price       Float
   // Quantity tier (slab) start. minQty=1 => applies to any qty.
   // Multiple rows with different minQty values create a quantity-break ladder.
-  minQty       Float    @default(1)
-  notes        String?
+  minQty      Float           @default(1)
+  notes       String?
   // Scheduled price revisions: null means "no bound" (always applies).
   // Multiple rows for the same (priceList, product, variant, minQty) can
   // exist with different windows — the resolver picks the one whose window
   // covers "now" and was most recently effective (newest validFrom).
-  validFrom    DateTime?
-  validUntil   DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  priceList    PriceList @relation(fields: [priceListId], references: [id], onDelete: Cascade)
-  product      Product   @relation(fields: [productId], references: [id])
-  variant      ProductVariant? @relation(fields: [variantId], references: [id])
+  validFrom   DateTime?
+  validUntil  DateTime?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+  priceList   PriceList       @relation(fields: [priceListId], references: [id], onDelete: Cascade)
+  product     Product         @relation(fields: [productId], references: [id])
+  variant     ProductVariant? @relation(fields: [variantId], references: [id])
 
   // No longer unique: revisions intentionally stack for the same SKU/tier.
   @@index([priceListId, productId, variantId, minQty])
@@ -564,26 +579,26 @@ model PriceListItem {
 // =====================================================================
 
 model PurchaseOrder {
-  id            String   @id @default(cuid())
-  poNo          String   @unique
-  vendorId      String
-  date          DateTime
-  expectedDate  DateTime
-  status        String   @default("draft") // draft | approved | partial | received | closed | cancelled
-  amount        Float    @default(0)
-  receivedPct   Int      @default(0)
-  notes         String?
+  id           String              @id @default(cuid())
+  poNo         String              @unique
+  vendorId     String
+  date         DateTime
+  expectedDate DateTime
+  status       String              @default("draft") // draft | approved | partial | received | closed | cancelled
+  amount       Float               @default(0)
+  receivedPct  Int                 @default(0)
+  notes        String?
   // Opaque token used to mint the customer-facing share URL
   // (/share/purchase-order/<token>). Lazy-minted on first share - we
   // don't backfill existing rows. Rotating regenerates a new token,
   // which makes the previous link 404. Indexed so the public lookup
   // is O(1).
-  shareToken    String?  @unique
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  vendor        Vendor   @relation(fields: [vendorId], references: [id])
-  items         PurchaseOrderItem[]
-  grns          Grn[]
+  shareToken   String?             @unique
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  vendor       Vendor              @relation(fields: [vendorId], references: [id])
+  items        PurchaseOrderItem[]
+  grns         Grn[]
 
   @@index([vendorId])
   @@index([status])
@@ -606,45 +621,45 @@ model PurchaseOrderItem {
 }
 
 model Grn {
-  id          String         @id @default(cuid())
-  grnNo       String         @unique
-  poId        String
-  date        DateTime       @default(now())
-  qcStatus    String         @default("pending") // pending | pass | rework | reject
+  id         String        @id @default(cuid())
+  grnNo      String        @unique
+  poId       String
+  date       DateTime      @default(now())
+  qcStatus   String        @default("pending") // pending | pass | rework | reject
   // Optional shipping/transport metadata captured at the gate so the
   // GRN queue can show "truck MH-12-2210" without hand-typing it on
   // every receipt screen.
-  truckNo     String?
-  driver      String?
-  notes       String?
+  truckNo    String?
+  driver     String?
+  notes      String?
   // Free-text receiver name (operator who recorded the receipt). Kept
   // separate from the audit log so the row can be displayed in lists
   // without joining AuditLog.
-  receivedBy  String?
-  createdAt   DateTime       @default(now())
-  updatedAt   DateTime       @updatedAt
-  po          PurchaseOrder  @relation(fields: [poId], references: [id])
-  items       GrnItem[]
+  receivedBy String?
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+  po         PurchaseOrder @relation(fields: [poId], references: [id])
+  items      GrnItem[]
 
   @@index([poId])
   @@index([qcStatus])
 }
 
 model GrnItem {
-  id           String  @id @default(cuid())
-  grnId        String
+  id          String            @id @default(cuid())
+  grnId       String
   // PO line this receipt is filling. Each PO line can be filled by
   // multiple GRNs (partial receipts) - the running total on
   // PurchaseOrderItem.received is recomputed on every GRN write.
-  poItemId     String
-  receivedQty  Float
+  poItemId    String
+  receivedQty Float
   // Optional rejection per line. When > 0 these units don't enter
   // stock and don't count toward PO.received - they're flagged for
   // return-to-vendor on the GRN report.
-  rejectedQty  Float    @default(0)
-  remarks      String?
-  grn          Grn               @relation(fields: [grnId], references: [id], onDelete: Cascade)
-  poItem       PurchaseOrderItem @relation(fields: [poItemId], references: [id])
+  rejectedQty Float             @default(0)
+  remarks     String?
+  grn         Grn               @relation(fields: [grnId], references: [id], onDelete: Cascade)
+  poItem      PurchaseOrderItem @relation(fields: [poItemId], references: [id])
 
   @@index([grnId])
   @@index([poItemId])
@@ -655,39 +670,45 @@ model GrnItem {
 // =====================================================================
 
 model Bom {
-  id          String   @id @default(cuid())
-  productId   String
+  id                  String              @id @default(cuid())
+  productId           String
   // Variant-level BOMs: when set, this BOM applies to one specific
   // variant of `product` (e.g. "Coconut oil 5L" vs "Coconut oil 1L"
   // which need different bottles, caps, cartons). When null, the BOM
   // is treated as the product-level default and is used for any
   // variant that has no variant-specific BOM.
-  variantId   String?
-  revision    String   @default("Rev-1.0")
-  outputQty   Float    @default(1)
-  active      Boolean  @default(true)
-  // Optional default work center + machine. When set, creating a
-  // Production Order from this BOM prefills the station/machine
-  // fields, so operators don't retype it for every MO. Stored as
-  // FKs to the master tables so renames flow through; the legacy
-  // free-text "station" / "machine" columns on ProductionOrder /
-  // WorkOrder still work for historical data.
+  variantId           String?
+  revision            String              @default("Rev-1.0")
+  outputQty           Float               @default(1)
+  active              Boolean             @default(true)
+  // DEPRECATED: was FK to WorkCenter (now ProductionFacility). Use defaultFacilityId.
+  // Kept nullable here so existing rows survive the migration and the backfill
+  // script can read it to populate defaultFacilityId. Drop in a follow-up migration.
   defaultWorkCenterId String?
+  // New two-level defaults: facility (required for MO creation) + specific line
+  // (optional preference that the supervisor can override at MO assign time).
+  defaultFacilityId   String?
+  defaultLineId       String?
   defaultMachineId    String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  product     Product         @relation(fields: [productId], references: [id])
-  variant     ProductVariant? @relation(fields: [variantId], references: [id])
-  defaultWorkCenter WorkCenter? @relation(fields: [defaultWorkCenterId], references: [id])
-  defaultMachine    Machine?    @relation(fields: [defaultMachineId], references: [id])
-  items       BomItem[]
-  byproducts  BomByproduct[]
-  productionOrders ProductionOrder[]
-  stockRules  StockRule[]
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
+  product             Product             @relation(fields: [productId], references: [id])
+  variant             ProductVariant?     @relation(fields: [variantId], references: [id])
+  // Legacy relation kept for backfill reads; do not use in new code.
+  defaultWorkCenter   ProductionFacility? @relation("BomLegacyWorkCenter", fields: [defaultWorkCenterId], references: [id])
+  defaultFacility     ProductionFacility? @relation("BomDefaultFacility", fields: [defaultFacilityId], references: [id])
+  defaultLine         ProductionLine?     @relation("BomDefaultLine", fields: [defaultLineId], references: [id])
+  defaultMachine      Machine?            @relation(fields: [defaultMachineId], references: [id])
+  items               BomItem[]
+  byproducts          BomByproduct[]
+  productionOrders    ProductionOrder[]
+  stockRules          StockRule[]
 
   @@index([productId])
   @@index([variantId])
   @@index([defaultWorkCenterId])
+  @@index([defaultFacilityId])
+  @@index([defaultLineId])
   @@index([defaultMachineId])
 }
 
@@ -707,15 +728,15 @@ model BomItem {
 // Secondary outputs produced alongside the main finished good when an
 // MO completes (by-products / co-products). Not consumed at issue.
 model BomByproduct {
-  id        String  @id @default(cuid())
+  id        String          @id @default(cuid())
   bomId     String
   productId String
   variantId String?
   qty       Float
   uom       String
-  costShare Float   @default(0)
-  bom       Bom     @relation(fields: [bomId], references: [id], onDelete: Cascade)
-  product   Product @relation(fields: [productId], references: [id])
+  costShare Float           @default(0)
+  bom       Bom             @relation(fields: [bomId], references: [id], onDelete: Cascade)
+  product   Product         @relation(fields: [productId], references: [id])
   variant   ProductVariant? @relation(fields: [variantId], references: [id])
 
   @@index([bomId])
@@ -723,106 +744,158 @@ model BomByproduct {
 }
 
 model ProductionOrder {
-  id          String   @id @default(cuid())
-  orderNo     String   @unique
-  bomId       String
-  station     String
-  plannedQty  Float
-  actualQty   Float    @default(0)
-  scrapQty    Float    @default(0)
-  reworkQty   Float    @default(0)
-  status      String   @default("planned") // planned | in-progress | qc | completed | delayed
-  startDate   DateTime
-  dueDate     DateTime
-  efficiency  Float    @default(0)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  bom         Bom      @relation(fields: [bomId], references: [id])
-  workOrders  WorkOrder[]
+  id             String              @id @default(cuid())
+  orderNo        String              @unique
+  bomId          String
+  // DEPRECATED text field; use facilityId FK for new code. Populated from
+  // facility.name on MO create so legacy reports still render. Drop in follow-up.
+  station        String
+  // New facility + line FKs. facilityId is required for all new MOs; lineId is
+  // null until a supervisor assigns the MO to a specific production line.
+  facilityId     String?
+  lineId         String?
+  plannedQty     Float
+  actualQty      Float               @default(0)
+  scrapQty       Float               @default(0)
+  reworkQty      Float               @default(0)
+  status         String              @default("planned") // planned | in-progress | qc | completed | delayed
+  startDate      DateTime
+  dueDate        DateTime
+  efficiency     Float               @default(0)
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+  bom            Bom                 @relation(fields: [bomId], references: [id])
+  facility       ProductionFacility? @relation(fields: [facilityId], references: [id])
+  line           ProductionLine?     @relation("MoLine", fields: [lineId], references: [id])
+  workOrders     WorkOrder[]
   transferOrders TransferOrder[]
 
   @@index([status])
   @@index([bomId])
+  @@index([facilityId])
+  @@index([lineId])
 }
 
 model WorkOrder {
-  id                 String   @id @default(cuid())
-  workOrderNo        String   @unique
-  productionOrderId  String
-  station            String
-  machine            String
-  workers            String // CSV
-  output             Float    @default(0)
-  target             Float
-  startTime          DateTime?
-  endTime            DateTime?
-  status             String   @default("queued") // queued | running | paused | complete
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
-  productionOrder    ProductionOrder @relation(fields: [productionOrderId], references: [id], onDelete: Cascade)
+  id                String          @id @default(cuid())
+  workOrderNo       String          @unique
+  productionOrderId String
+  // DEPRECATED text fields; use lineId / machineId for new code. Drop in follow-up.
+  station           String
+  machine           String
+  workers           String // CSV
+  output            Float           @default(0)
+  target            Float
+  startTime         DateTime?
+  endTime           DateTime?
+  status            String          @default("queued") // queued | running | paused | complete
+  // Set by supervisor when assigning the parent MO to a specific line/machine.
+  lineId            String?
+  machineId         String?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  productionOrder   ProductionOrder @relation(fields: [productionOrderId], references: [id], onDelete: Cascade)
+  line              ProductionLine? @relation("WoLine", fields: [lineId], references: [id])
+  machineRef        Machine?        @relation("WoMachine", fields: [machineId], references: [id])
 
   @@index([productionOrderId])
   @@index([status])
+  @@index([lineId])
 }
 
 // =====================================================================
 // Production master data
 // =====================================================================
 //
-// WorkCenter = a production line, cell, or department where work
-// happens. Examples: "Packaging line 1", "Oil press station",
-// "QC bench". Used to group machines and to populate the "station"
-// dropdown on BOMs / production orders / work orders.
+// ProductionFacility = a physical production area / department
+// (e.g. "Soap Room", "Snacks Room"). A facility owns one optional
+// dedicated production-line warehouse for material staging and FG
+// holding. Multiple ProductionLines run inside a single facility.
 //
-// Machine = a specific physical asset that lives on a work center.
-// Examples: "Pouch sealer #2", "1L bottle filler". Status tracks
-// whether the asset is available for scheduling.
+// ProductionLine = a specific line within a facility where work
+// physically happens (e.g. "Boiling Line", "Mixing Line"). A line
+// owns its machines. The supervisor assigns an MO to a line after
+// the planner creates the MO against a facility.
 //
-// Both are master data with a stable code + display name. The legacy
-// free-text station/machine fields on Bom / ProductionOrder /
-// WorkOrder are kept for backwards compatibility - they get
-// populated from the master record's name on save, so historical
-// rows keep rendering even after a master record is renamed.
+// Machine = a physical asset on a production line
+// (e.g. "Boiler #1", "Pouch sealer #2"). Status tracks availability.
+//
+// Legacy note: ProductionFacility maps to the legacy "WorkCenter"
+// table (@@map) so no data copy is needed. Legacy free-text station /
+// machine columns on Bom / ProductionOrder / WorkOrder are kept until
+// a follow-up migration drops them.
 
-model WorkCenter {
-  id              String    @id @default(cuid())
-  code            String    @unique // e.g. "WC-PACK-1"
-  name            String              // e.g. "Packaging line 1"
-  description     String?
-  // Optional throughput hint, used by planners to load-balance MOs.
-  // Unit is "produced units / hour" (interpretation is up to the
-  // operator since unit varies by product).
-  capacityPerHour Float?
-  // Optional dedicated production-line warehouse. When set, MO completion
-  // lands FG here (instead of any storage warehouse) and material issue
-  // pulls ONLY from here. A putaway TO then moves FG to storage.
-  productionLineWarehouseId String? @unique
-  active          Boolean   @default(true)
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
-  machines        Machine[]
-  defaultedByBoms Bom[]
-  productionLineWarehouse Warehouse? @relation("WorkCenterProductionWarehouse", fields: [productionLineWarehouseId], references: [id])
+model ProductionFacility {
+  id                        String            @id @default(cuid())
+  code                      String            @unique // e.g. "FAC-SOAP"
+  name                      String // e.g. "Soap Room"
+  description               String?
+  // Optional throughput hint (produced units / hour) for load-balancing.
+  capacityPerHour           Float?
+  // One shared production-line warehouse per facility. MO release creates
+  // replenishment TOs into this WH; MO complete lands FG here before putaway.
+  productionLineWarehouseId String?           @unique
+  active                    Boolean           @default(true)
+  createdAt                 DateTime          @default(now())
+  updatedAt                 DateTime          @updatedAt
+  lines                     ProductionLine[]
+  // Legacy back-relations — do not use in new code.
+  legacyBoms                Bom[]             @relation("BomLegacyWorkCenter")
+  legacyMachines            Machine[]         @relation("MachineLegacyWorkCenter")
+  // New back-relations.
+  defaultedByBoms           Bom[]             @relation("BomDefaultFacility")
+  productionOrders          ProductionOrder[]
+  productionLineWarehouse   Warehouse?        @relation("FacilityProductionWarehouse", fields: [productionLineWarehouseId], references: [id])
 
+  @@index([active])
+  @@map("WorkCenter")
+}
+
+model ProductionLine {
+  id               String             @id @default(cuid())
+  code             String             @unique // e.g. "LINE-SOAP-BOIL"
+  name             String // e.g. "Boiling Line"
+  description      String?
+  facilityId       String
+  capacityPerHour  Float?
+  active           Boolean            @default(true)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  facility         ProductionFacility @relation(fields: [facilityId], references: [id])
+  machines         Machine[]
+  defaultedByBoms  Bom[]              @relation("BomDefaultLine")
+  productionOrders ProductionOrder[]  @relation("MoLine")
+  workOrders       WorkOrder[]        @relation("WoLine")
+
+  @@index([facilityId])
   @@index([active])
 }
 
 model Machine {
-  id            String     @id @default(cuid())
-  code          String     @unique // e.g. "PCH-SEAL-02"
-  name          String
-  workCenterId  String
-  workCenter    WorkCenter @relation(fields: [workCenterId], references: [id])
+  id               String              @id @default(cuid())
+  code             String              @unique // e.g. "PCH-SEAL-02"
+  name             String
+  // DEPRECATED: was FK to WorkCenter (now ProductionFacility). Use productionLineId.
+  // Kept nullable here so the backfill script can read it before it is populated.
+  // Drop in a follow-up migration once productionLineId is fully backfilled.
+  workCenterId     String?
+  // New FK: which production line this machine physically belongs to.
+  productionLineId String?
   // Operational status. Idle = available but not currently running.
   // Maintenance = scheduled downtime. Broken = unscheduled outage.
-  status        String     @default("idle") // running | idle | maintenance | broken
-  description   String?
-  active        Boolean    @default(true)
-  createdAt     DateTime   @default(now())
-  updatedAt     DateTime   @updatedAt
-  defaultedByBoms Bom[]
+  status           String              @default("idle") // running | idle | maintenance | broken
+  description      String?
+  active           Boolean             @default(true)
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+  // Legacy relation — do not use in new code.
+  workCenter       ProductionFacility? @relation("MachineLegacyWorkCenter", fields: [workCenterId], references: [id])
+  productionLine   ProductionLine?     @relation(fields: [productionLineId], references: [id])
+  defaultedByBoms  Bom[]
+  workOrders       WorkOrder[]         @relation("WoMachine")
 
   @@index([workCenterId])
+  @@index([productionLineId])
   @@index([active])
 }
 
@@ -831,38 +904,38 @@ model Machine {
 // =====================================================================
 
 model Worker {
-  id            String   @id @default(cuid())
-  empNo         String   @unique
+  id            String       @id @default(cuid())
+  empNo         String       @unique
   name          String
   station       String
-  shift         String   @default("A")
-  status        String   @default("out") // in | out | break
-  unitsToday    Float    @default(0)
-  targetToday   Float    @default(0)
-  efficiency    Float    @default(0)
-  rejectionRate Float    @default(0)
-  hoursToday    Float    @default(0)
-  active        Boolean  @default(true)
+  shift         String       @default("A")
+  status        String       @default("out") // in | out | break
+  unitsToday    Float        @default(0)
+  targetToday   Float        @default(0)
+  efficiency    Float        @default(0)
+  rejectionRate Float        @default(0)
+  hoursToday    Float        @default(0)
+  active        Boolean      @default(true)
   // Optional one-to-one link to the User who logs into the mobile PWA.
   // When set, mobile punch-in/out goes through this Worker row; floor
   // identity == login identity. Nullable so legacy floor-only workers
   // keep working without a login.
-  userId        String?  @unique
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  user          User?    @relation("WorkerUser", fields: [userId], references: [id])
+  userId        String?      @unique
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  user          User?        @relation("WorkerUser", fields: [userId], references: [id])
   attendance    Attendance[]
 }
 
 model Attendance {
-  id        String   @id @default(cuid())
-  workerId  String
-  date      DateTime
-  inAt      DateTime?
-  outAt     DateTime?
-  shift     String
-  hours     Float    @default(0)
-  worker    Worker   @relation(fields: [workerId], references: [id], onDelete: Cascade)
+  id       String    @id @default(cuid())
+  workerId String
+  date     DateTime
+  inAt     DateTime?
+  outAt    DateTime?
+  shift    String
+  hours    Float     @default(0)
+  worker   Worker    @relation(fields: [workerId], references: [id], onDelete: Cascade)
 
   @@index([workerId, date])
 }
@@ -876,7 +949,7 @@ model Attendance {
 // Resolution waterfall used by resolvePutawayDestination():
 //   variant rule (lowest priority number) > product rule > system fallback.
 model PutawayRule {
-  id            String   @id @default(cuid())
+  id            String          @id @default(cuid())
   productId     String
   variantId     String?
   toWarehouseId String
@@ -884,15 +957,15 @@ model PutawayRule {
   // auto-picks the best available bin via pickBinForReceive().
   toBinId       String?
   // Lower = higher priority when multiple rules match.
-  priority      Int      @default(100)
-  active        Boolean  @default(true)
+  priority      Int             @default(100)
+  active        Boolean         @default(true)
   notes         String?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  product       Product  @relation(fields: [productId], references: [id])
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  product       Product         @relation(fields: [productId], references: [id])
   variant       ProductVariant? @relation(fields: [variantId], references: [id])
-  toWarehouse   Warehouse @relation("PutawayRuleTo", fields: [toWarehouseId], references: [id])
-  tobin         Bin?      @relation(fields: [toBinId], references: [id])
+  toWarehouse   Warehouse       @relation("PutawayRuleTo", fields: [toWarehouseId], references: [id])
+  tobin         Bin?            @relation(fields: [toBinId], references: [id])
 
   @@index([productId])
   @@index([variantId])
@@ -901,29 +974,29 @@ model PutawayRule {
 
 // Monitors a bin's qty; when below minQty, auto-creates an MO or transfer.
 model StockRule {
-  id              String   @id @default(cuid())
-  productId       String
-  variantId       String?
-  monitorBinId    String
-  minQty          Float
+  id            String          @id @default(cuid())
+  productId     String
+  variantId     String?
+  monitorBinId  String
+  minQty        Float
   // mo = create ProductionOrder; transfer = create TransferOrder
-  triggerType     String
-  bomId           String?
-  sourceBinId     String?
-  toWarehouseId   String?
-  toBinId         String?
-  tags            String?
-  active          Boolean  @default(true)
-  notes           String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  product         Product         @relation(fields: [productId], references: [id])
-  variant         ProductVariant? @relation(fields: [variantId], references: [id])
-  monitorBin      Bin             @relation("StockRuleMonitor", fields: [monitorBinId], references: [id])
-  bom             Bom?            @relation(fields: [bomId], references: [id])
-  sourceBin       Bin?            @relation("StockRuleSource", fields: [sourceBinId], references: [id])
-  toBin           Bin?            @relation("StockRuleDest", fields: [toBinId], references: [id])
-  toWarehouse     Warehouse?      @relation("StockRuleToWarehouse", fields: [toWarehouseId], references: [id])
+  triggerType   String
+  bomId         String?
+  sourceBinId   String?
+  toWarehouseId String?
+  toBinId       String?
+  tags          String?
+  active        Boolean         @default(true)
+  notes         String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  product       Product         @relation(fields: [productId], references: [id])
+  variant       ProductVariant? @relation(fields: [variantId], references: [id])
+  monitorBin    Bin             @relation("StockRuleMonitor", fields: [monitorBinId], references: [id])
+  bom           Bom?            @relation(fields: [bomId], references: [id])
+  sourceBin     Bin?            @relation("StockRuleSource", fields: [sourceBinId], references: [id])
+  toBin         Bin?            @relation("StockRuleDest", fields: [toBinId], references: [id])
+  toWarehouse   Warehouse?      @relation("StockRuleToWarehouse", fields: [toWarehouseId], references: [id])
 
   @@index([productId])
   @@index([variantId])
@@ -940,10 +1013,10 @@ model StockRule {
 // Status flow: draft -> ready -> in_transit -> done
 //              any -> cancelled
 model TransferOrder {
-  id                String   @id @default(cuid())
-  transferNo        String   @unique  // TRF-2026-NNNN
-  kind              String            // putaway | replenishment | manual
-  status            String   @default("ready") // draft | ready | in_transit | done | cancelled
+  id                String              @id @default(cuid())
+  transferNo        String              @unique // TRF-2026-NNNN
+  kind              String // putaway | replenishment | manual
+  status            String              @default("ready") // draft | ready | in_transit | done | cancelled
   fromWarehouseId   String
   toWarehouseId     String
   // Back-link to the MO that triggered this TO (null for manual).
@@ -960,14 +1033,14 @@ model TransferOrder {
   notes             String?
   // Comma-separated team/routing tags for mobile task filtering.
   tags              String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-  fromWarehouse     Warehouse @relation("TransferOrderFromWarehouse", fields: [fromWarehouseId], references: [id])
-  toWarehouse       Warehouse @relation("TransferOrderToWarehouse", fields: [toWarehouseId], references: [id])
-  productionOrder   ProductionOrder? @relation(fields: [productionOrderId], references: [id])
-  assignedTo        User?    @relation("TransferOrderAssignee", fields: [assignedToId], references: [id])
-  pickedBy          User?    @relation("TransferOrderPicker", fields: [pickedById], references: [id])
-  droppedBy         User?    @relation("TransferOrderDropper", fields: [droppedById], references: [id])
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  fromWarehouse     Warehouse           @relation("TransferOrderFromWarehouse", fields: [fromWarehouseId], references: [id])
+  toWarehouse       Warehouse           @relation("TransferOrderToWarehouse", fields: [toWarehouseId], references: [id])
+  productionOrder   ProductionOrder?    @relation(fields: [productionOrderId], references: [id])
+  assignedTo        User?               @relation("TransferOrderAssignee", fields: [assignedToId], references: [id])
+  pickedBy          User?               @relation("TransferOrderPicker", fields: [pickedById], references: [id])
+  droppedBy         User?               @relation("TransferOrderDropper", fields: [droppedById], references: [id])
   items             TransferOrderItem[]
 
   @@index([status])
@@ -979,26 +1052,26 @@ model TransferOrder {
 }
 
 model TransferOrderItem {
-  id               String   @id @default(cuid())
-  transferOrderId  String
-  productId        String
-  variantId        String?
+  id              String          @id @default(cuid())
+  transferOrderId String
+  productId       String
+  variantId       String?
   // System-computed required quantity.
-  qtyRequested     Float
+  qtyRequested    Float
   // Filled in at pick time (may be <= qtyRequested if short).
-  qtyPicked        Float    @default(0)
+  qtyPicked       Float           @default(0)
   // Filled in at drop time (may differ from qtyPicked on variance).
-  qtyDropped       Float    @default(0)
+  qtyDropped      Float           @default(0)
   // Source bin (system-suggested; operator may override at pick time).
-  fromBinId        String?
+  fromBinId       String?
   // Destination bin resolved from PutawayRule or operator scan at drop time.
-  toBinId          String?
-  notes            String?
-  transferOrder    TransferOrder @relation(fields: [transferOrderId], references: [id], onDelete: Cascade)
-  product          Product       @relation(fields: [productId], references: [id])
-  variant          ProductVariant? @relation(fields: [variantId], references: [id])
-  fromBin          Bin?          @relation("TransferItemFromBin", fields: [fromBinId], references: [id])
-  tobin            Bin?          @relation("TransferItemToBin", fields: [toBinId], references: [id])
+  toBinId         String?
+  notes           String?
+  transferOrder   TransferOrder   @relation(fields: [transferOrderId], references: [id], onDelete: Cascade)
+  product         Product         @relation(fields: [productId], references: [id])
+  variant         ProductVariant? @relation(fields: [variantId], references: [id])
+  fromBin         Bin?            @relation("TransferItemFromBin", fields: [fromBinId], references: [id])
+  tobin           Bin?            @relation("TransferItemToBin", fields: [toBinId], references: [id])
 
   @@index([transferOrderId])
   @@index([productId])
@@ -1009,23 +1082,23 @@ model TransferOrderItem {
 // =====================================================================
 
 model StockLedger {
-  id           String   @id @default(cuid())
-  date         DateTime @default(now())
-  productId    String
+  id          String          @id @default(cuid())
+  date        DateTime        @default(now())
+  productId   String
   // Optional pointer to the specific variant this row moved. Populated
   // by variant-scoped flows (e.g. producing the 250ml CAOL variant via
   // a variant-scoped BOM, or transferring a tagged variant SKU). NULL
   // means the row applies to the parent product / bulk stock.
-  variantId    String?
-  txnType      String // GRN | Issue | Transfer | Sale | Production | Adjust
-  ref          String
-  qty          Float
-  warehouseId  String
-  bin          String?
-  balance      Float    @default(0)
-  product      Product  @relation(fields: [productId], references: [id])
-  variant      ProductVariant? @relation(fields: [variantId], references: [id])
-  warehouse    Warehouse @relation(fields: [warehouseId], references: [id])
+  variantId   String?
+  txnType     String // GRN | Issue | Transfer | Sale | Production | Adjust
+  ref         String
+  qty         Float
+  warehouseId String
+  bin         String?
+  balance     Float           @default(0)
+  product     Product         @relation(fields: [productId], references: [id])
+  variant     ProductVariant? @relation(fields: [variantId], references: [id])
+  warehouse   Warehouse       @relation(fields: [warehouseId], references: [id])
 
   @@index([productId])
   @@index([variantId])
@@ -1039,39 +1112,44 @@ model StockLedger {
 // =====================================================================
 
 model Invoice {
-  id              String   @id @default(cuid())
-  invoiceNo       String   @unique
+  id                 String                      @id @default(cuid())
+  invoiceNo          String                      @unique
   // Random opaque token that lets the customer view this invoice without
   // logging in. Minted on creation and exposed via /v1/public/invoices/:token.
   // Can be rotated to revoke the share link.
-  shareToken      String?  @unique
-  customerId      String
+  shareToken         String?                     @unique
+  customerId         String
   // Optional link back to the originating Sales Order. Walk-in (POS)
   // invoices have null. One SO can be drawn down by many invoices.
-  salesOrderId    String?
+  salesOrderId       String?
   // When the invoice was generated from a PackingSlip (the recommended
   // B2B flow) we keep that link so qty traceability is end-to-end.
-  packingSlipId   String?  @unique
-  date            DateTime @default(now())
-  amount          Float
-  tax             Float
-  transportCharge Float    @default(0)
-  transportTax    Float    @default(0)
-  status          String   @default("draft") // draft | issued | paid | partial | overdue
-  paymentMode     String // cash | card | upi | credit | split
-  dispatchOptionId String?
-  notes           String?
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  customer        Customer @relation(fields: [customerId], references: [id])
-  salesOrder      SalesOrder? @relation(fields: [salesOrderId], references: [id])
-  packingSlip     PackingSlip? @relation(fields: [packingSlipId], references: [id])
-  dispatchOption  DispatchOption? @relation(fields: [dispatchOptionId], references: [id])
-  items           InvoiceItem[]
+  packingSlipId      String?                     @unique
+  date               DateTime                    @default(now())
+  amount             Float
+  tax                Float
+  transportCharge    Float                       @default(0)
+  transportTax       Float                       @default(0)
+  // Estimated shipping weight in kg. For invoices generated from a
+  // PackingSlip we copy the cached slip total (which folds in actual
+  // scale readings when present); for direct/walk-in invoices we
+  // derive it from the line items.
+  totalWeightKg      Float                       @default(0)
+  status             String                      @default("draft") // draft | issued | paid | partial | overdue
+  paymentMode        String // cash | card | upi | credit | split
+  dispatchOptionId   String?
+  notes              String?
+  createdAt          DateTime                    @default(now())
+  updatedAt          DateTime                    @updatedAt
+  customer           Customer                    @relation(fields: [customerId], references: [id])
+  salesOrder         SalesOrder?                 @relation(fields: [salesOrderId], references: [id])
+  packingSlip        PackingSlip?                @relation(fields: [packingSlipId], references: [id])
+  dispatchOption     DispatchOption?             @relation(fields: [dispatchOptionId], references: [id])
+  items              InvoiceItem[]
   paymentAllocations CustomerPaymentAllocation[]
-  dispatches      DispatchOrder[]
-  customerReturns CustomerReturn[]
-  creditNotes     CreditNote[]
+  dispatches         DispatchOrder[]
+  customerReturns    CustomerReturn[]
+  creditNotes        CreditNote[]
 
   @@index([status])
   @@index([customerId])
@@ -1080,27 +1158,27 @@ model Invoice {
 }
 
 model InvoiceItem {
-  id                  String  @id @default(cuid())
-  invoiceId           String
-  productId           String
-  variantId           String?
+  id                String           @id @default(cuid())
+  invoiceId         String
+  productId         String
+  variantId         String?
   // Draws down a specific Sales Order line when invoice is from an SO.
-  salesOrderItemId    String?
+  salesOrderItemId  String?
   // When the line was generated from a PackingSlip line, link it so we
   // can show ordered/picked/packed/invoiced trail per SKU.
-  packingSlipItemId   String?
-  qty                 Float
-  rate                Float
-  amount              Float
+  packingSlipItemId String?
+  qty               Float
+  rate              Float
+  amount            Float
   // Snapshot of the GST rate at time of invoicing so historical accuracy is
   // preserved even if the product rate is changed later.
-  gstRate             Float?  @default(18)
-  taxAmount           Float?
-  invoice             Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  product             Product @relation(fields: [productId], references: [id])
-  variant             ProductVariant? @relation(fields: [variantId], references: [id])
-  salesOrderItem      SalesOrderItem? @relation(fields: [salesOrderItemId], references: [id])
-  packingSlipItem     PackingSlipItem? @relation(fields: [packingSlipItemId], references: [id])
+  gstRate           Float?           @default(18)
+  taxAmount         Float?
+  invoice           Invoice          @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  product           Product          @relation(fields: [productId], references: [id])
+  variant           ProductVariant?  @relation(fields: [variantId], references: [id])
+  salesOrderItem    SalesOrderItem?  @relation(fields: [salesOrderItemId], references: [id])
+  packingSlipItem   PackingSlipItem? @relation(fields: [packingSlipItemId], references: [id])
 
   @@index([invoiceId])
   @@index([variantId])
@@ -1109,30 +1187,30 @@ model InvoiceItem {
 }
 
 model DispatchOrder {
-  id           String   @id @default(cuid())
-  dispatchNo   String   @unique
-  invoiceId    String
+  id          String    @id @default(cuid())
+  dispatchNo  String    @unique
+  invoiceId   String
   // Vehicle/driver are now optional - if the dispatch is on a Trip
   // (tripId set) it inherits these from the trip and the columns stay
   // null. They remain settable per-dispatch for legacy / one-off
   // direct dispatches that aren't on a planned trip.
-  vehicle      String?
-  driver       String?
-  destination  String?
-  status       String   @default("planned") // planned | loading | in-transit | delivered | delayed
-  etaHours     Int      @default(0)
-  weightKg     Float    @default(0)
-  otpVerified  Boolean  @default(false)
-  signedAt     DateTime?
-  photoUrl     String?
+  vehicle     String?
+  driver      String?
+  destination String?
+  status      String    @default("planned") // planned | loading | in-transit | delivered | delayed
+  etaHours    Int       @default(0)
+  weightKg    Float     @default(0)
+  otpVerified Boolean   @default(false)
+  signedAt    DateTime?
+  photoUrl    String?
   // Optional link to the Trip the operator has scheduled this drop on.
   // Null = unassigned (orphan); Trip cancellation moves dispatches to
   // a freshly-generated successor trip and never leaves them stranded.
-  tripId       String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  invoice      Invoice  @relation(fields: [invoiceId], references: [id])
-  trip         Trip?    @relation(fields: [tripId], references: [id])
+  tripId      String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  invoice     Invoice   @relation(fields: [invoiceId], references: [id])
+  trip        Trip?     @relation(fields: [tripId], references: [id])
 
   @@index([invoiceId])
   @@index([status])
@@ -1149,28 +1227,28 @@ model DispatchOrder {
 // it so no invoice is ever left without a transport plan.
 // =====================================================================
 model Trip {
-  id             String          @id @default(cuid())
-  tripNo         String          @unique
-  scheduledDate  DateTime
-  vehicle        String
-  driver         String
+  id               String          @id @default(cuid())
+  tripNo           String          @unique
+  scheduledDate    DateTime
+  vehicle          String
+  driver           String
   // Optional human label like "Bangalore South Loop" - shown on cards.
-  route          String?
+  route            String?
   // scheduled | in_transit | completed | cancelled
-  status         String          @default("scheduled")
+  status           String          @default("scheduled")
   // Soft capacity hint; used by the UI to show "82% full". Not enforced.
-  capacityKg     Float           @default(1000)
-  notes          String?
-  createdById    String?
-  startedAt      DateTime?
-  completedAt    DateTime?
-  cancelledAt    DateTime?
+  capacityKg       Float           @default(1000)
+  notes            String?
+  createdById      String?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  cancelledAt      DateTime?
   // When this trip is the rollover successor of another trip, the
   // origin id is captured so the UI can show "rescheduled from TRP-...".
   rolledOverFromId String?
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-  dispatches     DispatchOrder[]
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  dispatches       DispatchOrder[]
 
   @@index([scheduledDate])
   @@index([status])
@@ -1191,17 +1269,17 @@ model Trip {
 //   courier         — express parcel (Delhivery, BlueDart, DTDC)
 //   customer_pickup — ex-works / customer-arranged transport
 model DispatchOption {
-  id            String   @id @default(cuid())
-  code          String   @unique
+  id            String       @id @default(cuid())
+  code          String       @unique
   name          String
   category      String
   description   String?
   // Suggested default freight (₹, excl. GST) — pre-fills the quote form.
-  defaultCharge Float    @default(0)
-  active        Boolean  @default(true)
-  sortOrder     Int      @default(0)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  defaultCharge Float        @default(0)
+  active        Boolean      @default(true)
+  sortOrder     Int          @default(0)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
   quotes        Quote[]
   salesOrders   SalesOrder[]
   invoices      Invoice[]
@@ -1231,6 +1309,11 @@ model Quote {
   transportCharge       Float           @default(0)
   transportTax          Float           @default(0)
   total                 Float           @default(0)
+  // Estimated shipping weight in kg: sum(item.qty * unitWeightKg(variant, product)).
+  // Recomputed on every item mutation by recomputeQuoteWeight() so the
+  // sales rep can quote freight up-front without waiting for the pack
+  // stage. Carries forward into SalesOrder.totalWeightKg on conversion.
+  totalWeightKg         Float           @default(0)
   // How goods will reach the customer — set from Settings → Dispatch options.
   dispatchOptionId      String?
   paymentTerms          String?
@@ -1278,7 +1361,7 @@ model QuoteRevision {
   // Full JSON snapshot of the quote (header + items) at the moment this
   // revision was sealed. Immutable.
   snapshot  String
-  reason    String   // customer_request | stock_renegotiate | price_change | validity_extension | edit
+  reason    String // customer_request | stock_renegotiate | price_change | validity_extension | edit
   changedBy String
   changedAt DateTime @default(now())
   quote     Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
@@ -1288,37 +1371,41 @@ model QuoteRevision {
 }
 
 model SalesOrder {
-  id           String           @id @default(cuid())
-  soNo         String           @unique
+  id               String           @id @default(cuid())
+  soNo             String           @unique
   // Random opaque token for read-only customer view via
   // /v1/public/sales-orders/:token. Useful as an order acknowledgement.
-  shareToken   String?          @unique
+  shareToken       String?          @unique
   // Optional source quote (walk-in / direct SOs allowed).
-  quoteId      String?          @unique
-  customerId   String
-  status       String           @default("confirmed") // confirmed | partially_invoiced | invoiced | closed | cancelled | on_hold
+  quoteId          String?          @unique
+  customerId       String
+  status           String           @default("confirmed") // confirmed | partially_invoiced | invoiced | closed | cancelled | on_hold
   // Where the order originated. "internal" = desktop/B2B (default),
   // "ecommerce" = prepaid storefront mock. Read by the pack-complete
   // hook to decide whether to stamp a mock AWB, and by reports that
   // want to break down channel revenue.
-  source       String           @default("internal")
-  orderDate    DateTime         @default(now())
-  subTotal     Float            @default(0)
-  tax          Float            @default(0)
-  transportCharge Float         @default(0)
-  transportTax    Float         @default(0)
-  total        Float            @default(0)
+  source           String           @default("internal")
+  orderDate        DateTime         @default(now())
+  subTotal         Float            @default(0)
+  tax              Float            @default(0)
+  transportCharge  Float            @default(0)
+  transportTax     Float            @default(0)
+  total            Float            @default(0)
+  // Estimated shipping weight in kg. Inherited from Quote.totalWeightKg
+  // on confirmation and re-derived on any line edit. Trip planning uses
+  // this for capacity hints before a packing slip exists.
+  totalWeightKg    Float            @default(0)
   dispatchOptionId String?
-  notes        String?
-  createdAt    DateTime         @default(now())
-  updatedAt    DateTime         @updatedAt
-  customer     Customer         @relation(fields: [customerId], references: [id])
-  quote        Quote?           @relation(fields: [quoteId], references: [id])
-  dispatchOption DispatchOption? @relation(fields: [dispatchOptionId], references: [id])
-  items        SalesOrderItem[]
-  invoices     Invoice[]
-  pickLists    PickList[]
-  packingSlips PackingSlip[]
+  notes            String?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  customer         Customer         @relation(fields: [customerId], references: [id])
+  quote            Quote?           @relation(fields: [quoteId], references: [id])
+  dispatchOption   DispatchOption?  @relation(fields: [dispatchOptionId], references: [id])
+  items            SalesOrderItem[]
+  invoices         Invoice[]
+  pickLists        PickList[]
+  packingSlips     PackingSlip[]
 
   @@index([status])
   @@index([customerId])
@@ -1327,22 +1414,22 @@ model SalesOrder {
 }
 
 model SalesOrderItem {
-  id              String          @id @default(cuid())
-  salesOrderId    String
-  productId       String
-  variantId       String?
-  qtyOrdered      Float
-  qtyInvoiced     Float           @default(0)
-  qtyCancelled    Float           @default(0)
-  rate            Float
-  amount          Float
-  salesOrder      SalesOrder      @relation(fields: [salesOrderId], references: [id], onDelete: Cascade)
-  product         Product         @relation(fields: [productId], references: [id])
-  variant         ProductVariant? @relation(fields: [variantId], references: [id])
-  invoiceItems    InvoiceItem[]
-  pickListItems   PickListItem[]
+  id               String                  @id @default(cuid())
+  salesOrderId     String
+  productId        String
+  variantId        String?
+  qtyOrdered       Float
+  qtyInvoiced      Float                   @default(0)
+  qtyCancelled     Float                   @default(0)
+  rate             Float
+  amount           Float
+  salesOrder       SalesOrder              @relation(fields: [salesOrderId], references: [id], onDelete: Cascade)
+  product          Product                 @relation(fields: [productId], references: [id])
+  variant          ProductVariant?         @relation(fields: [variantId], references: [id])
+  invoiceItems     InvoiceItem[]
+  pickListItems    PickListItem[]
   packingSlipItems PackingSlipItem[]
-  reservations    SalesOrderReservation[]
+  reservations     SalesOrderReservation[]
 
   @@index([salesOrderId])
   @@index([productId])
@@ -1363,13 +1450,13 @@ model SalesOrderItem {
 //                             bin, in which case it transfers)
 //   * SO cancel / hold      → row(s) deleted, Bin.reservedQty -= qty
 model SalesOrderReservation {
-  id                String         @id @default(cuid())
-  salesOrderItemId  String
-  binId             String
-  qty               Int
-  createdAt         DateTime       @default(now())
-  salesOrderItem    SalesOrderItem @relation(fields: [salesOrderItemId], references: [id], onDelete: Cascade)
-  bin               Bin            @relation(fields: [binId], references: [id], onDelete: Cascade)
+  id               String         @id @default(cuid())
+  salesOrderItemId String
+  binId            String
+  qty              Int
+  createdAt        DateTime       @default(now())
+  salesOrderItem   SalesOrderItem @relation(fields: [salesOrderItemId], references: [id], onDelete: Cascade)
+  bin              Bin            @relation(fields: [binId], references: [id], onDelete: Cascade)
 
   @@index([salesOrderItemId])
   @@index([binId])
@@ -1420,23 +1507,23 @@ model PickList {
 }
 
 model PickListItem {
-  id                String          @id @default(cuid())
-  pickListId        String
-  salesOrderItemId  String
-  productId         String
-  variantId         String?
+  id               String          @id @default(cuid())
+  pickListId       String
+  salesOrderItemId String
+  productId        String
+  variantId        String?
   // Suggested bin (the system's first-fit choice). Operator may override.
-  binId             String?
+  binId            String?
   // The qty the system suggested to pick (= remaining on SO line).
-  qtyToPick         Float
+  qtyToPick        Float
   // What the warehouse actually picked. Defaults to qtyToPick on draft.
-  qtyPicked         Float           @default(0)
-  notes             String?
-  pickList          PickList        @relation(fields: [pickListId], references: [id], onDelete: Cascade)
-  salesOrderItem    SalesOrderItem  @relation(fields: [salesOrderItemId], references: [id])
-  product           Product         @relation(fields: [productId], references: [id])
-  variant           ProductVariant? @relation(fields: [variantId], references: [id])
-  bin               Bin?            @relation(fields: [binId], references: [id])
+  qtyPicked        Float           @default(0)
+  notes            String?
+  pickList         PickList        @relation(fields: [pickListId], references: [id], onDelete: Cascade)
+  salesOrderItem   SalesOrderItem  @relation(fields: [salesOrderItemId], references: [id])
+  product          Product         @relation(fields: [productId], references: [id])
+  variant          ProductVariant? @relation(fields: [variantId], references: [id])
+  bin              Bin?            @relation(fields: [binId], references: [id])
 
   @@index([pickListId])
   @@index([salesOrderItemId])
@@ -1445,49 +1532,56 @@ model PickListItem {
 }
 
 model PackingSlip {
-  id           String            @id @default(cuid())
-  packingSlipNo String           @unique
+  id                  String             @id @default(cuid())
+  packingSlipNo       String             @unique
   // Random opaque token for read-only customer view via
   // /v1/public/packing-slips/:token. Useful as a delivery / dispatch note.
-  shareToken   String?           @unique
-  salesOrderId String
+  shareToken          String?            @unique
+  salesOrderId        String
   // Optional source pick list (a packing slip can also be created
   // directly for "skip-picking" walk-in dispatches in the future).
-  pickListId   String?           @unique
-  status       String            @default("open") // open | packed | invoiced | cancelled
-  notes        String?
-  createdById  String
+  pickListId          String?            @unique
+  status              String             @default("open") // open | packed | invoiced | cancelled
+  notes               String?
+  createdById         String
   // Self-claim assignment for the mobile packing flow. Mirrors
   // PickList.assignedToId so the same UI treats both task types
   // uniformly.
-  assignedToId String?
-  claimedAt    DateTime?
+  assignedToId        String?
+  claimedAt           DateTime?
   // Tracking string stamped at pack-complete for ecommerce SOs.
   // Only populated when SalesOrder.source == "ecommerce". B2B slips
   // use the existing Trip / DispatchOrder flow and leave these null.
-  awb          String?
-  carrier      String?
+  awb                 String?
+  carrier             String?
   // Optional public tracking link the operator can paste from the
   // courier portal. Surfaced verbatim on the invoice detail screen
   // so the customer-care team can deep-link customers.
-  trackingUrl  String?
+  trackingUrl         String?
+  // Denormalised total estimated weight (sum of container estWeightKg
+  // or actualWeightKg when present) at pack-complete. Cached so trip
+  // weight rollups stay O(1) per slip and we don't recompute when a
+  // dispatch row is fetched.
+  totalEstWeightKg    Float              @default(0)
+  totalActualWeightKg Float?
   // Courier handoff lifecycle for ecommerce. dispatchedAt is set when
   // the operator (or pack-complete auto-handoff) assigns a courier;
   // deliveredAt is set when the operator marks the order delivered.
   // Both are independent of slip.status so we can still reflect
   // financial state ("invoiced") alongside fulfilment state.
-  dispatchedAt DateTime?
-  deliveredAt  DateTime?
-  packedAt     DateTime?
-  invoicedAt   DateTime?
-  cancelledAt  DateTime?
-  createdAt    DateTime          @default(now())
-  updatedAt    DateTime          @updatedAt
-  salesOrder   SalesOrder        @relation(fields: [salesOrderId], references: [id])
-  pickList     PickList?         @relation(fields: [pickListId], references: [id])
-  items        PackingSlipItem[]
-  invoice      Invoice?
-  assignedTo   User?             @relation("PackingSlipAssignee", fields: [assignedToId], references: [id])
+  dispatchedAt        DateTime?
+  deliveredAt         DateTime?
+  packedAt            DateTime?
+  invoicedAt          DateTime?
+  cancelledAt         DateTime?
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  salesOrder          SalesOrder         @relation(fields: [salesOrderId], references: [id])
+  pickList            PickList?          @relation(fields: [pickListId], references: [id])
+  items               PackingSlipItem[]
+  invoice             Invoice?
+  assignedTo          User?              @relation("PackingSlipAssignee", fields: [assignedToId], references: [id])
+  containers          PackingContainer[]
 
   @@index([salesOrderId])
   @@index([status])
@@ -1495,24 +1589,25 @@ model PackingSlip {
 }
 
 model PackingSlipItem {
-  id                String          @id @default(cuid())
-  packingSlipId     String
-  salesOrderItemId  String
-  productId         String
-  variantId         String?
+  id               String                 @id @default(cuid())
+  packingSlipId    String
+  salesOrderItemId String
+  productId        String
+  variantId        String?
   // Carried forward from the PickList line for traceability. Snapshot
   // of bin id is kept on the PickListItem; we only carry numeric qty.
-  qtyOrdered        Float           // SO line qty at the time of pack
-  qtyPicked         Float           // warehouse-confirmed picked qty
-  qtyPacked         Float           // EDITABLE -- this is what gets invoiced
-  rate              Float
-  amount            Float           // qtyPacked * rate (re-computed on save)
-  notes             String?
-  packingSlip       PackingSlip     @relation(fields: [packingSlipId], references: [id], onDelete: Cascade)
-  salesOrderItem    SalesOrderItem  @relation(fields: [salesOrderItemId], references: [id])
-  product           Product         @relation(fields: [productId], references: [id])
-  variant           ProductVariant? @relation(fields: [variantId], references: [id])
-  invoiceItems      InvoiceItem[]
+  qtyOrdered       Float // SO line qty at the time of pack
+  qtyPicked        Float // warehouse-confirmed picked qty
+  qtyPacked        Float // EDITABLE -- this is what gets invoiced
+  rate             Float
+  amount           Float // qtyPacked * rate (re-computed on save)
+  notes            String?
+  packingSlip      PackingSlip            @relation(fields: [packingSlipId], references: [id], onDelete: Cascade)
+  salesOrderItem   SalesOrderItem         @relation(fields: [salesOrderItemId], references: [id])
+  product          Product                @relation(fields: [productId], references: [id])
+  variant          ProductVariant?        @relation(fields: [variantId], references: [id])
+  invoiceItems     InvoiceItem[]
+  containerEntries PackingContainerItem[]
 
   @@index([packingSlipId])
   @@index([salesOrderItemId])
@@ -1520,22 +1615,112 @@ model PackingSlipItem {
 }
 
 // =====================================================================
+// Multi-container packing
+// =====================================================================
+// A packing slip can ship in one or more physical containers (boxes /
+// bags / cartons / sacks). Each container has an admin-managed
+// ContainerType (with default tare weight), a per-slip incremental
+// label (01, 02 ...), and a list of PackingContainerItem rows that
+// allocate slip-item qty to this container. One ordered item can be
+// split across multiple containers - the sum of container-item qty
+// per slip line must equal PackingSlipItem.qtyPacked at pack-complete
+// when CompanyProfile.packMultiContainerEnabled is on.
+// =====================================================================
+
+model ContainerType {
+  id         String             @id @default(cuid())
+  code       String             @unique // BOX-S | BOX-M | BOX-L | BAG-S | BAG-L | CARTON | SACK
+  name       String // "Small Box"
+  // Physical category. Drives the icon shown to packers and lets
+  // reports group by kind without parsing the code.
+  // box | bag | carton | sack | other
+  kind       String
+  // Empty container weight in kg. Added to container estWeightKg.
+  tareKg     Float              @default(0)
+  // Optional soft capacity hint (kg). Not enforced; surfaces a
+  // warning chip in the UI when contents exceed it.
+  maxKg      Float?
+  active     Boolean            @default(true)
+  sortOrder  Int                @default(100)
+  createdAt  DateTime           @default(now())
+  updatedAt  DateTime           @updatedAt
+  containers PackingContainer[]
+
+  @@index([active])
+}
+
+model PackingContainer {
+  id              String                 @id @default(cuid())
+  packingSlipId   String
+  // 1-based sequence per slip. Drives the label (01, 02, ...).
+  // Unique within a slip; never re-used after delete (deletion shifts
+  // labels via a re-number sweep so packers always see 01, 02, ... no gaps).
+  seq             Int
+  // Padded display label cached for stable label printing across renumbers.
+  // Server keeps this in sync with seq via the renumber sweep.
+  label           String
+  containerTypeId String?
+  // open = packer is still adding items; sealed = locked, contributes to
+  // pack-complete and to dispatch weight.
+  status          String                 @default("open") // open | sealed
+  // Cached weight estimate: tare + sum(item.qty * variant/product.weightKg).
+  // Recomputed on every container-item change.
+  estWeightKg     Float                  @default(0)
+  // Optional manual scale reading. When present, used in preference to
+  // estWeightKg for dispatch weight rollup.
+  actualWeightKg  Float?
+  // Optional per-container tare override (e.g. operator wrapped the box
+  // in extra cardboard). Falls back to containerType.tareKg.
+  tareKgOverride  Float?
+  notes           String?
+  sealedAt        DateTime?
+  sealedById      String?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+  packingSlip     PackingSlip            @relation(fields: [packingSlipId], references: [id], onDelete: Cascade)
+  containerType   ContainerType?         @relation(fields: [containerTypeId], references: [id])
+  items           PackingContainerItem[]
+
+  @@unique([packingSlipId, seq])
+  @@index([packingSlipId])
+  @@index([status])
+}
+
+model PackingContainerItem {
+  id                String           @id @default(cuid())
+  containerId       String
+  packingSlipItemId String
+  // Allocated qty of the slip line into this container. The sum across
+  // containers for a given slip-item must equal PackingSlipItem.qtyPacked
+  // at pack-complete time.
+  qty               Float
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  container         PackingContainer @relation(fields: [containerId], references: [id], onDelete: Cascade)
+  packingSlipItem   PackingSlipItem  @relation(fields: [packingSlipItemId], references: [id], onDelete: Cascade)
+
+  @@unique([containerId, packingSlipItemId])
+  @@index([containerId])
+  @@index([packingSlipItemId])
+}
+
+// =====================================================================
 // Approvals & Audit
 // =====================================================================
 
 model Approval {
-  id           String   @id @default(cuid())
-  ref          String
-  type         String // PR | PO Amendment | Stock Adjust | Price Override | Production Variance
-  requestedBy  String
-  amount       Float
-  priority     String   @default("med") // low | med | high
-  reason       String
-  status       String   @default("pending") // pending | approved | rejected
-  decidedBy    String?
-  decidedAt    DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id          String    @id @default(cuid())
+  ref         String
+  type        String // PR | PO Amendment | Stock Adjust | Price Override | Production Variance
+  requestedBy String
+  amount      Float
+  priority    String    @default("med") // low | med | high
+  reason      String
+  status      String    @default("pending") // pending | approved | rejected
+  decidedBy   String?
+  decidedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
   @@index([status])
 }
@@ -1573,7 +1758,7 @@ model BinCount {
   // Signed delta (qtyAfter - qtyBefore). Stored explicitly so a
   // supervisor variance report can index/sort without recomputing.
   delta           Float
-  reason          String   // physical_match | damage | found_elsewhere | product_swap | spillage | expired | other
+  reason          String // physical_match | damage | found_elsewhere | product_swap | spillage | expired | other
   remarks         String?
   countedById     String
   // Set when |delta| > 10% of qtyBefore OR > 50 units absolute, so
@@ -1600,7 +1785,7 @@ model ScanEvent {
   code      String
   // Free-form context, e.g. "pick:PL-2026-1003" or "verify".
   context   String?
-  outcome   String   // ok | mismatch | not_found
+  outcome   String // ok | mismatch | not_found
   createdAt DateTime @default(now())
   user      User     @relation(fields: [userId], references: [id])
 
@@ -1641,28 +1826,28 @@ model Tombstone {
 
 // Per-device sync state.
 model SyncState {
-  id           String   @id @default(cuid())
-  deviceId     String   @unique
+  id           String    @id @default(cuid())
+  deviceId     String    @unique
   userId       String?
   lastPulledAt DateTime?
   lastPushedAt DateTime?
-  cursor       Int      @default(0)
-  active       Boolean  @default(true)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  cursor       Int       @default(0)
+  active       Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 }
 
 // Records pushes that conflicted, for post-mortem and retry diagnostics.
 model SyncConflict {
-  id         String   @id @default(cuid())
-  deviceId   String
-  entity     String
-  entityId   String
-  reason     String
+  id            String   @id @default(cuid())
+  deviceId      String
+  entity        String
+  entityId      String
+  reason        String
   clientPayload String
   serverPayload String
-  resolution String   @default("server-wins")
-  createdAt  DateTime @default(now())
+  resolution    String   @default("server-wins")
+  createdAt     DateTime @default(now())
 
   @@index([deviceId])
   @@index([entity, entityId])
@@ -1679,67 +1864,74 @@ model SyncConflict {
 // We use a fixed `key` so there is exactly one row; an upsert against
 // `key = "default"` is the canonical way to read/write.
 model CompanyProfile {
-  id          String   @id @default(cuid())
-  key         String   @unique @default("default")
-  legalName   String
-  tradeName   String?
-  gstin       String?
-  pan         String?
-  cin         String?
-  industry    String?
-  addressLine String?
-  city        String?
-  state       String?
-  pincode     String?
-  country     String   @default("India")
-  phone       String?
-  email       String?
-  website     String?
-  logoUrl     String?
-  invoicePrefix String @default("INV")
-  quotePrefix   String @default("Q")
-  currency      String @default("INR")
-  fiscalYearStart String @default("04-01") // MM-DD; India default = 1 Apr
-  defaultTaxRate  Float  @default(18) // % GST applied if product has none
-  termsDefault    String?
-  bankName      String?
-  bankAccountNo String?
-  bankIfsc      String?
-  bankBranch    String?
-  upi           String?
+  id                          String   @id @default(cuid())
+  key                         String   @unique @default("default")
+  legalName                   String
+  tradeName                   String?
+  gstin                       String?
+  pan                         String?
+  cin                         String?
+  industry                    String?
+  addressLine                 String?
+  city                        String?
+  state                       String?
+  pincode                     String?
+  country                     String   @default("India")
+  phone                       String?
+  email                       String?
+  website                     String?
+  logoUrl                     String?
+  invoicePrefix               String   @default("INV")
+  quotePrefix                 String   @default("Q")
+  currency                    String   @default("INR")
+  fiscalYearStart             String   @default("04-01") // MM-DD; India default = 1 Apr
+  defaultTaxRate              Float    @default(18) // % GST applied if product has none
+  termsDefault                String?
+  bankName                    String?
+  bankAccountNo               String?
+  bankIfsc                    String?
+  bankBranch                  String?
+  upi                         String?
   // When true (default), an MO must be "released" (material shortage check
   // + replenishment TOs created) before issue-materials is allowed.
   // Set to false for plants that don't use dedicated production-line warehouses.
-  requireMoReleaseBeforeIssue Boolean @default(false)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  requireMoReleaseBeforeIssue Boolean  @default(false)
+  // When true, packing slips MUST allocate qtyPacked into one or more
+  // sealed PackingContainer rows before /pack is allowed. Hides/exposes
+  // the container UI on desktop + mobile pack screens.
+  packMultiContainerEnabled   Boolean  @default(true)
+  // When true, mobile/desktop "Seal" actions on a container open a
+  // confirmation modal showing item count + est weight before locking.
+  packRequireSealConfirmation Boolean  @default(true)
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
 }
 
 // ─── Customer Returns / RMA ───────────────────────────────────────────────────
 
 model CustomerReturn {
-  id            String   @id @default(cuid())
-  returnNo      String   @unique                // CRN-2026-3001
-  shareToken    String   @unique
+  id            String               @id @default(cuid())
+  returnNo      String               @unique // CRN-2026-3001
+  shareToken    String               @unique
   customerId    String
-  customer      Customer @relation(fields: [customerId], references: [id])
+  customer      Customer             @relation(fields: [customerId], references: [id])
   // Optional invoice anchor chosen by staff at import time. When provided the
   // system validates return qty against that invoice; otherwise it searches the
   // customer's most-recent eligible invoice for each SKU.
   invoiceId     String?
-  invoice       Invoice? @relation(fields: [invoiceId], references: [id])
-  status        String   @default("pending_approval")
-                                                // pending_approval | processed | cancelled
-  source        String   @default("excel")      // excel | manual
+  invoice       Invoice?             @relation(fields: [invoiceId], references: [id])
+  status        String               @default("pending_approval")
+  // pending_approval | processed | cancelled
+  source        String               @default("excel") // excel | manual
   notes         String?
-  subTotal      Float    @default(0)
-  tax           Float    @default(0)
-  total         Float    @default(0)
+  subTotal      Float                @default(0)
+  tax           Float                @default(0)
+  total         Float                @default(0)
   importedById  String
   finalizedById String?
   finalizedAt   DateTime?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
   items         CustomerReturnItem[]
   creditNote    CreditNote?
 
@@ -1748,22 +1940,22 @@ model CustomerReturn {
 }
 
 model CustomerReturnItem {
-  id               String         @id @default(cuid())
+  id               String          @id @default(cuid())
   customerReturnId String
-  customerReturn   CustomerReturn @relation(fields: [customerReturnId], references: [id], onDelete: Cascade)
+  customerReturn   CustomerReturn  @relation(fields: [customerReturnId], references: [id], onDelete: Cascade)
   productId        String
-  product          Product        @relation(fields: [productId], references: [id])
+  product          Product         @relation(fields: [productId], references: [id])
   variantId        String?
   variant          ProductVariant? @relation(fields: [variantId], references: [id])
   // Back-link to the source invoice line so the credit-note can allocate
   // correctly and future imports can check prior-return qty.
   invoiceItemId    String?
   qty              Float
-  rate             Float           // taken from source invoice line, not current catalogue price
+  rate             Float // taken from source invoice line, not current catalogue price
   amount           Float
-  reason           String          // damaged|wrong_item|defective|not_as_described|expired|changed_mind|other
+  reason           String // damaged|wrong_item|defective|not_as_described|expired|changed_mind|other
   reasonNotes      String?
-  decision         String  @default("pending") // pending|approved|rejected
+  decision         String          @default("pending") // pending|approved|rejected
   decisionNotes    String?
   decidedById      String?
   decidedAt        DateTime?
@@ -1773,47 +1965,47 @@ model CustomerReturnItem {
 }
 
 model CreditNote {
-  id               String         @id @default(cuid())
-  creditNoteNo     String         @unique           // CN-2026-4001
-  shareToken       String         @unique
-  customerId       String
-  customer         Customer       @relation(fields: [customerId], references: [id])
-  customerReturnId String         @unique
-  customerReturn   CustomerReturn @relation(fields: [customerReturnId], references: [id])
+  id                String           @id @default(cuid())
+  creditNoteNo      String           @unique // CN-2026-4001
+  shareToken        String           @unique
+  customerId        String
+  customer          Customer         @relation(fields: [customerId], references: [id])
+  customerReturnId  String           @unique
+  customerReturn    CustomerReturn   @relation(fields: [customerReturnId], references: [id])
   // Primary invoice this credit note offsets (may be null if goodwill credit
   // was spread across multiple invoices — invoiceId holds the first one).
-  invoiceId        String?
-  invoice          Invoice?       @relation(fields: [invoiceId], references: [id])
+  invoiceId         String?
+  invoice           Invoice?         @relation(fields: [invoiceId], references: [id])
   // Back-link to the AR payment row created during finalize.
-  customerPaymentId String?       @unique
-  subTotal         Float
-  tax              Float
-  total            Float
-  status           String  @default("issued")       // issued | applied
-  notes            String?
-  createdAt        DateTime @default(now())
-  createdById      String
-  items            CreditNoteItem[]
+  customerPaymentId String?          @unique
+  subTotal          Float
+  tax               Float
+  total             Float
+  status            String           @default("issued") // issued | applied
+  notes             String?
+  createdAt         DateTime         @default(now())
+  createdById       String
+  items             CreditNoteItem[]
 
   @@index([customerId])
   @@index([invoiceId])
 }
 
 model CreditNoteItem {
-  id            String     @id @default(cuid())
-  creditNoteId  String
-  creditNote    CreditNote @relation(fields: [creditNoteId], references: [id], onDelete: Cascade)
-  productId     String
-  product       Product    @relation(fields: [productId], references: [id])
-  variantId     String?
-  variant       ProductVariant? @relation(fields: [variantId], references: [id])
-  qty           Float
-  rate          Float
-  amount        Float
-  gstRate       Float?  @default(18)
-  taxAmount     Float?
-  reason        String
-  returnItemId  String?    // back-link to the source CustomerReturnItem
+  id           String          @id @default(cuid())
+  creditNoteId String
+  creditNote   CreditNote      @relation(fields: [creditNoteId], references: [id], onDelete: Cascade)
+  productId    String
+  product      Product         @relation(fields: [productId], references: [id])
+  variantId    String?
+  variant      ProductVariant? @relation(fields: [variantId], references: [id])
+  qty          Float
+  rate         Float
+  amount       Float
+  gstRate      Float?          @default(18)
+  taxAmount    Float?
+  reason       String
+  returnItemId String? // back-link to the source CustomerReturnItem
 
   @@index([creditNoteId])
 }

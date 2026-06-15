@@ -183,58 +183,74 @@ export const BomEditor = ({
   const [revision, setRevision] = useState(bom?.revision ?? "Rev-1.0");
   const [outputQty, setOutputQty] = useState(bom?.outputQty ?? 1);
   const [active, setActive] = useState(bom?.active ?? true);
-  // Default work center / machine for MOs created from this BOM.
-  // Both empty string here = "no default", which we serialise as null
-  // on the wire. Loaded once from useApi below.
-  const [defaultWorkCenterId, setDefaultWorkCenterId] = useState<string>(
-    bom?.defaultWorkCenterId ?? ""
+  // Default facility / line / machine for MOs created from this BOM.
+  // Empty string = "no default" (serialised as null on the wire).
+  const [defaultFacilityId, setDefaultFacilityId] = useState<string>(
+    bom?.defaultFacilityId ?? ""
+  );
+  const [defaultLineId, setDefaultLineId] = useState<string>(
+    bom?.defaultLineId ?? ""
   );
   const [defaultMachineId, setDefaultMachineId] = useState<string>(
     bom?.defaultMachineId ?? ""
   );
-  const workCentersResp = useApi(() => api.workCenters({ active: true }), []);
+  const facilitiesResp = useApi(() => api.productionFacilities({ active: true }), []);
+  const linesResp = useApi(() => api.productionLines({ active: true }), []);
   const machinesResp = useApi(() => api.machines({ active: true }), []);
-  const workCenterOptions = useMemo(
+  const facilityOptions = useMemo(
     () =>
-      ((workCentersResp.data as Array<{
+      ((facilitiesResp.data as Array<{
         id: string;
         code: string;
         name: string;
       }> | null) ?? []).slice().sort((a, b) => a.name.localeCompare(b.name)),
-    [workCentersResp.data]
+    [facilitiesResp.data]
   );
+  const allLines = (linesResp.data as Array<{
+    id: string;
+    code: string;
+    name: string;
+    facilityId: string;
+  }> | null) ?? [];
+  const lineOptions = useMemo(
+    () =>
+      allLines
+        .filter((l) => !defaultFacilityId || l.facilityId === defaultFacilityId)
+        .slice()
+        .sort((a, b) => a.name.localeCompare(b.name)),
+    [allLines, defaultFacilityId]
+  );
+  const allMachines = (machinesResp.data as Array<{
+    id: string;
+    code: string;
+    name: string;
+    productionLineId: string;
+  }> | null) ?? [];
   const machineOptions = useMemo(
     () =>
-      ((machinesResp.data as Array<{
-        id: string;
-        code: string;
-        name: string;
-        workCenterId: string;
-      }> | null) ?? [])
-        .filter(
-          (m) =>
-            !defaultWorkCenterId || m.workCenterId === defaultWorkCenterId
-        )
+      allMachines
+        .filter((m) => !defaultLineId || m.productionLineId === defaultLineId)
+        .slice()
         .sort((a, b) => a.name.localeCompare(b.name)),
-    [machinesResp.data, defaultWorkCenterId]
+    [allMachines, defaultLineId]
   );
-  // If the operator picks a different WC, the previously picked machine
-  // (which lived on the old WC) is no longer valid - clear it.
+  // Clear line when facility changes if line no longer belongs.
   useEffect(() => {
-    if (!defaultMachineId) return;
-    const all = (machinesResp.data as Array<{
-      id: string;
-      workCenterId: string;
-    }> | null) ?? [];
-    const m = all.find((x) => x.id === defaultMachineId);
-    if (
-      defaultWorkCenterId &&
-      m &&
-      m.workCenterId !== defaultWorkCenterId
-    ) {
+    if (!defaultLineId) return;
+    const l = allLines.find((x) => x.id === defaultLineId);
+    if (defaultFacilityId && l && l.facilityId !== defaultFacilityId) {
+      setDefaultLineId("");
       setDefaultMachineId("");
     }
-  }, [defaultWorkCenterId, defaultMachineId, machinesResp.data]);
+  }, [defaultFacilityId, defaultLineId, allLines]);
+  // Clear machine when line changes if machine no longer belongs.
+  useEffect(() => {
+    if (!defaultMachineId) return;
+    const m = allMachines.find((x) => x.id === defaultMachineId);
+    if (defaultLineId && m && m.productionLineId !== defaultLineId) {
+      setDefaultMachineId("");
+    }
+  }, [defaultLineId, defaultMachineId, allMachines]);
 
   const [items, setItems] = useState<EditableItem[]>(
     () =>
@@ -503,7 +519,8 @@ export const BomEditor = ({
       revision: revision.trim(),
       outputQty,
       active,
-      defaultWorkCenterId: defaultWorkCenterId || null,
+      defaultFacilityId: defaultFacilityId || null,
+      defaultLineId: defaultLineId || null,
       defaultMachineId: defaultMachineId || null,
       items: items.map((i) => ({
         productId: i.productId!,
@@ -884,51 +901,73 @@ export const BomEditor = ({
         {/* Production routing: optional defaults that flow into a new
             MO created from this BOM. Operators can override at MO time;
             this just removes the per-order retyping when every batch
-            runs on the same line. Leaving both blank is a valid choice
-            (no preselection). */}
+            runs on the same facility/line. Leaving all blank is valid. */}
         <div className="px-5 py-3 grid grid-cols-12 gap-3 border-b border-border bg-canvas shrink-0">
-          <div className="col-span-4">
+          <div className="col-span-3">
             <div className="text-caption text-ink-muted uppercase font-semibold mb-1 flex items-center gap-2">
-              <span>Default work center</span>
+              <span>Default facility</span>
               <span className="text-ink-muted/70 normal-case font-normal">
-                (used to pre-fill new MOs)
+                (pre-fills new MOs)
               </span>
             </div>
             <select
-              value={defaultWorkCenterId}
-              onChange={(e) => setDefaultWorkCenterId(e.target.value)}
+              value={defaultFacilityId}
+              onChange={(e) => { setDefaultFacilityId(e.target.value); setDefaultLineId(""); setDefaultMachineId(""); }}
               className="h-10 w-full bg-white border border-border rounded-md px-3 text-body outline-none focus:border-primary"
             >
               <option value="">— No default —</option>
-              {workCenterOptions.map((wc) => (
-                <option key={wc.id} value={wc.id}>
-                  {wc.code} · {wc.name}
+              {facilityOptions.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.code} · {f.name}
                 </option>
               ))}
             </select>
-            {workCenterOptions.length === 0 && (
+            {facilityOptions.length === 0 && (
               <div className="text-caption text-ink-muted mt-1">
-                No work centers yet. Add them in <strong>Settings &raquo; Production lines</strong>.
+                No facilities yet. Add them in <strong>Settings &raquo; Production facilities</strong>.
               </div>
             )}
           </div>
-          <div className="col-span-4">
+          <div className="col-span-3">
+            <div className="text-caption text-ink-muted uppercase font-semibold mb-1 flex items-center gap-2">
+              <span>Default line</span>
+              <span className="text-ink-muted/70 normal-case font-normal">
+                (optional)
+              </span>
+            </div>
+            <select
+              value={defaultLineId}
+              onChange={(e) => { setDefaultLineId(e.target.value); setDefaultMachineId(""); }}
+              disabled={!defaultFacilityId}
+              className="h-10 w-full bg-white border border-border rounded-md px-3 text-body outline-none focus:border-primary disabled:bg-canvas disabled:text-ink-muted"
+            >
+              <option value="">
+                {defaultFacilityId ? "— Any line —" : "— Pick a facility first —"}
+              </option>
+              {lineOptions.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.code} · {l.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="col-span-3">
             <div className="text-caption text-ink-muted uppercase font-semibold mb-1 flex items-center gap-2">
               <span>Default machine</span>
               <span className="text-ink-muted/70 normal-case font-normal">
-                (optional, scoped to the work center)
+                (optional, scoped to line)
               </span>
             </div>
             <select
               value={defaultMachineId}
               onChange={(e) => setDefaultMachineId(e.target.value)}
-              disabled={!defaultWorkCenterId}
+              disabled={!defaultLineId}
               className="h-10 w-full bg-white border border-border rounded-md px-3 text-body outline-none focus:border-primary disabled:bg-canvas disabled:text-ink-muted"
             >
               <option value="">
-                {defaultWorkCenterId
+                {defaultLineId
                   ? "— Any machine on this line —"
-                  : "— Pick a work center first —"}
+                  : "— Pick a line first —"}
               </option>
               {machineOptions.map((m) => (
                 <option key={m.id} value={m.id}>
@@ -936,15 +975,15 @@ export const BomEditor = ({
                 </option>
               ))}
             </select>
-            {defaultWorkCenterId && machineOptions.length === 0 && (
+            {defaultLineId && machineOptions.length === 0 && (
               <div className="text-caption text-ink-muted mt-1">
-                No machines on this work center yet.
+                No machines on this line yet.
               </div>
             )}
           </div>
-          <div className="col-span-4 flex items-end">
+          <div className="col-span-3 flex items-end">
             <div className="text-caption text-ink-muted">
-              Operators can still override the station/machine when
+              Operators can still override the facility/line when
               creating a manufacturing order.
             </div>
           </div>

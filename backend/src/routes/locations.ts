@@ -10,7 +10,9 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { db } from "../db.js";
+import { codesEqual } from "../lib/text-search.js";
 import {
+  binCodeFromRow,
   decodeLocation,
   encodeBin,
   encodeShelf,
@@ -189,8 +191,13 @@ export const locationsRoutes = async (app: FastifyInstance) => {
       const loc = decodeLocation(code);
       if (loc) {
         const wh = await db.warehouse.findFirst({
-          where: { code: loc.warehouseCode },
-          select: { id: true, code: true, name: true },
+          where: {
+            OR: [
+              { code: loc.warehouseCode },
+              { scanPrefix: loc.warehouseCode },
+            ],
+          },
+          select: { id: true, code: true, name: true, scanPrefix: true },
         });
         if (!wh) {
           return reply.code(404).send({
@@ -266,7 +273,7 @@ export const locationsRoutes = async (app: FastifyInstance) => {
             shelf: loc.shelf,
             bins: bins.map((b) => ({
               id: b.id,
-              code: b.code ?? encodeBin(wh.code, b.zone, b.shelf, b.bin),
+              code: b.code ?? binCodeFromRow(b, wh),
               bin: b.bin,
               qty: b.qty,
               reservedQty: b.reservedQty,
@@ -298,7 +305,7 @@ export const locationsRoutes = async (app: FastifyInstance) => {
               },
             },
             variant: { select: variantSelect },
-            warehouse: { select: { id: true, code: true, name: true } },
+            warehouse: { select: { id: true, code: true, name: true, scanPrefix: true } },
           },
         });
         if (!bin) {
@@ -335,7 +342,7 @@ export const locationsRoutes = async (app: FastifyInstance) => {
           warehouse: bin.warehouse,
           bin: {
             id: bin.id,
-            code: bin.code ?? encodeBin(bin.warehouse.code, bin.zone, bin.shelf, bin.bin),
+            code: bin.code ?? binCodeFromRow(bin, bin.warehouse),
             zone: bin.zone,
             shelf: bin.shelf,
             bin: bin.bin,
@@ -352,8 +359,74 @@ export const locationsRoutes = async (app: FastifyInstance) => {
         };
       }
 
-      // -------- Not a location code; try product/variant by SKU or barcode.
+      // -------- Direct Bin.code lookup (compact or legacy stored codes).
       const upper = code.toUpperCase();
+      const binByCode = await db.bin.findFirst({
+        where: { code: upper },
+        include: {
+          product: {
+            select: {
+              id: true,
+              sku: true,
+              name: true,
+              uom: true,
+              stockOnHand: true,
+            },
+          },
+          variant: { select: variantSelect },
+          warehouse: { select: { id: true, code: true, name: true, scanPrefix: true } },
+        },
+      });
+      if (binByCode) {
+        const recentMoves = await db.stockLedger.findMany({
+          where: {
+            warehouseId: binByCode.warehouseId,
+            bin: `${binByCode.zone}/${binByCode.shelf}/${binByCode.bin}`,
+          },
+          orderBy: { date: "desc" },
+          take: 10,
+          select: {
+            id: true,
+            date: true,
+            txnType: true,
+            ref: true,
+            qty: true,
+            balance: true,
+          },
+        });
+        const recentCounts = await db.binCount.findMany({
+          where: { binId: binByCode.id },
+          orderBy: { createdAt: "desc" },
+          take: 5,
+          include: {
+            countedBy: { select: { id: true, name: true, username: true } },
+          },
+        });
+        return {
+          kind: "bin",
+          warehouse: binByCode.warehouse,
+          bin: {
+            id: binByCode.id,
+            code:
+              binByCode.code ??
+              binCodeFromRow(binByCode, binByCode.warehouse),
+            zone: binByCode.zone,
+            shelf: binByCode.shelf,
+            bin: binByCode.bin,
+            qty: binByCode.qty,
+            reservedQty: binByCode.reservedQty,
+            capacity: binByCode.capacity,
+            batch: binByCode.batch,
+            variantId: binByCode.variantId,
+            product: binByCode.product,
+            variant: binByCode.variant,
+          },
+          recentMoves,
+          recentCounts,
+        };
+      }
+
+      // -------- Not a location code; try product/variant by SKU or barcode.
       const product = await db.product.findFirst({
         where: {
           OR: [
@@ -398,8 +471,8 @@ export const locationsRoutes = async (app: FastifyInstance) => {
       // Pin down which variant matched, if any.
       const matchedVariant = product.variants.find(
         (v) =>
-          (v.sku && (v.sku === code || v.sku.toUpperCase() === upper)) ||
-          (v.barcode && (v.barcode === code || v.barcode.toUpperCase() === upper))
+          (v.sku && (codesEqual(v.sku, code) || v.sku.toUpperCase() === upper)) ||
+          (v.barcode && codesEqual(v.barcode, code))
       );
       // Bin model only carries productId today (variants share a bin).
       // We surface every bin holding the parent product; the UI can
@@ -424,7 +497,7 @@ export const locationsRoutes = async (app: FastifyInstance) => {
         bins: bins.map((b) => ({
           id: b.id,
           code:
-            b.code ?? encodeBin(b.warehouse.code, b.zone, b.shelf, b.bin),
+            b.code ?? binCodeFromRow(b, b.warehouse),
           warehouseCode: b.warehouse.code,
           zone: b.zone,
           shelf: b.shelf,

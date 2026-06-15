@@ -306,7 +306,9 @@ const PriceListEditor = ({ priceListId, products, onChanged, onDeleted }: Editor
       const matches =
         b.product.name.toLowerCase().includes(term) ||
         b.product.sku.toLowerCase().includes(term) ||
+        b.product.barcode.toLowerCase().includes(term) ||
         (b.variant?.sku ?? "").toLowerCase().includes(term) ||
+        (b.variant?.barcode ?? "").toLowerCase().includes(term) ||
         label.toLowerCase().includes(term);
       if (matches) matchingProductIds.add(b.productId);
     }

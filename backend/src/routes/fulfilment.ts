@@ -21,6 +21,18 @@ import {
   splitAcrossBins,
 } from "../lib/pick-list-helpers.js";
 import { createPickListForSalesOrder } from "../services/pick-list-create.js";
+import { codesEqual } from "../lib/text-search.js";
+import {
+  ensureAutoBundleContainer,
+  nextContainerSeq,
+  packContainerInclude,
+  recomputeContainer,
+  recomputePackingSlipWeight,
+  renumberContainers,
+  validateContainerAllocations,
+} from "../lib/packing-containers.js";
+import { ensureDefaultContainerTypes } from "../lib/container-types-seed.js";
+import { containerCode, parseContainerCode } from "../lib/container-codes.js";
 import {
   ensureInvoiceForSalesOrder,
   reconcileInvoiceWithPack,
@@ -112,7 +124,7 @@ const fullPackInclude = {
   },
   items: {
     include: {
-      product: { select: { id: true, sku: true, name: true, uom: true, stockOnHand: true, barcode: true } },
+      product: { select: { id: true, sku: true, name: true, uom: true, stockOnHand: true, barcode: true, weightKg: true } },
       variant: {
         select: {
           id: true,
@@ -124,9 +136,14 @@ const fullPackInclude = {
           packSize: true,
           stockOnHand: true,
           barcode: true,
+          weightKg: true,
         },
       },
     },
+  },
+  containers: {
+    include: packContainerInclude,
+    orderBy: { seq: "asc" } as const,
   },
 } as const;
 
@@ -1044,6 +1061,29 @@ export const fulfilmentRoutes = async (app: FastifyInstance) => {
           error: { code: "nothing_packed", message: "qtyPacked totals zero." },
         });
       }
+      // Container gate. When the global packMultiContainerEnabled flag
+      // is on (default for new deployments), every qtyPacked unit must
+      // be allocated into a sealed container before we lock the slip.
+      // This is what makes the trip weight rollup and the per-item
+      // container reports reliable. The flag stays off for legacy
+      // tenants who only want the single-bundle workflow.
+      const profile = await db.companyProfile.findUnique({
+        where: { key: "default" },
+        select: { packMultiContainerEnabled: true },
+      });
+      if (profile?.packMultiContainerEnabled) {
+        const issues = await validateContainerAllocations(db, id);
+        if (issues.length > 0) {
+          return reply.code(409).send({
+            error: {
+              code: "container_allocation_incomplete",
+              message:
+                "Allocate every packed unit into a sealed container before packing.",
+              details: issues,
+            },
+          });
+        }
+      }
       // Pack-complete now ALWAYS settles the invoice. Both B2B and
       // ecommerce SOs are minted with a pre-generated invoice the
       // moment they are confirmed (see services/invoice-create.ts);
@@ -1250,6 +1290,11 @@ export const fulfilmentRoutes = async (app: FastifyInstance) => {
         );
       }
 
+      // Snapshot the container weights into the slip's cached totals
+      // so downstream dispatch / trip code can read totalEstWeightKg
+      // without re-walking containers on every request.
+      await recomputePackingSlipWeight(db, id);
+
       const updated = await db.packingSlip.update({
         where: { id },
         data: {
@@ -1372,6 +1417,21 @@ export const fulfilmentRoutes = async (app: FastifyInstance) => {
           },
         });
       }
+
+      // Auto-pack is the "trust the picker" one-click path. With the
+      // multi-container flag on, drop everything into one auto-sealed
+      // container so the slip still has the metadata reports and the
+      // dispatch weight rollup need. Operators who want precise per-
+      // container splits use the manual /pack flow instead.
+      const profile = await db.companyProfile.findUnique({
+        where: { key: "default" },
+        select: { packMultiContainerEnabled: true },
+      });
+      if (profile?.packMultiContainerEnabled) {
+        await ensureDefaultContainerTypes(db);
+        await ensureAutoBundleContainer(db, id, req.user.sub);
+      }
+      await recomputePackingSlipWeight(db, id);
 
       // Reuse the pack flow inline (ecommerce branch + status transition).
       const so = await db.salesOrder.findUnique({
@@ -2064,17 +2124,12 @@ export const fulfilmentRoutes = async (app: FastifyInstance) => {
       // variant SKU/barcode (whichever the operator scanned).
       if (body.productCode) {
         const probe = body.productCode.trim();
-        const upper = probe.toUpperCase();
+        const codeMatch = (a: string | null | undefined) =>
+          a != null && codesEqual(a, probe);
         const matchesProduct =
-          item.product?.sku === probe ||
-          item.product?.sku === upper ||
-          item.product?.barcode === probe ||
-          item.product?.barcode === upper;
+          codeMatch(item.product?.sku) || codeMatch(item.product?.barcode);
         const matchesVariant =
-          item.variant?.sku === probe ||
-          item.variant?.sku === upper ||
-          item.variant?.barcode === probe ||
-          item.variant?.barcode === upper;
+          codeMatch(item.variant?.sku) || codeMatch(item.variant?.barcode);
         if (!matchesProduct && !matchesVariant) {
           await db.scanEvent.create({
             data: {
@@ -2369,16 +2424,13 @@ export const fulfilmentRoutes = async (app: FastifyInstance) => {
 
       if (body.productCode) {
         const probe = body.productCode.trim();
-        const upper = probe.toUpperCase();
+        const codeMatch = (a: string | null | undefined) =>
+          a != null && codesEqual(a, probe);
         const matches =
-          item.product?.sku === probe ||
-          item.product?.sku === upper ||
-          item.product?.barcode === probe ||
-          item.product?.barcode === upper ||
-          item.variant?.sku === probe ||
-          item.variant?.sku === upper ||
-          item.variant?.barcode === probe ||
-          item.variant?.barcode === upper;
+          codeMatch(item.product?.sku) ||
+          codeMatch(item.product?.barcode) ||
+          codeMatch(item.variant?.sku) ||
+          codeMatch(item.variant?.barcode);
         if (!matches) {
           await db.scanEvent.create({
             data: {
@@ -2450,6 +2502,618 @@ export const fulfilmentRoutes = async (app: FastifyInstance) => {
         });
       }
       return db.packingSlip.findUnique({ where: { id }, include: fullPackInclude });
+    }
+  );
+
+  // ===================================================== Packing containers ===
+  // Multi-container packing. Every slip starts with zero containers;
+  // the operator creates one per physical box / bag / sack, allocates
+  // items into it, optionally sets an actual scale reading, and then
+  // seals. Once sealed the container's contents and tare contribute to
+  // the cached PackingSlip.totalEstWeightKg / totalActualWeightKg, which
+  // is what the trip dispatch flow reads when rolling up weights.
+
+  // Resolve the slip + assert that it is editable (open). Used by every
+  // container-mutation endpoint below so we don't drift.
+  const requireOpenSlip = async (
+    slipId: string,
+    reply: Parameters<typeof app.post>[1]
+  ) => {
+    const slip = await db.packingSlip.findUnique({
+      where: { id: slipId },
+      select: { id: true, status: true },
+    });
+    if (!slip) {
+      (reply as unknown as { code: (n: number) => unknown; send: (b: unknown) => unknown }).code(404);
+      return { slip: null };
+    }
+    if (slip.status !== "open") {
+      return { slip: null, locked: true };
+    }
+    return { slip };
+  };
+
+  app.get(
+    "/packing-slips/:id/containers",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      const id = (req.params as { id: string }).id;
+      const exists = await db.packingSlip.findUnique({
+        where: { id },
+        select: { id: true },
+      });
+      if (!exists) return reply.code(404).send({ error: { code: "not_found" } });
+      return db.packingContainer.findMany({
+        where: { packingSlipId: id },
+        include: packContainerInclude,
+        orderBy: { seq: "asc" },
+      });
+    }
+  );
+
+  const containerCreateBody = z.object({
+    containerTypeId: z.string().min(1).nullable().optional(),
+    notes: z.string().max(500).nullable().optional(),
+  });
+
+  app.post(
+    "/packing-slips/:id/containers",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      const id = (req.params as { id: string }).id;
+      const body = containerCreateBody.parse(req.body ?? {});
+      const slip = await db.packingSlip.findUnique({
+        where: { id },
+        select: { status: true },
+      });
+      if (!slip) return reply.code(404).send({ error: { code: "not_found" } });
+      if (slip.status !== "open") {
+        return reply.code(409).send({
+          error: { code: "locked", message: `Packing slip is '${slip.status}'.` },
+        });
+      }
+      await ensureDefaultContainerTypes(db);
+      const { seq, label } = await nextContainerSeq(db, id);
+      const created = await db.packingContainer.create({
+        data: {
+          packingSlipId: id,
+          seq,
+          label,
+          containerTypeId: body.containerTypeId ?? null,
+          notes: body.notes ?? null,
+          status: "open",
+          estWeightKg: 0,
+        },
+        include: packContainerInclude,
+      });
+      await recomputeContainer(db, created.id);
+      await recomputePackingSlipWeight(db, id);
+      await recordChange("PackingContainer", created.id, "insert", created, req.user.sub);
+      return db.packingContainer.findUnique({
+        where: { id: created.id },
+        include: packContainerInclude,
+      });
+    }
+  );
+
+  const containerUpdateBody = z.object({
+    containerTypeId: z.string().min(1).nullable().optional(),
+    notes: z.string().max(500).nullable().optional(),
+    tareKgOverride: z.number().min(0).max(500).nullable().optional(),
+    actualWeightKg: z.number().min(0).max(5000).nullable().optional(),
+  });
+
+  app.patch(
+    "/packing-slips/:id/containers/:cid",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      const { id, cid } = req.params as { id: string; cid: string };
+      const body = containerUpdateBody.parse(req.body);
+      const container = await db.packingContainer.findUnique({
+        where: { id: cid },
+        select: { id: true, packingSlipId: true, status: true },
+      });
+      if (!container || container.packingSlipId !== id) {
+        return reply.code(404).send({ error: { code: "not_found" } });
+      }
+      // We let the packer correct the actual weight even after sealing
+      // (e.g. the scale was zeroed wrong) but everything else is frozen
+      // once sealed.
+      if (
+        container.status === "sealed" &&
+        (body.containerTypeId !== undefined ||
+          body.tareKgOverride !== undefined ||
+          body.notes !== undefined)
+      ) {
+        return reply.code(409).send({
+          error: {
+            code: "container_sealed",
+            message: "Unseal the container before changing type / tare / notes.",
+          },
+        });
+      }
+      const updated = await db.packingContainer.update({
+        where: { id: cid },
+        data: {
+          ...(body.containerTypeId !== undefined ? { containerTypeId: body.containerTypeId } : {}),
+          ...(body.notes !== undefined ? { notes: body.notes } : {}),
+          ...(body.tareKgOverride !== undefined ? { tareKgOverride: body.tareKgOverride } : {}),
+          ...(body.actualWeightKg !== undefined ? { actualWeightKg: body.actualWeightKg } : {}),
+        },
+      });
+      await recomputeContainer(db, cid);
+      await recomputePackingSlipWeight(db, id);
+      await recordChange("PackingContainer", cid, "update", updated, req.user.sub);
+      return db.packingContainer.findUnique({
+        where: { id: cid },
+        include: packContainerInclude,
+      });
+    }
+  );
+
+  app.delete(
+    "/packing-slips/:id/containers/:cid",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      const { id, cid } = req.params as { id: string; cid: string };
+      const container = await db.packingContainer.findUnique({
+        where: { id: cid },
+        select: { id: true, packingSlipId: true, status: true },
+      });
+      if (!container || container.packingSlipId !== id) {
+        return reply.code(404).send({ error: { code: "not_found" } });
+      }
+      const slip = await db.packingSlip.findUnique({
+        where: { id },
+        select: { status: true },
+      });
+      if (slip && slip.status !== "open") {
+        return reply.code(409).send({
+          error: { code: "locked", message: `Packing slip is '${slip.status}'.` },
+        });
+      }
+      await db.packingContainer.delete({ where: { id: cid } });
+      // Close the gap so the operator never sees 01, 03 — labels must
+      // remain contiguous because they're printed on physical stickers.
+      await renumberContainers(db, id);
+      await recomputePackingSlipWeight(db, id);
+      await recordChange("PackingContainer", cid, "delete", { id: cid }, req.user.sub);
+      return { ok: true };
+    }
+  );
+
+  // ----- container <-> item allocation -----
+  const itemAddBody = z.object({
+    packingSlipItemId: z.string().min(1),
+    qty: z.number().positive(),
+  });
+
+  // Upsert an item allocation in a container. Sums with existing qty
+  // for the same line — the mobile scan path calls this with qty=1 per
+  // scan, so the operator keeps incrementing without thinking about
+  // existing rows. Refuses if total allocation across all containers
+  // would exceed the slip line's qtyPacked (with a small epsilon).
+  app.post(
+    "/packing-slips/:id/containers/:cid/items",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      const { id, cid } = req.params as { id: string; cid: string };
+      const body = itemAddBody.parse(req.body);
+      const container = await db.packingContainer.findUnique({
+        where: { id: cid },
+        include: {
+          packingSlip: { select: { status: true, id: true } },
+        },
+      });
+      if (!container || container.packingSlipId !== id) {
+        return reply.code(404).send({ error: { code: "not_found" } });
+      }
+      if (container.packingSlip.status !== "open") {
+        return reply.code(409).send({
+          error: {
+            code: "locked",
+            message: `Packing slip is '${container.packingSlip.status}'.`,
+          },
+        });
+      }
+      if (container.status !== "open") {
+        return reply.code(409).send({
+          error: { code: "container_sealed", message: "Unseal the container to edit it." },
+        });
+      }
+      const line = await db.packingSlipItem.findUnique({
+        where: { id: body.packingSlipItemId },
+        select: { id: true, packingSlipId: true, qtyPacked: true },
+      });
+      if (!line || line.packingSlipId !== id) {
+        return reply.code(404).send({ error: { code: "line_not_found" } });
+      }
+      if (line.qtyPacked <= 0) {
+        return reply.code(409).send({
+          error: {
+            code: "qty_not_confirmed",
+            message:
+              "Confirm the pack qty for this line before allocating it to a container.",
+          },
+        });
+      }
+      // Sum allocations across every container for this line so we
+      // can refuse over-allocation. The operator can still split a
+      // line across multiple containers — that's the whole point.
+      const allocs = await db.packingContainerItem.findMany({
+        where: { packingSlipItemId: line.id },
+        select: { containerId: true, qty: true },
+      });
+      const otherTotal = allocs
+        .filter((a) => a.containerId !== cid)
+        .reduce((s, a) => s + a.qty, 0);
+      const myExisting = allocs.find((a) => a.containerId === cid)?.qty ?? 0;
+      const newMine = myExisting + body.qty;
+      if (otherTotal + newMine > line.qtyPacked + 1e-6) {
+        return reply.code(409).send({
+          error: {
+            code: "over_allocate",
+            message: `Total allocation ${(otherTotal + newMine).toFixed(2)} exceeds qty packed ${line.qtyPacked}.`,
+            details: {
+              qtyPacked: line.qtyPacked,
+              alreadyAllocatedElsewhere: otherTotal,
+              attempted: newMine,
+            },
+          },
+        });
+      }
+      const upserted = await db.packingContainerItem.upsert({
+        where: {
+          containerId_packingSlipItemId: {
+            containerId: cid,
+            packingSlipItemId: line.id,
+          },
+        },
+        update: { qty: newMine },
+        create: {
+          containerId: cid,
+          packingSlipItemId: line.id,
+          qty: body.qty,
+        },
+      });
+      await recomputeContainer(db, cid);
+      await recomputePackingSlipWeight(db, id);
+      await recordChange(
+        "PackingContainerItem",
+        upserted.id,
+        "update",
+        upserted,
+        req.user.sub
+      );
+      return db.packingContainer.findUnique({
+        where: { id: cid },
+        include: packContainerInclude,
+      });
+    }
+  );
+
+  const itemPatchBody = z.object({ qty: z.number().nonnegative() });
+
+  // Replace the allocated qty for a single (container, slip-line)
+  // row. Setting qty=0 is the canonical "remove this line from the
+  // container" operation — we delete instead of carrying zero rows.
+  app.patch(
+    "/packing-slips/:id/containers/:cid/items/:itemId",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      const { id, cid, itemId } = req.params as {
+        id: string;
+        cid: string;
+        itemId: string;
+      };
+      const body = itemPatchBody.parse(req.body);
+      const ci = await db.packingContainerItem.findUnique({
+        where: { id: itemId },
+        include: {
+          container: { select: { id: true, status: true, packingSlipId: true } },
+          packingSlipItem: { select: { id: true, qtyPacked: true, packingSlipId: true } },
+        },
+      });
+      if (
+        !ci ||
+        ci.container.id !== cid ||
+        ci.container.packingSlipId !== id ||
+        ci.packingSlipItem.packingSlipId !== id
+      ) {
+        return reply.code(404).send({ error: { code: "not_found" } });
+      }
+      const slip = await db.packingSlip.findUnique({
+        where: { id },
+        select: { status: true },
+      });
+      if (slip && slip.status !== "open") {
+        return reply.code(409).send({
+          error: { code: "locked", message: `Packing slip is '${slip.status}'.` },
+        });
+      }
+      if (ci.container.status !== "open") {
+        return reply.code(409).send({
+          error: { code: "container_sealed", message: "Unseal the container to edit it." },
+        });
+      }
+      if (body.qty === 0) {
+        await db.packingContainerItem.delete({ where: { id: itemId } });
+      } else {
+        const sibling = await db.packingContainerItem.findMany({
+          where: { packingSlipItemId: ci.packingSlipItem.id, NOT: { id: itemId } },
+          select: { qty: true },
+        });
+        const otherTotal = sibling.reduce((s, a) => s + a.qty, 0);
+        if (otherTotal + body.qty > ci.packingSlipItem.qtyPacked + 1e-6) {
+          return reply.code(409).send({
+            error: {
+              code: "over_allocate",
+              message: "Allocation exceeds qty packed.",
+            },
+          });
+        }
+        await db.packingContainerItem.update({
+          where: { id: itemId },
+          data: { qty: body.qty },
+        });
+      }
+      await recomputeContainer(db, cid);
+      await recomputePackingSlipWeight(db, id);
+      await recordChange("PackingContainerItem", itemId, "update", { qty: body.qty }, req.user.sub);
+      return db.packingContainer.findUnique({
+        where: { id: cid },
+        include: packContainerInclude,
+      });
+    }
+  );
+
+  app.delete(
+    "/packing-slips/:id/containers/:cid/items/:itemId",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      const { id, cid, itemId } = req.params as {
+        id: string;
+        cid: string;
+        itemId: string;
+      };
+      const ci = await db.packingContainerItem.findUnique({
+        where: { id: itemId },
+        select: {
+          id: true,
+          container: { select: { id: true, status: true, packingSlipId: true } },
+        },
+      });
+      if (
+        !ci ||
+        ci.container.id !== cid ||
+        ci.container.packingSlipId !== id
+      ) {
+        return reply.code(404).send({ error: { code: "not_found" } });
+      }
+      const slip = await db.packingSlip.findUnique({
+        where: { id },
+        select: { status: true },
+      });
+      if (slip && slip.status !== "open") {
+        return reply.code(409).send({
+          error: { code: "locked", message: `Packing slip is '${slip.status}'.` },
+        });
+      }
+      if (ci.container.status !== "open") {
+        return reply.code(409).send({
+          error: { code: "container_sealed", message: "Unseal the container to edit it." },
+        });
+      }
+      await db.packingContainerItem.delete({ where: { id: itemId } });
+      await recomputeContainer(db, cid);
+      await recomputePackingSlipWeight(db, id);
+      await recordChange("PackingContainerItem", itemId, "delete", { id: itemId }, req.user.sub);
+      return db.packingContainer.findUnique({
+        where: { id: cid },
+        include: packContainerInclude,
+      });
+    }
+  );
+
+  // ----- seal / unseal -----
+  const sealBody = z.object({
+    actualWeightKg: z.number().min(0).max(5000).nullable().optional(),
+  });
+
+  app.post(
+    "/packing-slips/:id/containers/:cid/seal",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      const { id, cid } = req.params as { id: string; cid: string };
+      const body = sealBody.parse(req.body ?? {});
+      const container = await db.packingContainer.findUnique({
+        where: { id: cid },
+        include: {
+          packingSlip: { select: { status: true } },
+          items: true,
+        },
+      });
+      if (!container || container.packingSlipId !== id) {
+        return reply.code(404).send({ error: { code: "not_found" } });
+      }
+      if (container.packingSlip.status !== "open") {
+        return reply.code(409).send({
+          error: {
+            code: "locked",
+            message: `Packing slip is '${container.packingSlip.status}'.`,
+          },
+        });
+      }
+      if (container.items.length === 0) {
+        return reply.code(409).send({
+          error: {
+            code: "empty_container",
+            message: "Add at least one item before sealing.",
+          },
+        });
+      }
+      const updated = await db.packingContainer.update({
+        where: { id: cid },
+        data: {
+          status: "sealed",
+          sealedAt: new Date(),
+          sealedById: req.user.sub,
+          ...(body.actualWeightKg !== undefined
+            ? { actualWeightKg: body.actualWeightKg }
+            : {}),
+        },
+      });
+      await recomputeContainer(db, cid);
+      await recomputePackingSlipWeight(db, id);
+      await recordChange("PackingContainer", cid, "update", updated, req.user.sub);
+      return db.packingContainer.findUnique({
+        where: { id: cid },
+        include: packContainerInclude,
+      });
+    }
+  );
+
+  // ----- container scan-out (dispatch loading) -----
+  // Loader scans a container sticker at the dispatch bay. We resolve
+  // the canonical code (C.<slipNo>.<NN>) to a PackingContainer, return
+  // the slip + linked dispatch / trip so the mobile UI can show "this
+  // container is on TRP-2026-101 -> KA-01-AB-1234". Records a ScanEvent
+  // for the dispatch audit log.
+  app.post(
+    "/packing-containers/scan",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      const body = z.object({ code: z.string().min(3) }).parse(req.body);
+      const parsed = parseContainerCode(body.code);
+      if (!parsed) {
+        await db.scanEvent.create({
+          data: {
+            userId: req.user.sub,
+            kind: "container",
+            code: body.code,
+            context: "dispatch-scan",
+            outcome: "bad_format",
+          },
+        });
+        return reply.code(400).send({
+          error: {
+            code: "bad_format",
+            message:
+              "Container code must look like C.<packingSlipNo>.<NN> (e.g. C.PS-2026-8042.03).",
+          },
+        });
+      }
+      const slip = await db.packingSlip.findUnique({
+        where: { packingSlipNo: parsed.packingSlipNo },
+        include: {
+          salesOrder: { select: { id: true, soNo: true, customer: { select: { id: true, name: true, city: true } } } },
+          invoice: {
+            select: {
+              id: true,
+              invoiceNo: true,
+              dispatches: {
+                select: {
+                  id: true,
+                  dispatchNo: true,
+                  status: true,
+                  weightKg: true,
+                  vehicle: true,
+                  driver: true,
+                  trip: {
+                    select: {
+                      id: true,
+                      tripNo: true,
+                      scheduledDate: true,
+                      vehicle: true,
+                      driver: true,
+                    },
+                  },
+                },
+              },
+            },
+          },
+          containers: {
+            where: { seq: parsed.seq },
+            include: packContainerInclude,
+          },
+        },
+      });
+      if (!slip || slip.containers.length === 0) {
+        await db.scanEvent.create({
+          data: {
+            userId: req.user.sub,
+            kind: "container",
+            code: body.code,
+            context: "dispatch-scan",
+            outcome: "not_found",
+          },
+        });
+        return reply.code(404).send({
+          error: {
+            code: "not_found",
+            message: `No container ${parsed.seq} on slip ${parsed.packingSlipNo}.`,
+          },
+        });
+      }
+      const container = slip.containers[0]!;
+      await db.scanEvent.create({
+        data: {
+          userId: req.user.sub,
+          kind: "container",
+          code: body.code,
+          context: `dispatch-scan:${slip.packingSlipNo}`,
+          outcome: container.status === "sealed" ? "ok" : "unsealed",
+        },
+      });
+      return {
+        code: containerCode(slip.packingSlipNo, container.seq),
+        container,
+        packingSlip: {
+          id: slip.id,
+          packingSlipNo: slip.packingSlipNo,
+          status: slip.status,
+          totalEstWeightKg: slip.totalEstWeightKg,
+          totalActualWeightKg: slip.totalActualWeightKg,
+          containerCount: await db.packingContainer.count({
+            where: { packingSlipId: slip.id },
+          }),
+        },
+        salesOrder: slip.salesOrder,
+        invoice: slip.invoice,
+      };
+    }
+  );
+
+  app.post(
+    "/packing-slips/:id/containers/:cid/unseal",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      const { id, cid } = req.params as { id: string; cid: string };
+      const container = await db.packingContainer.findUnique({
+        where: { id: cid },
+        select: { id: true, packingSlipId: true, status: true, packingSlip: { select: { status: true } } },
+      });
+      if (!container || container.packingSlipId !== id) {
+        return reply.code(404).send({ error: { code: "not_found" } });
+      }
+      if (container.packingSlip.status !== "open") {
+        return reply.code(409).send({
+          error: {
+            code: "locked",
+            message: `Packing slip is '${container.packingSlip.status}'.`,
+          },
+        });
+      }
+      const updated = await db.packingContainer.update({
+        where: { id: cid },
+        data: { status: "open", sealedAt: null, sealedById: null },
+      });
+      await recomputePackingSlipWeight(db, id);
+      await recordChange("PackingContainer", cid, "update", updated, req.user.sub);
+      return db.packingContainer.findUnique({
+        where: { id: cid },
+        include: packContainerInclude,
+      });
     }
   );
 };

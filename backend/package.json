@@ -30,8 +30,13 @@
     "ops:putaway-fg:dist": "node dist/ops-scripts/03-putaway-fg.js",
     "db:wipe": "tsx prisma/wipe.ts",
     "db:import-pricelists": "tsx scripts/import-pricelists.ts",
+    "db:backfill-variant-barcodes": "tsx scripts/backfill-variant-barcodes-from-pricelist.ts",
+    "db:backfill-multi-container": "tsx scripts/backfill-multi-container.ts",
+    "db:backfill-document-weights": "tsx scripts/backfill-document-weights.ts",
     "labels:bins": "tsx scripts/generate-bin-labels-pdf.ts",
+    "labels:soap-room": "tsx scripts/seed-soap-room-bins.ts && tsx scripts/generate-soap-room-bin-labels-pdf.ts",
     "labels:test": "tsx scripts/generate-test-labels-pdf.ts",
+    "labels:containers": "tsx scripts/generate-container-labels-pdf.ts",
     "setup": "prisma generate && prisma migrate dev --name init && tsx prisma/seed.ts && tsx scripts/import-pricelists.ts",
     "lint": "tsc --noEmit"
   },
@@ -46,6 +51,7 @@
     "dotenv": "^16.4.5",
     "exceljs": "^4.4.0",
     "fastify": "^5.1.0",
+    "xlsx": "^0.18.5",
     "zod": "^3.23.8"
   },
   "devDependencies": {

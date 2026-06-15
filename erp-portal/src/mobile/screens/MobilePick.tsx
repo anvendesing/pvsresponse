@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { api, ApiError, auth } from "../../lib/api";
-import { variantSkuLine } from "../../lib/variantAttrs";
+import { variantAttrs } from "../../lib/variantAttrs";
+import { primaryScanCode } from "../../lib/scanCode";
+import { effectiveUom } from "../../data/types";
 import {
   consumePickScrollTarget,
   savePickScrollTarget,
@@ -21,8 +23,8 @@ interface PickItem {
   qtyToPick: number;
   qtyPicked: number;
   notes?: string | null;
-  product?: { sku?: string; name?: string; uom?: string };
-  variant?: { sku?: string; uom?: string; size?: string; color?: string; grade?: string } | null;
+  product?: { sku?: string; name?: string; uom?: string; barcode?: string | null };
+  variant?: { sku?: string; uom?: string; size?: string; color?: string; grade?: string; barcode?: string | null } | null;
   bin?: { id?: string; code?: string; zone?: string; shelf?: string; bin?: string; qty?: number };
 }
 
@@ -313,10 +315,12 @@ export const MobilePick = () => {
           <ul className="mt-2 list-disc space-y-0.5 pl-5 text-xs">
             {staleItemIds.map((iid) => {
               const it = pl.items.find((i) => i.id === iid);
-              const sku = it?.variant?.sku ?? it?.product?.sku ?? iid;
+              const code = it
+                ? primaryScanCode(it.variant ?? it.product ?? { sku: iid })
+                : iid;
               return (
                 <li key={iid}>
-                  <span className="font-mono">{sku}</span>
+                  <span className="font-mono">{code}</span>
                   {it ? ` — confirmed ${it.qtyPicked}, on hand 0` : null}
                 </li>
               );
@@ -344,9 +348,10 @@ export const MobilePick = () => {
 
       <div className="space-y-2">
         {pl.items.map((it) => {
-          const sku = it.variant?.sku ?? it.product?.sku ?? "?";
-          const skuLine = variantSkuLine(sku, it.variant);
-          const uom = it.variant?.uom ?? it.product?.uom ?? "pcs";
+          const scanCode = primaryScanCode(it.variant ?? it.product ?? { sku: "?" });
+          const attrs = variantAttrs(it.variant);
+          const codeLine = attrs ? `${scanCode} · ${attrs}` : scanCode;
+          const uom = effectiveUom(it.product ?? { uom: "pcs" }, it.variant);
           const binLabel = it.bin
             ? `${it.bin.zone}/${it.bin.shelf}/${it.bin.bin}`
             : "no bin";
@@ -410,7 +415,7 @@ export const MobilePick = () => {
                   </span>
                 </div>
                 <div className="mt-0.5 truncate font-mono text-xs text-slate-500">
-                  {skuLine}
+                  {codeLine}
                 </div>
                 <div className="mt-1.5 flex items-center gap-2 flex-wrap">
                   <span className="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-500">

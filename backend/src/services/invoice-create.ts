@@ -32,6 +32,7 @@ import { mintShareToken } from "../lib/share.js";
 import { nextFulfilmentDocNo } from "../lib/pick-list-helpers.js";
 import { computeTax, computeGrandTotal } from "../lib/tax.js";
 import { applyAdvancesToInvoice } from "../routes/customer-payments.js";
+import { recomputeInvoiceWeight } from "../lib/document-weight.js";
 
 type Tx = Prisma.TransactionClient | PrismaClient;
 
@@ -117,6 +118,10 @@ export const ensureInvoiceForSalesOrder = async (
       customer: true,
     },
   });
+
+  // Stamp totalWeightKg from invoice items (no packing slip yet at
+  // this point — pack reconciliation refreshes it later).
+  await recomputeInvoiceWeight(client, invoice.id);
 
   // Sweep the customer's unallocated advance payments against the
   // freshly-created invoice so a prepayment recorded BEFORE the
@@ -209,6 +214,11 @@ export const reconcileInvoiceWithPack = async (
       transportTax: freight.transportTax,
     },
   });
+
+  // Pack reconciliation can drop / shrink lines — refresh weight.
+  // We prefer the packing-slip cached value when the slip is linked
+  // because it folds in actual scale readings.
+  await recomputeInvoiceWeight(client, invoiceId, { preferPackingSlipKg: true });
 
   return client.invoice.findUnique({
     where: { id: invoiceId },

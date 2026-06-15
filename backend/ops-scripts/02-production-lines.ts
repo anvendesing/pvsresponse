@@ -1,20 +1,26 @@
 #!/usr/bin/env tsx
 /**
- * Step 2 — Work centers + link to production-line warehouses.
+ * Step 2 — Production facilities (rooms) + their default production lines +
+ * link to facility production warehouses.
+ *
+ * Each entry in PRODUCTION_FACILITIES maps to:
+ *   • One ProductionFacility row (formerly WorkCenter — same DB table via @@map)
+ *   • One default ProductionLine ("Main Line") created if it doesn't exist yet
+ *   • The facility's productionLineWarehouseId linked to the production WH
  */
 
 import {
   EXISTING_FINISHED_GOODS_WH_CODE,
-  PRODUCTION_LINES,
-  type ProductionLineDef,
+  PRODUCTION_FACILITIES,
+  type FacilityDef,
 } from "./config/site-layout.js";
 import { db, dryRun, log } from "./lib/db.js";
 
-const opsTag = (line: ProductionLineDef) => {
+const opsTag = (fac: FacilityDef) => {
   const parts = [
-    `fg=${line.putawayDestinationWhCode}`,
-    `staging=${line.productionWhCode}`,
-    `replenish=${line.replenishFromStorageCodes.join(",")}`,
+    `fg=${fac.putawayDestinationWhCode}`,
+    `staging=${fac.productionWhCode}`,
+    `replenish=${fac.replenishFromStorageCodes.join(",")}`,
   ];
   return `[ops] ${parts.join(" ")}`;
 };
@@ -37,70 +43,89 @@ async function assertFinishedGoodsWarehouse() {
   }
 }
 
-async function linkProductionWarehouse(line: ProductionLineDef) {
+async function seedFacility(fac: FacilityDef) {
   const wh = await db.warehouse.findUnique({
-    where: { code: line.productionWhCode },
+    where: { code: fac.productionWhCode },
   });
   if (!wh) {
     throw new Error(
-      `Production warehouse ${line.productionWhCode} missing — run 01-warehouses first.`
+      `Production warehouse ${fac.productionWhCode} missing — run 01-warehouses first.`
     );
   }
   if (wh.kind !== "production") {
-    throw new Error(`${line.productionWhCode} must be kind=production`);
+    throw new Error(`${fac.productionWhCode} must be kind=production`);
   }
 
-  const description = `${line.description}\n${opsTag(line)}`;
+  const description = `${fac.description}\n${opsTag(fac)}`;
 
   if (dryRun) {
-    log(`  [dry] WC ${line.workCenterCode} → ${line.productionWhCode}`);
+    log(`  [dry] Facility ${fac.facilityCode} → ${fac.productionWhCode}`);
+    log(`  [dry]   Lines: ${fac.lines.map((l) => l.code).join(", ")}`);
     return;
   }
 
-  const wc = await db.workCenter.upsert({
-    where: { code: line.workCenterCode },
+  // Upsert the facility (stored in the WorkCenter table via @@map).
+  const facility = await db.productionFacility.upsert({
+    where: { code: fac.facilityCode },
     create: {
-      code: line.workCenterCode,
-      name: line.workCenterName,
+      code: fac.facilityCode,
+      name: fac.facilityName,
       description,
       active: true,
       productionLineWarehouseId: wh.id,
     },
     update: {
-      name: line.workCenterName,
+      name: fac.facilityName,
       description,
       active: true,
       productionLineWarehouseId: wh.id,
     },
   });
 
-  const conflict = await db.workCenter.findFirst({
+  const conflict = await db.productionFacility.findFirst({
     where: {
       productionLineWarehouseId: wh.id,
-      id: { not: wc.id },
+      id: { not: facility.id },
     },
   });
   if (conflict) {
     throw new Error(
-      `Warehouse ${wh.code} already linked to WC ${conflict.code}. Resolve manually.`
+      `Warehouse ${wh.code} already linked to facility ${conflict.code}. Resolve manually.`
     );
   }
 
-  log(`  ✓ ${wc.code} → ${wh.code}  (putaway → ${line.putawayDestinationWhCode})`);
+  // Upsert each declared production line (first is the seeded "Main Line").
+  for (const lineDef of fac.lines) {
+    const line = await db.productionLine.upsert({
+      where: { code: lineDef.code },
+      create: {
+        code: lineDef.code,
+        name: lineDef.name,
+        facilityId: facility.id,
+        active: true,
+      },
+      update: {
+        name: lineDef.name,
+        facilityId: facility.id,
+        active: true,
+      },
+    });
+    log(`  ✓ ${facility.code} / ${line.code} → ${wh.code}  (putaway → ${fac.putawayDestinationWhCode})`);
+  }
 }
 
 async function main() {
-  log(dryRun ? "02-production-lines (DRY RUN)" : "02-production-lines — work centers…");
+  log(dryRun ? "02-production-lines (DRY RUN)" : "02-production-lines — facilities + lines…");
 
   await assertFinishedGoodsWarehouse();
 
-  for (const line of PRODUCTION_LINES) {
-    await linkProductionWarehouse(line);
+  for (const fac of PRODUCTION_FACILITIES) {
+    await seedFacility(fac);
   }
 
   log("\n── Next step ──");
   log(`  Run: npm run ops:putaway-fg  (one bin per variant in ${EXISTING_FINISHED_GOODS_WH_CODE})`);
-  log("  Optional: stock rules, BOM default work centers.");
+  log("  Optional: stock rules, BOM default facilities.");
 }
 
 main()

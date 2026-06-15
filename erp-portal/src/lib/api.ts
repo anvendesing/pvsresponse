@@ -130,6 +130,39 @@ const fetcher = async <T>(path: string, opts: Options = {}): Promise<T> => {
   return (await res.json()) as T;
 };
 
+// Download helper: fetch a non-JSON endpoint (CSV, PDF, etc.) using the
+// signed-in user's bearer token and trigger a browser download. Used by
+// the reports pages for `?format=csv` downloads where we can't just
+// link to the URL (the bearer token isn't in the URL).
+export const downloadFile = async (
+  path: string,
+  filename: string,
+  opts: Options = {}
+): Promise<void> => {
+  if (!apiEnabled) throw new ApiError(0, "API disabled");
+  const headers: Record<string, string> = {};
+  const token = auth.token();
+  if (token) headers.authorization = `Bearer ${token}`;
+  const res = await fetch(buildUrl(path, opts.query), {
+    method: opts.method ?? "GET",
+    headers,
+  });
+  if (!res.ok) {
+    throw new ApiError(res.status, `${res.status} ${res.statusText}`);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  // Give the browser a tick before revoking so Safari doesn't cancel
+  // the download mid-flight.
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+
 // Anonymous fetcher used by the public share-link viewer.
 // - Does NOT attach the bearer token (the page is meant to be opened by
 //   customers who don't have a NovaERP login).
@@ -653,7 +686,11 @@ const adaptProductionOrder = (r: Raw): ProductionOrder => {
     scrapQty: r.scrapQty as number,
     reworkQty: r.reworkQty as number,
     status: r.status as ProductionOrder["status"],
-    station: r.station as string,
+    station: (r.station as string) ?? "",
+    facilityId: (r.facilityId as string | null) ?? null,
+    facility: (r.facility as ProductionOrder["facility"]) ?? null,
+    lineId: (r.lineId as string | null) ?? null,
+    line: (r.line as ProductionOrder["line"]) ?? null,
     startDate: r.startDate as string,
     dueDate: r.dueDate as string,
     efficiency: r.efficiency as number,
@@ -977,6 +1014,10 @@ const adaptBom = (r: Raw): Bom => {
         variantSku: (pv?.sku as string) ?? null,
       };
     }),
+    defaultFacilityId: (r.defaultFacilityId as string | null) ?? null,
+    defaultFacility: (r.defaultFacility as Bom["defaultFacility"]) ?? null,
+    defaultLineId: (r.defaultLineId as string | null) ?? null,
+    defaultLine: (r.defaultLine as Bom["defaultLine"]) ?? null,
   };
 };
 
@@ -1045,10 +1086,11 @@ export interface QuoteItemRow {
   discount: number;
   amount: number;
   requiredBy?: string | null;
-  product?: { id: string; sku: string; name: string; uom: string; stockOnHand: number };
+  product?: { id: string; sku: string; name: string; uom: string; stockOnHand: number; barcode?: string };
   variant?: {
     id: string;
     sku: string;
+    barcode?: string | null;
     uom?: string;
     size?: string | null;
     color?: string | null;
@@ -1093,6 +1135,7 @@ export interface PublicQuotePayload {
   items: {
     productName: string;
     productSku: string;
+    lineCode?: string;
     hsn?: string | null;
     uom?: string | null;
     variantSku?: string | null;
@@ -1108,6 +1151,7 @@ export interface PublicQuotePayload {
 interface PublicLineItem {
   productName: string;
   productSku: string;
+  lineCode?: string;
   hsn?: string | null;
   uom?: string | null;
   variantSku?: string | null;
@@ -1128,13 +1172,15 @@ export interface InvoiceItemDetail {
   amount: number;
   gstRate?: number | null;
   taxAmount?: number | null;
-  product: { id: string; sku: string; name: string; uom: string; hsn?: string | null; gstRate?: number | null };
+  product: { id: string; sku: string; name: string; uom: string; hsn?: string | null; gstRate?: number | null; barcode?: string };
   variant?: {
     id: string;
     sku: string;
+    barcode?: string | null;
     size?: string | null;
     color?: string | null;
     grade?: string | null;
+    uom?: string | null;
   } | null;
 }
 
@@ -1209,6 +1255,10 @@ export interface InvoiceDetail {
   tax: number;
   transportCharge?: number;
   transportTax?: number;
+  // Estimated shipping weight (kg). For pack-derived invoices this
+  // mirrors the packing slip's cached weight (incl. actual scale
+  // readings); for direct/walk-in it's summed from invoice items.
+  totalWeightKg?: number;
   status: "draft" | "issued" | "paid" | "partial" | "overdue";
   paymentMode: "cash" | "card" | "upi" | "credit" | "split";
   notes?: string | null;
@@ -1396,6 +1446,9 @@ export interface QuoteRow {
   transportCharge?: number;
   transportTax?: number;
   total: number;
+  // Estimated shipping weight (kg) rolled up from item qty * variant
+  // weight. Re-derived on every edit; carries to the SO on accept.
+  totalWeightKg?: number;
   dispatchOptionId?: string | null;
   dispatchOption?: DispatchOptionRow | null;
   paymentTerms?: string | null;
@@ -1453,13 +1506,15 @@ export interface SalesOrderItemRow {
   qtyCancelled: number;
   rate: number;
   amount: number;
-  product?: { id: string; sku: string; name: string; uom: string; stockOnHand: number };
+  product?: { id: string; sku: string; name: string; uom: string; stockOnHand: number; barcode?: string };
   variant?: {
     id: string;
     sku: string;
+    barcode?: string | null;
     size?: string | null;
     color?: string | null;
     grade?: string | null;
+    uom?: string | null;
     stockOnHand: number;
   } | null;
   // Hard-reservation rows for this line. Sum of qty == bin units
@@ -1486,6 +1541,9 @@ export interface SalesOrderRow {
   transportCharge?: number;
   transportTax?: number;
   total: number;
+  // Estimated shipping weight (kg). Inherited from quote and recomputed
+  // on any line edit.
+  totalWeightKg?: number;
   dispatchOptionId?: string | null;
   dispatchOption?: DispatchOptionRow | null;
   notes?: string | null;
@@ -1555,13 +1613,15 @@ export interface PickListItemRow {
   qtyToPick: number;
   qtyPicked: number;
   notes?: string | null;
-  product?: { id: string; sku: string; name: string; uom: string; stockOnHand: number };
+  product?: { id: string; sku: string; name: string; uom: string; stockOnHand: number; barcode?: string };
   variant?: {
     id: string;
     sku: string;
+    barcode?: string | null;
     size?: string | null;
     color?: string | null;
     grade?: string | null;
+    uom?: string | null;
     stockOnHand: number;
   } | null;
   bin?: BinSummary | null;
@@ -1608,7 +1668,15 @@ export interface PackingSlipItemRow {
   rate: number;
   amount: number;
   notes?: string | null;
-  product?: { id: string; sku: string; name: string; uom: string; stockOnHand: number };
+  product?: {
+    id: string;
+    sku: string;
+    name: string;
+    uom: string;
+    stockOnHand: number;
+    barcode?: string | null;
+    weightKg?: number | null;
+  };
   variant?: {
     id: string;
     sku: string;
@@ -1616,7 +1684,61 @@ export interface PackingSlipItemRow {
     color?: string | null;
     grade?: string | null;
     stockOnHand: number;
+    barcode?: string | null;
+    weightKg?: number | null;
+    uom?: string | null;
+    packSize?: number | null;
   } | null;
+}
+
+export type ContainerKind = "box" | "bag" | "carton" | "sack" | "other";
+
+export interface ContainerTypeRow {
+  id: string;
+  code: string;
+  name: string;
+  kind: ContainerKind;
+  tareKg: number;
+  maxKg?: number | null;
+  active: boolean;
+  sortOrder: number;
+}
+
+export type PackingContainerStatus = "open" | "sealed";
+
+export interface PackingContainerItemRow {
+  id: string;
+  containerId: string;
+  packingSlipItemId: string;
+  qty: number;
+  packingSlipItem?: {
+    id: string;
+    productId: string;
+    variantId?: string | null;
+    qtyPacked: number;
+    qtyPicked: number;
+    product?: { id: string; sku: string; name: string; barcode?: string | null };
+    variant?: { id: string; sku: string; size?: string | null; barcode?: string | null } | null;
+  };
+}
+
+export interface PackingContainerRow {
+  id: string;
+  packingSlipId: string;
+  seq: number;
+  label: string;
+  containerTypeId?: string | null;
+  containerType?: ContainerTypeRow | null;
+  status: PackingContainerStatus;
+  estWeightKg: number;
+  actualWeightKg?: number | null;
+  tareKgOverride?: number | null;
+  notes?: string | null;
+  sealedAt?: string | null;
+  sealedById?: string | null;
+  createdAt: string;
+  updatedAt: string;
+  items: PackingContainerItemRow[];
 }
 
 export interface PackingSlipRow {
@@ -1675,6 +1797,9 @@ export interface PackingSlipRow {
     date: string;
   } | null;
   items: PackingSlipItemRow[];
+  containers?: PackingContainerRow[];
+  totalEstWeightKg?: number;
+  totalActualWeightKg?: number | null;
   _count?: { items: number };
 }
 
@@ -1774,6 +1899,10 @@ export interface CompanyProfile {
   bankIfsc: string | null;
   bankBranch: string | null;
   upi: string | null;
+  // Manufacturing / fulfilment toggles surfaced in Settings.
+  requireMoReleaseBeforeIssue?: boolean;
+  packMultiContainerEnabled?: boolean;
+  packRequireSealConfirmation?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -2230,8 +2359,9 @@ export const api = {
     outputQty?: number;
     active?: boolean;
     // Optional production routing defaults. When set, MOs created from
-    // this BOM prefill their station / machine fields.
-    defaultWorkCenterId?: string | null;
+    // this BOM prefill their facility/line/machine fields.
+    defaultFacilityId?: string | null;
+    defaultLineId?: string | null;
     defaultMachineId?: string | null;
     items?: Array<{ productId: string; qty: number; uom: string; scrapPct?: number }>;
     byproducts?: Array<{
@@ -2248,7 +2378,8 @@ export const api = {
       revision?: string;
       outputQty?: number;
       active?: boolean;
-      defaultWorkCenterId?: string | null;
+      defaultFacilityId?: string | null;
+      defaultLineId?: string | null;
       defaultMachineId?: string | null;
       items?: Array<{ productId: string; qty: number; uom: string; scrapPct?: number }>;
       byproducts?: Array<{
@@ -2280,35 +2411,24 @@ export const api = {
   // doesn't already have one. Each generated BOM consumes the parent
   // product at qty = variant.packSize (so a 100g pouch on a kg-tracked
   // parent consumes 0.1 kg per pack).
-  // ---- Production master data: work centers + machines ----
-  workCenters: (q?: { active?: boolean }) =>
-    fetcher<
-      Array<{
-        id: string;
-        code: string;
-        name: string;
-        description: string | null;
-        capacityPerHour: number | null;
-        active: boolean;
-        machines: Array<{
-          id: string;
-          code: string;
-          name: string;
-          status: string;
-          active: boolean;
-        }>;
-      }>
-    >("/work-centers", {
+  // ---- Production master data: facilities, lines, machines ----
+
+  // Production facilities (e.g. "Soap Room"). Each facility may have
+  // many production lines nested inside.
+  productionFacilities: (q?: { active?: boolean }) =>
+    fetcher<import("../data/types.js").ProductionFacility[]>("/production-facilities", {
       query: q?.active !== undefined ? { active: q.active ? "1" : "0" } : undefined,
     }),
-  createWorkCenter: (body: {
+  createProductionFacility: (body: {
     code: string;
     name: string;
     description?: string | null;
     capacityPerHour?: number | null;
+    productionLineWarehouseId?: string | null;
+    autoCreateProductionWarehouse?: boolean;
     active?: boolean;
-  }) => fetcher<Raw>("/work-centers", { method: "POST", body }),
-  updateWorkCenter: (
+  }) => fetcher<Raw>("/production-facilities", { method: "POST", body }),
+  updateProductionFacility: (
     id: string,
     body: Partial<{
       code: string;
@@ -2316,36 +2436,68 @@ export const api = {
       description: string | null;
       capacityPerHour: number | null;
       productionLineWarehouseId: string | null;
+      autoCreateProductionWarehouse: boolean;
       active: boolean;
     }>
-  ) => fetcher<Raw>(`/work-centers/${id}`, { method: "PATCH", body }),
-  deleteWorkCenter: (id: string) =>
+  ) => fetcher<Raw>(`/production-facilities/${id}`, { method: "PATCH", body }),
+  deleteProductionFacility: (id: string) =>
     fetcher<{ deleted?: boolean; softDeleted?: boolean; message?: string }>(
-      `/work-centers/${id}`,
+      `/production-facilities/${id}`,
       { method: "DELETE" }
     ),
-  machines: (q?: { workCenterId?: string; active?: boolean }) =>
-    fetcher<
-      Array<{
-        id: string;
-        code: string;
-        name: string;
-        workCenterId: string;
-        workCenter: { id: string; code: string; name: string };
-        status: string;
-        description: string | null;
-        active: boolean;
-      }>
-    >("/machines", {
+
+  // Production lines (e.g. "Boiling Line") nested under a facility.
+  productionLines: (q?: { facilityId?: string; active?: boolean }) =>
+    fetcher<import("../data/types.js").ProductionLine[]>("/production-lines", {
       query: {
-        ...(q?.workCenterId ? { workCenterId: q.workCenterId } : {}),
+        ...(q?.facilityId ? { facilityId: q.facilityId } : {}),
+        ...(q?.active !== undefined ? { active: q.active ? "1" : "0" } : {}),
+      },
+    }),
+  createProductionLine: (body: {
+    code: string;
+    name: string;
+    description?: string | null;
+    facilityId: string;
+    capacityPerHour?: number | null;
+    active?: boolean;
+  }) => fetcher<Raw>("/production-lines", { method: "POST", body }),
+  updateProductionLine: (
+    id: string,
+    body: Partial<{
+      code: string;
+      name: string;
+      description: string | null;
+      facilityId: string;
+      capacityPerHour: number | null;
+      active: boolean;
+    }>
+  ) => fetcher<Raw>(`/production-lines/${id}`, { method: "PATCH", body }),
+  deleteProductionLine: (id: string) =>
+    fetcher<{ deleted?: boolean; softDeleted?: boolean; message?: string }>(
+      `/production-lines/${id}`,
+      { method: "DELETE" }
+    ),
+
+  // Legacy alias — keeps existing Settings components working until they
+  // are migrated to productionFacilities. Prefer productionFacilities in new code.
+  workCenters: (q?: { active?: boolean }) =>
+    fetcher<import("../data/types.js").ProductionFacility[]>("/production-facilities", {
+      query: q?.active !== undefined ? { active: q.active ? "1" : "0" } : undefined,
+    }),
+
+  machines: (q?: { productionLineId?: string; facilityId?: string; active?: boolean }) =>
+    fetcher<import("../data/types.js").Machine[]>("/machines", {
+      query: {
+        ...(q?.productionLineId ? { productionLineId: q.productionLineId } : {}),
+        ...(q?.facilityId ? { facilityId: q.facilityId } : {}),
         ...(q?.active !== undefined ? { active: q.active ? "1" : "0" } : {}),
       },
     }),
   createMachine: (body: {
     code: string;
     name: string;
-    workCenterId: string;
+    productionLineId: string;
     status?: "running" | "idle" | "maintenance" | "broken";
     description?: string | null;
     active?: boolean;
@@ -2355,7 +2507,7 @@ export const api = {
     body: Partial<{
       code: string;
       name: string;
-      workCenterId: string;
+      productionLineId: string;
       status: "running" | "idle" | "maintenance" | "broken";
       description: string | null;
       active: boolean;
@@ -2374,15 +2526,26 @@ export const api = {
   // ---- Production order lifecycle ----
   createProductionOrder: (body: {
     bomId: string;
-    // Both free-text. When omitted, the backend falls back to the
-    // BOM's defaultWorkCenter / defaultMachine (configured in the BOM
-    // editor) and finally to "Assembly 1" / "—" placeholders.
+    // New FK fields: facilityId defaults to BOM.defaultFacilityId.
+    // lineId may stay null (supervisor assigns later).
+    facilityId?: string;
+    lineId?: string;
+    // Legacy free-text kept for backward compat.
     station?: string;
     machine?: string;
     plannedQty: number;
     startDate: string;
     dueDate: string;
   }) => fetcher<Raw>("/production-orders", { method: "POST", body }),
+
+  // Supervisor action: assign MO (and optionally its WOs) to a production line.
+  assignMoToLine: (
+    moId: string,
+    body: {
+      lineId: string;
+      workOrderAssignments?: Array<{ workOrderId: string; machineId?: string | null }>;
+    }
+  ) => fetcher<Raw>(`/production-orders/${moId}/assign-line`, { method: "PATCH", body }),
   productionOrderRequirements: (id: string) =>
     fetcher<MoRequirements>(`/production-orders/${id}/requirements`),
   productionOrderInventoryTrail: (id: string) =>
@@ -3066,6 +3229,208 @@ export const api = {
   punchWorker: (body: { empNo: string; direction: "in" | "out" | "break" }) =>
     fetcher<Raw>("/workers/punch", { method: "POST", body }),
 
+  // Multi-container packing reports. The four endpoints below share a
+  // common shape (most accept `?format=csv` to stream a download). For
+  // CSV, callers build a URL with reportCsvUrl() and trigger a browser
+  // download — fetching CSV through the JSON fetcher would re-parse and
+  // throw.
+  packManifest: (packingSlipId: string) =>
+    fetcher<{
+      slip: {
+        id: string;
+        packingSlipNo: string;
+        status: string;
+        packedAt: string | null;
+        totalEstWeightKg: number;
+        totalActualWeightKg: number | null;
+      };
+      salesOrder: {
+        id: string;
+        soNo: string;
+        customer?: { id: string; code: string; name: string; city?: string | null } | null;
+      } | null;
+      invoice: {
+        id: string;
+        invoiceNo: string;
+        dispatches: Array<{
+          id: string;
+          dispatchNo: string;
+          status: string;
+          trip: { id: string; tripNo: string; scheduledDate: string } | null;
+        }>;
+      } | null;
+      containers: Array<{
+        id: string;
+        seq: number;
+        label: string;
+        code: string;
+        status: PackingContainerStatus;
+        containerType: { code: string; name: string; kind: string; tareKg: number } | null;
+        estWeightKg: number;
+        actualWeightKg: number | null;
+        tareKgOverride: number | null;
+        notes: string | null;
+        sealedAt: string | null;
+        sealedById: string | null;
+        itemCount: number;
+        unitCount: number;
+        lines: Array<{
+          packingSlipItemId: string;
+          productId: string;
+          productSku: string;
+          productName: string;
+          productBarcode: string | null;
+          uom: string;
+          variantId: string | null;
+          variant: string;
+          variantBarcode: string | null;
+          qty: number;
+          qtyPacked: number;
+        }>;
+      }>;
+      unallocated: Array<{
+        packingSlipItemId: string;
+        productSku: string;
+        productName: string;
+        variant: string;
+        uom: string;
+        qtyPacked: number;
+        allocated: number;
+        shortage: number;
+      }>;
+      totals: {
+        containerCount: number;
+        sealedCount: number;
+        unitCount: number;
+        estWeightKg: number;
+        actualWeightKg: number | null;
+      };
+    }>(`/reports/pack-manifest/${packingSlipId}`),
+
+  itemContainerHistory: (q: {
+    productId?: string;
+    variantId?: string;
+    sku?: string;
+    barcode?: string;
+    days?: number;
+    limit?: number;
+  }) =>
+    fetcher<{
+      productId: string | null;
+      variantId: string | null;
+      sinceDate: string;
+      count: number;
+      rows: Array<{
+        packingSlipId: string;
+        packingSlipNo: string;
+        packedAt: string | null;
+        slipStatus: string;
+        containerId: string;
+        containerSeq: number;
+        containerLabel: string;
+        containerCode: string;
+        containerType: string | null;
+        containerStatus: PackingContainerStatus;
+        qty: number;
+        qtyPacked: number;
+        product: { id: string; sku: string; name: string; uom: string; barcode: string | null };
+        variant: {
+          id: string;
+          sku: string;
+          size: string | null;
+          color: string | null;
+          barcode: string | null;
+        } | null;
+        salesOrder: {
+          id: string;
+          soNo: string;
+          customer?: { id: string; code: string; name: string } | null;
+        } | null;
+        invoiceNo: string | null;
+        dispatches: Array<{
+          dispatchNo: string;
+          status: string;
+          tripNo: string | null;
+          scheduledDate: string | null;
+        }>;
+      }>;
+    }>("/reports/item-container-history", {
+      query: q as Record<string, string | number | undefined>,
+    }),
+
+  tripManifest: (tripId: string) =>
+    fetcher<{
+      trip: {
+        id: string;
+        tripNo: string;
+        scheduledDate: string;
+        status: string;
+        vehicle: string;
+        driver: string;
+        route: string | null;
+        capacityKg: number;
+      };
+      stops: Array<{
+        dispatchId: string;
+        dispatchNo: string;
+        status: string;
+        weightKg: number;
+        invoiceNo: string;
+        customer: { id: string; code: string; name: string; city: string | null } | null;
+        packingSlip: {
+          id: string;
+          packingSlipNo: string;
+          totalEstWeightKg: number;
+          totalActualWeightKg: number | null;
+        } | null;
+        containers: Array<{
+          id: string;
+          seq: number;
+          label: string;
+          code: string;
+          status: PackingContainerStatus;
+          containerType: { code: string; kind: string; tareKg: number } | null;
+          estWeightKg: number;
+          actualWeightKg: number | null;
+          unitCount: number;
+          lines: Array<{
+            productSku: string;
+            productName: string;
+            productBarcode: string | null;
+            uom: string;
+            variant: string;
+            variantBarcode: string | null;
+            qty: number;
+          }>;
+        }>;
+        containerCount: number;
+        unitCount: number;
+        estWeightKg: number;
+        actualWeightKg: number | null;
+      }>;
+      totals: {
+        stopCount: number;
+        containerCount: number;
+        unitCount: number;
+        weightKg: number;
+        capacityKg: number;
+      };
+    }>(`/reports/trip-manifest/${tripId}`),
+
+  packThroughput: (days = 14) =>
+    fetcher<{
+      rangeStart: string;
+      days: number;
+      totals: { slips: number; containers: number; estKg: number; actualKg: number };
+      rows: Array<{
+        day: string;
+        slips: number;
+        containers: number;
+        estKg: number;
+        actualKg: number;
+      }>;
+    }>("/reports/pack-throughput", { query: { days } }),
+
   // Sync
   syncInfo: () =>
     fetcher<{ entities: string[]; serverTime: string; appendOnly: string[] }>("/sync/info"),
@@ -3324,6 +3689,162 @@ export const api = {
   cancelPackingSlip: (id: string) =>
     fetcher<PackingSlipRow>(`/packing-slips/${id}/cancel`, { method: "POST", body: {} }),
 
+  // ----- Multi-container packing -----
+  // CRUD endpoints for the per-slip containers (box / bag / carton /
+  // sack). The packer creates one container per physical unit, allocates
+  // qty into it, optionally records an actual scale reading, and then
+  // seals it. Once every packed unit is allocated to a sealed container
+  // the slip can be /pack'd.
+  containerTypes: () =>
+    fetcher<ContainerTypeRow[]>("/settings/container-types"),
+  containerKinds: () =>
+    fetcher<readonly ContainerKind[]>("/settings/container-kinds"),
+  createContainerType: (body: {
+    code: string;
+    name: string;
+    kind: ContainerKind;
+    tareKg?: number;
+    maxKg?: number | null;
+    active?: boolean;
+    sortOrder?: number;
+  }) =>
+    fetcher<ContainerTypeRow>("/settings/container-types", {
+      method: "POST",
+      body,
+    }),
+  updateContainerType: (
+    id: string,
+    body: Partial<{
+      code: string;
+      name: string;
+      kind: ContainerKind;
+      tareKg: number;
+      maxKg: number | null;
+      active: boolean;
+      sortOrder: number;
+    }>
+  ) =>
+    fetcher<ContainerTypeRow>(`/settings/container-types/${id}`, {
+      method: "PATCH",
+      body,
+    }),
+  deleteContainerType: (id: string) =>
+    fetcher<{ ok: true }>(`/settings/container-types/${id}`, {
+      method: "DELETE",
+    }),
+
+  packingContainers: (slipId: string) =>
+    fetcher<PackingContainerRow[]>(`/packing-slips/${slipId}/containers`),
+  createPackingContainer: (
+    slipId: string,
+    body: { containerTypeId?: string | null; notes?: string | null } = {}
+  ) =>
+    fetcher<PackingContainerRow>(`/packing-slips/${slipId}/containers`, {
+      method: "POST",
+      body,
+    }),
+  updatePackingContainer: (
+    slipId: string,
+    containerId: string,
+    body: Partial<{
+      containerTypeId: string | null;
+      notes: string | null;
+      tareKgOverride: number | null;
+      actualWeightKg: number | null;
+    }>
+  ) =>
+    fetcher<PackingContainerRow>(
+      `/packing-slips/${slipId}/containers/${containerId}`,
+      { method: "PATCH", body }
+    ),
+  deletePackingContainer: (slipId: string, containerId: string) =>
+    fetcher<{ ok: true }>(
+      `/packing-slips/${slipId}/containers/${containerId}`,
+      { method: "DELETE" }
+    ),
+  addPackingContainerItem: (
+    slipId: string,
+    containerId: string,
+    body: { packingSlipItemId: string; qty: number }
+  ) =>
+    fetcher<PackingContainerRow>(
+      `/packing-slips/${slipId}/containers/${containerId}/items`,
+      { method: "POST", body }
+    ),
+  updatePackingContainerItem: (
+    slipId: string,
+    containerId: string,
+    itemId: string,
+    body: { qty: number }
+  ) =>
+    fetcher<PackingContainerRow>(
+      `/packing-slips/${slipId}/containers/${containerId}/items/${itemId}`,
+      { method: "PATCH", body }
+    ),
+  deletePackingContainerItem: (
+    slipId: string,
+    containerId: string,
+    itemId: string
+  ) =>
+    fetcher<PackingContainerRow>(
+      `/packing-slips/${slipId}/containers/${containerId}/items/${itemId}`,
+      { method: "DELETE" }
+    ),
+  sealPackingContainer: (
+    slipId: string,
+    containerId: string,
+    body: { actualWeightKg?: number | null } = {}
+  ) =>
+    fetcher<PackingContainerRow>(
+      `/packing-slips/${slipId}/containers/${containerId}/seal`,
+      { method: "POST", body }
+    ),
+  unsealPackingContainer: (slipId: string, containerId: string) =>
+    fetcher<PackingContainerRow>(
+      `/packing-slips/${slipId}/containers/${containerId}/unseal`,
+      { method: "POST", body: {} }
+    ),
+  // Dispatch scan-out: resolve a C.<slipNo>.<NN> sticker to the
+  // container + its slip + linked dispatch / trip. Used by the
+  // loader's mobile UI to confirm the container is on the right truck.
+  scanContainerCode: (code: string) =>
+    fetcher<{
+      code: string;
+      container: PackingContainerRow;
+      packingSlip: {
+        id: string;
+        packingSlipNo: string;
+        status: PackingSlipStatus;
+        totalEstWeightKg: number;
+        totalActualWeightKg: number | null;
+        containerCount: number;
+      };
+      salesOrder?: {
+        id: string;
+        soNo: string;
+        customer?: { id: string; name: string; city?: string | null };
+      } | null;
+      invoice?: {
+        id: string;
+        invoiceNo: string;
+        dispatches?: {
+          id: string;
+          dispatchNo: string;
+          status: string;
+          weightKg: number;
+          vehicle?: string | null;
+          driver?: string | null;
+          trip?: {
+            id: string;
+            tripNo: string;
+            scheduledDate: string;
+            vehicle: string;
+            driver: string;
+          } | null;
+        }[];
+      } | null;
+    }>("/packing-containers/scan", { method: "POST", body: { code } }),
+
   // Static catalogue of supported couriers (Shiprocket mock + a few
   // real Indian carriers). Used by CourierPicker on the Billing
   // detail screen for ecommerce invoices.
@@ -3346,6 +3867,22 @@ export const api = {
       `/packing-slips/${packingSlipId}/confirm-delivery`,
       { method: "POST", body: {} }
     ),
+
+  // Recompute a dispatch's weight from the linked packing-slip
+  // container rollup. Surfaced on the trip detail screen so the
+  // operator can refresh after a packer corrects an actual weight
+  // post-pack. Returns the updated dispatch + previousWeightKg /
+  // derivedWeightKg so the UI can show "26.4 → 27.1 kg" briefly.
+  recomputeDispatchWeight: (dispatchId: string) =>
+    fetcher<{
+      id: string;
+      weightKg: number;
+      previousWeightKg: number;
+      derivedWeightKg: number;
+    }>(`/dispatches/${dispatchId}/recompute-weight`, {
+      method: "POST",
+      body: {},
+    }),
 
   // Pricing: price lists
   priceLists: () => fetcher<PriceListRow[]>("/price-lists"),

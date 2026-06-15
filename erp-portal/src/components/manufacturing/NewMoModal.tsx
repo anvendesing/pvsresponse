@@ -36,32 +36,31 @@ const isoDate = (offsetDays: number): string => {
 export const NewMoModal = ({ boms, onClose, onCreated }: Props) => {
   const activeBoms = useMemo(() => boms.filter((b) => b.active), [boms]);
   const [bomId, setBomId] = useState<string>(activeBoms[0]?.id ?? "");
-  // Station / machine ids - empty string means "no preselection".
-  // These map to free-text station/machine on the wire (we send the
-  // resolved name so the WO list keeps reading like before).
-  const [workCenterId, setWorkCenterId] = useState<string>("");
-  const [machineId, setMachineId] = useState<string>("");
+  // Facility is required; line is optional (supervisor can assign later).
+  const [facilityId, setFacilityId] = useState<string>("");
+  const [lineId, setLineId] = useState<string>("");
+  const [showLineExpander, setShowLineExpander] = useState(false);
   const [plannedQty, setPlannedQty] = useState(100);
   const [startDate, setStartDate] = useState(isoDate(0));
   const [dueDate, setDueDate] = useState(isoDate(3));
 
-  const workCentersResp = useApi(() => api.workCenters({ active: true }), []);
-  const machinesResp = useApi(() => api.machines({ active: true }), []);
-  const workCenters =
-    (workCentersResp.data as Array<{
+  const facilitiesResp = useApi(() => api.productionFacilities({ active: true }), []);
+  const linesResp = useApi(() => api.productionLines({ active: true }), []);
+  const facilities =
+    (facilitiesResp.data as Array<{
       id: string;
       code: string;
       name: string;
     }> | null) ?? [];
-  const machines =
-    (machinesResp.data as Array<{
+  const allLines =
+    (linesResp.data as Array<{
       id: string;
       code: string;
       name: string;
-      workCenterId: string;
+      facilityId: string;
     }> | null) ?? [];
-  const machinesForWC = workCenterId
-    ? machines.filter((m) => m.workCenterId === workCenterId)
+  const linesForFacility = facilityId
+    ? allLines.filter((l) => l.facilityId === facilityId)
     : [];
 
   const [leaves, setLeaves] = useState<BomLeafRow[]>([]);
@@ -72,24 +71,21 @@ export const NewMoModal = ({ boms, onClose, onCreated }: Props) => {
 
   const selectedBom = activeBoms.find((b) => b.id === bomId);
 
-  // Whenever the user picks a different BOM (or once master data
-  // arrives), seed the work-center / machine selectors from the BOM's
-  // declared defaults. Operators can still change either one for this
-  // particular order without touching the BOM.
+  // Seed facility/line from the BOM's declared defaults when BOM changes.
   useEffect(() => {
     if (!selectedBom) return;
-    setWorkCenterId(selectedBom.defaultWorkCenterId ?? "");
-    setMachineId(selectedBom.defaultMachineId ?? "");
-  }, [selectedBom?.id, selectedBom?.defaultWorkCenterId, selectedBom?.defaultMachineId]);
+    setFacilityId(selectedBom.defaultFacilityId ?? "");
+    setLineId(selectedBom.defaultLineId ?? "");
+  }, [selectedBom?.id, selectedBom?.defaultFacilityId, selectedBom?.defaultLineId]);
 
-  // Clear machine if the chosen WC no longer hosts it.
+  // Clear line if it no longer belongs to the chosen facility.
   useEffect(() => {
-    if (!machineId) return;
-    const m = machines.find((x) => x.id === machineId);
-    if (workCenterId && m && m.workCenterId !== workCenterId) {
-      setMachineId("");
+    if (!lineId || !facilityId) return;
+    const l = allLines.find((x) => x.id === lineId);
+    if (l && l.facilityId !== facilityId) {
+      setLineId("");
     }
-  }, [workCenterId, machineId, machines]);
+  }, [facilityId, lineId, allLines]);
 
   // Live explosion + shortage check whenever bom or qty change.
   useEffect(() => {
@@ -132,19 +128,15 @@ export const NewMoModal = ({ boms, onClose, onCreated }: Props) => {
 
   const submit = async () => {
     if (!bomId) return setError("Pick a BOM.");
+    if (!facilityId) return setError("Pick a production facility.");
     if (plannedQty <= 0) return setError("Planned qty must be > 0.");
     setBusy(true);
     setError(null);
-    // Resolve picker ids -> names for the wire payload. The backend
-    // accepts either; sending names keeps existing screens (work order
-    // list, scheduler) rendering the same.
-    const wc = workCenters.find((w) => w.id === workCenterId);
-    const mc = machines.find((m) => m.id === machineId);
     try {
       const created = (await api.createProductionOrder({
         bomId,
-        station: wc?.name,
-        machine: mc?.name,
+        facilityId,
+        lineId: lineId || undefined,
         plannedQty,
         startDate,
         dueDate,
@@ -252,55 +244,64 @@ export const NewMoModal = ({ boms, onClose, onCreated }: Props) => {
           <div className="grid grid-cols-12 gap-3">
             <div className="col-span-4">
               <div className="text-caption text-ink-muted uppercase font-semibold mb-1 flex items-center gap-2">
-                <span>Work center</span>
-                {selectedBom?.defaultWorkCenter && (
+                <span>Facility</span>
+                {selectedBom?.defaultFacility && (
                   <Chip size="sm" tone="info">
                     BOM default
                   </Chip>
                 )}
               </div>
               <select
-                value={workCenterId}
-                onChange={(e) => setWorkCenterId(e.target.value)}
+                value={facilityId}
+                onChange={(e) => { setFacilityId(e.target.value); setLineId(""); }}
                 className="h-10 w-full bg-white border border-border rounded-md px-3 text-body outline-none focus:border-primary"
               >
-                <option value="">— Pick a line —</option>
-                {workCenters.map((wc) => (
-                  <option key={wc.id} value={wc.id}>
-                    {wc.code} · {wc.name}
+                <option value="">— Pick a facility —</option>
+                {facilities.map((f) => (
+                  <option key={f.id} value={f.id}>
+                    {f.code} · {f.name}
                   </option>
                 ))}
               </select>
-              {workCenters.length === 0 && (
+              {facilities.length === 0 && (
                 <div className="text-caption text-ink-muted mt-1">
-                  No work centers yet. Add them in Settings &raquo; Production lines.
+                  No facilities yet. Add them in Settings &raquo; Production facilities.
                 </div>
               )}
             </div>
             <div className="col-span-4">
               <div className="text-caption text-ink-muted uppercase font-semibold mb-1 flex items-center gap-2">
-                <span>Machine</span>
-                {selectedBom?.defaultMachine && (
-                  <Chip size="sm" tone="info">
-                    BOM default
-                  </Chip>
+                <span>Production line</span>
+                <Chip size="sm" tone="neutral">optional</Chip>
+                {selectedBom?.defaultLine && (
+                  <Chip size="sm" tone="info">BOM default</Chip>
                 )}
               </div>
-              <select
-                value={machineId}
-                onChange={(e) => setMachineId(e.target.value)}
-                disabled={!workCenterId}
-                className="h-10 w-full bg-white border border-border rounded-md px-3 text-body outline-none focus:border-primary disabled:bg-canvas disabled:text-ink-muted"
-              >
-                <option value="">
-                  {workCenterId ? "— Any on this line —" : "— Pick a line first —"}
-                </option>
-                {machinesForWC.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.code} · {m.name}
+              {showLineExpander || facilityId ? (
+                <select
+                  value={lineId}
+                  onChange={(e) => setLineId(e.target.value)}
+                  disabled={!facilityId}
+                  className="h-10 w-full bg-white border border-border rounded-md px-3 text-body outline-none focus:border-primary disabled:bg-canvas disabled:text-ink-muted"
+                >
+                  <option value="">
+                    {facilityId ? "— Assign later —" : "— Pick a facility first —"}
                   </option>
-                ))}
-              </select>
+                  {linesForFacility.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.code} · {l.name}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setShowLineExpander(true)}
+                  className="h-10 w-full text-left px-3 text-body-sm text-primary border border-dashed border-primary/30 rounded-md hover:border-primary/60"
+                >
+                  + Set initial line (optional)
+                </button>
+              )}
             </div>
             <div className="col-span-2">
               <div className="text-caption text-ink-muted uppercase font-semibold mb-1">

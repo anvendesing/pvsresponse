@@ -100,6 +100,7 @@ export const CommandPalette = ({ open, onClose }: Props) => {
         { id: "go-tx", title: "Go to Transport", path: "/transport", icon: <Truck size={16} />, tabId: "transport" },
         { id: "go-billing", title: "Go to Billing", path: "/billing", icon: <Receipt size={16} />, tabId: "billing" },
         { id: "go-reports", title: "Go to Reports", path: "/reports", icon: <BarChart3 size={16} />, tabId: "reports" },
+        { id: "go-container-reports", title: "Go to Container reports", path: "/reports/containers", icon: <Boxes size={16} />, tabId: "container-reports" },
         { id: "go-approvals", title: "Go to Approvals", path: "/approvals", icon: <ClipboardList size={16} />, tabId: "approvals" },
         { id: "go-settings", title: "Go to Settings", path: "/settings", icon: <Settings size={16} />, tabId: "settings" },
         {
@@ -179,12 +180,23 @@ export const CommandPalette = ({ open, onClose }: Props) => {
     if (!q) return [];
     const out: CmdItem[] = [];
     for (const p of products) {
-      if (p.name.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q) || p.barcode.includes(q)) {
+      const variantHit = (p.variants ?? []).find(
+        (v) =>
+          v.sku.toLowerCase().includes(q) ||
+          (v.barcode ?? "").toLowerCase().includes(q)
+      );
+      if (
+        p.name.toLowerCase().includes(q) ||
+        p.sku.toLowerCase().includes(q) ||
+        p.barcode.toLowerCase().includes(q) ||
+        variantHit
+      ) {
+        const code = variantHit?.barcode?.trim() || variantHit?.sku || p.barcode || p.sku;
         out.push({
-          id: `p-${p.id}`,
+          id: `p-${p.id}${variantHit ? `-${variantHit.id}` : ""}`,
           group: "Products",
-          title: `${p.sku} — ${p.name}`,
-          hint: p.barcode,
+          title: `${code} — ${p.name}${variantHit ? ` · ${[variantHit.size, variantHit.color, variantHit.grade].filter(Boolean).join(" · ")}` : ""}`,
+          hint: variantHit?.barcode ?? p.barcode,
           icon: <Package size={16} />,
           action: () => {
             openTab({ id: "products", title: "Products", path: "/products" });

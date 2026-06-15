@@ -50,6 +50,7 @@ const NAV_ROLES: Record<string, string[]> = {
   transport:     ["admin", "supervisor", "warehouse"],
   billing:       ["admin", "billing"],
   reports:       ["admin", "supervisor", "billing", "procurement"],
+  "container-reports": ["admin", "supervisor", "billing", "warehouse"],
 };
 
 const BOTTOM_ROLES: Record<string, string[]> = {
@@ -87,6 +88,7 @@ const ALL_ITEMS = [
   { id: "transport", label: "Transport", icon: Truck, path: "/transport" },
   { id: "billing", label: "Billing", icon: Receipt, path: "/billing" },
   { id: "reports", label: "Reports", icon: BarChart3, path: "/reports" },
+  { id: "container-reports", label: "Containers", icon: Boxes, path: "/reports/containers" },
   { id: "warehouse-audit", label: "WH Audit", icon: ShieldAlert, path: "/warehouse-audit" },
 ];
 

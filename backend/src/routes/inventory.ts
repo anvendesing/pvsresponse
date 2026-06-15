@@ -3,6 +3,7 @@ import { z } from "zod";
 import { db } from "../db.js";
 import { recordChange } from "../sync/log.js";
 import { checkStockRules } from "../lib/stock-rules.js";
+import { productMatchesQuery, normalizeSearchTerm } from "../lib/text-search.js";
 
 const transferSchema = z.object({
   productId: z.string(),
@@ -56,19 +57,8 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
   // GET /inventory/locations?q= — find products/variants and every bin holding stock
   app.get("/inventory/locations", { preHandler: [app.authenticate] }, async (req) => {
     const q = ((req.query as Record<string, string>).q ?? "").trim();
-    // Empty query = return all products that have bin stock
-    const where = q.length > 0 ? {
-      OR: [
-        { sku: { contains: q } },
-        { name: { contains: q } },
-        { barcode: { contains: q } },
-        { variants: { some: { sku: { contains: q } } } },
-        { variants: { some: { barcode: { contains: q } } } },
-      ],
-    } : {};
-    const products = await db.product.findMany({
-      where,
-      take: 100,
+    const needle = normalizeSearchTerm(q);
+    const allProducts = await db.product.findMany({
       orderBy: { sku: "asc" },
       select: {
         id: true,
@@ -76,6 +66,7 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
         name: true,
         uom: true,
         stockOnHand: true,
+        barcode: true,
         variants: {
           select: {
             id: true,
@@ -89,6 +80,10 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
         },
       },
     });
+    const products =
+      needle.length > 0
+        ? allProducts.filter((p) => productMatchesQuery(p, needle)).slice(0, 100)
+        : allProducts.slice(0, 100);
 
     const productIds = products.map((p) => p.id);
     const allBins =

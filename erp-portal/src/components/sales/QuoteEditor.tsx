@@ -18,8 +18,11 @@ import {
   type QuoteRow,
 } from "@/lib/api";
 import type { Product, ProductVariant } from "@/data/types";
+import { effectiveUom } from "@/data/types";
 import { inr, dd } from "@/lib/format";
 import { cn } from "@/lib/cn";
+import { formatScanRef, primaryScanCode } from "@/lib/scanCode";
+import { fmtKg, sumLinesWeightKg } from "@/lib/itemWeight";
 import { searchProductsForSale } from "@/lib/productSearch";
 import { RevisionHistory } from "./RevisionHistory";
 import { ShareQuoteMenu } from "./ShareQuoteMenu";
@@ -49,6 +52,7 @@ interface Line {
   productId: string;
   variantId: string | null;
   sku: string;
+  barcode: string | null;
   name: string;
   uom: string;
   attributes: string;
@@ -78,10 +82,14 @@ const linesFromQuote = (q: QuoteRow): Line[] =>
     productId: it.productId,
     variantId: it.variantId ?? null,
     sku: it.variant?.sku ?? it.product?.sku ?? "—",
+    barcode: it.variant?.barcode ?? it.product?.barcode ?? null,
     name: it.product?.name ?? "—",
     // Variant UoM (the selling unit) wins over parent UoM (the bulk unit)
     // so quotes/invoices are denominated in the unit the customer buys.
-    uom: (it.variant?.uom ?? "").trim() || it.product?.uom || "Nos",
+    uom: effectiveUom(
+      { uom: it.product?.uom },
+      it.variant as ProductVariant | null
+    ) || "Nos",
     attributes: it.variant ? variantLabel(it.variant as ProductVariant) : "",
     qty: it.qty,
     rate: it.rate,
@@ -224,6 +232,14 @@ export const QuoteEditor = ({
   );
   const total = subTotal + tax + transportCharge + transportTax;
 
+  // Estimated shipping weight chip — live-derived from current lines
+  // so the value updates as the user edits qty / picks a variant.
+  // Matches the backend's recomputeQuoteWeight() formula.
+  const totalWeightKg = useMemo(() => {
+    const map = new Map((products ?? []).map((p) => [p.id, p]));
+    return sumLinesWeightKg(lines, map);
+  }, [lines, products]);
+
   const dispatchOptionsByCategory = useMemo(() => {
     const map = new Map<string, DispatchOptionRow[]>();
     for (const o of dispatchOptions) {
@@ -288,10 +304,11 @@ export const QuoteEditor = ({
       productId: p.id,
       variantId: v?.id ?? null,
       sku: v?.sku ?? p.sku,
+      barcode: v?.barcode ?? p.barcode ?? null,
       name: p.name,
       // Variant selling UoM takes priority; falls back to parent UoM when
       // the variant doesn't override (the "inherit" case).
-      uom: (v?.uom ?? "").trim() || p.uom,
+      uom: effectiveUom(p, v) || "Nos",
       attributes: v ? variantLabel(v) : "",
       qty: 1,
       rate: fallback,
@@ -894,7 +911,9 @@ export const QuoteEditor = ({
                       <div className="flex-1 min-w-0">
                         <div className="font-semibold truncate">{r.product.name}</div>
                         <div className="text-caption text-ink-muted font-mono truncate">
-                          {r.variant ? r.variant.sku : r.product.sku}
+                          {r.variant
+                            ? formatScanRef(r.variant)
+                            : formatScanRef(r.product)}
                           {r.variant && <span className="ml-2 text-ink">· {r.label}</span>}
                         </div>
                       </div>
@@ -958,7 +977,7 @@ export const QuoteEditor = ({
                           )}
                         </div>
                         <div className="text-caption text-ink-muted font-mono">
-                          {l.sku} · {l.uom}
+                          {primaryScanCode({ sku: l.sku, barcode: l.barcode })} · {l.uom}
                         </div>
                       </div>
                       <div className="col-span-1">
@@ -1046,6 +1065,7 @@ export const QuoteEditor = ({
                 </>
               )}
               <Row k="Total" v={inr(total)} big />
+              <Row k="Est. shipping weight" v={fmtKg(totalWeightKg)} />
             </div>
           </section>
         </div>

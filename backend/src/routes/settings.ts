@@ -13,6 +13,10 @@ import {
   DISPATCH_CATEGORIES,
   ensureDefaultDispatchOptions,
 } from "../lib/dispatch-options-seed.js";
+import {
+  CONTAINER_KINDS,
+  ensureDefaultContainerTypes,
+} from "../lib/container-types-seed.js";
 
 const SINGLETON_KEY = "default";
 
@@ -49,6 +53,12 @@ const profileInput = z.object({
   bankIfsc: z.string().max(20).nullable().optional(),
   bankBranch: z.string().max(200).nullable().optional(),
   upi: z.string().max(80).nullable().optional(),
+  // Manufacturing / fulfilment toggles. Kept on CompanyProfile to stay
+  // singleton — multi-container packing affects both desktop and mobile
+  // flows and a single switch keeps every device coherent.
+  requireMoReleaseBeforeIssue: z.boolean().optional(),
+  packMultiContainerEnabled: z.boolean().optional(),
+  packRequireSealConfirmation: z.boolean().optional(),
 });
 
 // Reasonable starter values. The UI shows these the very first time
@@ -237,6 +247,96 @@ export const settingsRoutes = async (app: FastifyInstance) => {
       }
       await db.dispatchOption.delete({ where: { id } });
       await recordChange("DispatchOption", id, "delete", { id }, req.user.sub);
+      return { ok: true };
+    }
+  );
+
+  // -- Container types (admin CRUD) -----------------------------------------
+  // Drives the picker on every "Add container" action in the desktop
+  // Packing Slip editor and the mobile MobilePack screen. Lazy-seeded
+  // with sensible defaults on first read.
+  const containerKindSchema = z.enum(CONTAINER_KINDS);
+  const containerTypeInput = z.object({
+    code: z
+      .string()
+      .min(1)
+      .max(32)
+      .regex(/^[A-Z0-9_-]+$/, "Use uppercase letters, digits, hyphens or underscores"),
+    name: z.string().min(1).max(120),
+    kind: containerKindSchema,
+    tareKg: z.number().min(0).max(500).default(0),
+    maxKg: z.number().positive().max(2000).nullable().optional(),
+    active: z.boolean().default(true),
+    sortOrder: z.number().int().default(100),
+  });
+  const containerTypeUpdate = containerTypeInput.partial();
+
+  app.get(
+    "/settings/container-types",
+    { preHandler: [app.authenticate] },
+    async () => {
+      await ensureDefaultContainerTypes(db);
+      return db.containerType.findMany({
+        orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+      });
+    }
+  );
+
+  app.get(
+    "/settings/container-kinds",
+    { preHandler: [app.authenticate] },
+    async () => CONTAINER_KINDS
+  );
+
+  app.post(
+    "/settings/container-types",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      if (req.user.role !== "admin" && req.user.role !== "supervisor") {
+        return reply.code(403).send({ error: { code: "forbidden" } });
+      }
+      const body = containerTypeInput.parse(req.body);
+      const created = await db.containerType.create({ data: body });
+      await recordChange("ContainerType", created.id, "insert", created, req.user.sub);
+      return created;
+    }
+  );
+
+  app.patch(
+    "/settings/container-types/:id",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      if (req.user.role !== "admin" && req.user.role !== "supervisor") {
+        return reply.code(403).send({ error: { code: "forbidden" } });
+      }
+      const { id } = req.params as { id: string };
+      const body = containerTypeUpdate.parse(req.body);
+      const updated = await db.containerType.update({ where: { id }, data: body });
+      await recordChange("ContainerType", id, "update", updated, req.user.sub);
+      return updated;
+    }
+  );
+
+  app.delete(
+    "/settings/container-types/:id",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      if (req.user.role !== "admin" && req.user.role !== "supervisor") {
+        return reply.code(403).send({ error: { code: "forbidden" } });
+      }
+      const { id } = req.params as { id: string };
+      const inUse = await db.packingContainer.count({ where: { containerTypeId: id } });
+      if (inUse > 0) {
+        return reply.code(409).send({
+          error: {
+            code: "in_use",
+            message:
+              "Container type is referenced by packing slips. Deactivate instead.",
+          },
+        });
+      }
+      await db.containerType.delete({ where: { id } });
+      await recordChange("ContainerType", id, "delete", { id }, req.user.sub);
       return { ok: true };
     }
   );

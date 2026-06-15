@@ -10,6 +10,7 @@ import { useParams, useSearchParams } from "react-router-dom";
 import { Printer } from "lucide-react";
 import { api, type PickListRow, type PublicCompany } from "@/lib/api";
 import { useBrand } from "@/hooks/useBrand";
+import { primaryScanCode } from "@/lib/scanCode";
 
 const fmt = (d?: string | Date | null) => {
   if (!d) return "—";
@@ -223,7 +224,9 @@ export const PrintPickList = () => {
                           {it.product?.name}
                         </div>
                         <div className="text-xs text-gray-500 font-mono">
-                          {it.variant?.sku ?? it.product?.sku}
+                          {it.variant
+                            ? primaryScanCode(it.variant)
+                            : primaryScanCode(it.product ?? { sku: "—", barcode: null })}
                           {variantAttrs(it.variant) && (
                             <span> · {variantAttrs(it.variant)}</span>
                           )}

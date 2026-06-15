@@ -1,25 +1,26 @@
 // Location code encoder/decoder for the warehouse mobile flows.
 //
 // Codes are deterministic and round-trip with the three flat columns
-// on the Bin model (zone, shelf, bin) plus the parent Warehouse.code.
-// We intentionally avoid introducing separate Zone/Shelf entities -
-// the existing schema treats them as labels and any nesting is
-// implicit via the unique key on Bin.
+// on the Bin model (zone, shelf, bin) plus the parent Warehouse.
 //
-// Format (separator is "." because Warehouse.code legitimately
-// contains hyphens, e.g. "WH-MAIN"):
+// Two bin formats:
+//
+// **Compact** (when Warehouse.scanPrefix is set, e.g. WSP):
+//   WSP.AS05.11   → zone A, shelf S05, bin 11
+//   Merges zone + shelf into one segment so the barcode stays short.
+//
+// **Legacy** (full warehouse code):
+//   B.WH-PROD-SOAP.A.S05.11
 //   Z.<warehouse>.<zone>
 //   S.<warehouse>.<zone>.<shelf>
-//   B.<warehouse>.<zone>.<shelf>.<bin>
 //
-// Segments are uppercased and trimmed; warehouse codes may contain
-// hyphens; zone/shelf/bin labels are restricted to A-Z, 0-9
-// and underscore so the parser stays unambiguous.
+// Segments are uppercased; zone/shelf/bin labels are A-Z, 0-9, underscore.
 
 export type LocationKind = "zone" | "shelf" | "bin";
 
 export interface LocationCode {
   kind: LocationKind;
+  /** Full warehouse code after resolution, or scan prefix before lookup. */
   warehouseCode: string;
   zone: string;
   shelf?: string;
@@ -28,6 +29,8 @@ export interface LocationCode {
 
 const LABEL_RE = /^[A-Z0-9_]+$/;
 const WAREHOUSE_RE = /^[A-Z0-9_-]+$/;
+/** 2–4 char alias used in compact bin codes (no dots or hyphens). */
+const SCAN_PREFIX_RE = /^[A-Z0-9]{2,4}$/;
 
 const norm = (s: string) => s.trim().toUpperCase();
 
@@ -53,6 +56,28 @@ const validateWarehouse = (value: string) => {
       `warehouse code may only contain A-Z, 0-9, underscore and hyphen`
     );
   }
+};
+
+const validateScanPrefix = (value: string) => {
+  if (!SCAN_PREFIX_RE.test(value)) {
+    throw new Error(
+      `scan prefix must be 2–4 characters (A-Z, 0-9), got "${value}"`
+    );
+  }
+};
+
+export type WarehouseCodeInput =
+  | string
+  | { code: string; scanPrefix?: string | null };
+
+const warehouseParts = (warehouse: WarehouseCodeInput) => {
+  if (typeof warehouse === "string") {
+    return { code: warehouse, scanPrefix: null as string | null };
+  }
+  return {
+    code: warehouse.code,
+    scanPrefix: warehouse.scanPrefix?.trim() || null,
+  };
 };
 
 export const encodeZone = (warehouseCode: string, zone: string) => {
@@ -94,48 +119,115 @@ export const encodeBin = (
   return `B.${wh}.${z}.${s}.${b}`;
 };
 
-// Parse any of the three prefixed forms. Returns null if the string
-// doesn't look like a location code; callers can then fall through to
-// SKU/barcode resolution. Never throws on shape - operators may scan
-// arbitrary product barcodes through the same endpoint.
+/** Compact bin code: WSP.AS05.11 (zone + shelf merged after prefix). */
+export const encodeBinCompact = (
+  scanPrefix: string,
+  zone: string,
+  shelf: string,
+  bin: string
+) => {
+  const p = norm(scanPrefix);
+  const z = norm(zone);
+  const s = norm(shelf);
+  const b = norm(bin);
+  validateScanPrefix(p);
+  validateLabel("zone", z);
+  validateLabel("shelf", s);
+  validateLabel("bin", b);
+  return `${p}.${z}${s}.${b}`;
+};
+
+// Parse location codes. Returns null if the string doesn't match any
+// known shape — callers fall through to Bin.code lookup or SKU/barcode.
 export const decodeLocation = (raw: string): LocationCode | null => {
   if (!raw) return null;
   const code = raw.trim().toUpperCase();
   const parts = code.split(".");
+  if (parts.length < 2) return null;
+
+  const [prefix, ...rest] = parts;
+
+  // -------- Compact bin: WSP.AS05.11 (3 parts)
+  if (
+    parts.length === 3 &&
+    SCAN_PREFIX_RE.test(prefix) &&
+    LABEL_RE.test(rest[0]!) &&
+    LABEL_RE.test(rest[1]!)
+  ) {
+    const locSeg = rest[0]!;
+    const binSeg = rest[1]!;
+    if (locSeg.length < 2) return null;
+    const zone = locSeg[0]!;
+    const shelf = locSeg.slice(1);
+    if (!LABEL_RE.test(zone) || !LABEL_RE.test(shelf)) return null;
+    return {
+      kind: "bin",
+      warehouseCode: prefix,
+      zone,
+      shelf,
+      bin: binSeg,
+    };
+  }
+
+  // -------- Compact bin (explicit zone): WSP.A.S05.11 (4 parts)
+  if (
+    parts.length === 4 &&
+    SCAN_PREFIX_RE.test(prefix) &&
+    rest.every((p) => p && LABEL_RE.test(p))
+  ) {
+    return {
+      kind: "bin",
+      warehouseCode: prefix,
+      zone: rest[0]!,
+      shelf: rest[1]!,
+      bin: rest[2]!,
+    };
+  }
+
+  // -------- Legacy prefixed forms
   if (parts.length < 3) return null;
-  const [prefix, warehouseCode, ...rest] = parts;
+  const warehouseCode = rest[0];
   if (!warehouseCode || !WAREHOUSE_RE.test(warehouseCode)) return null;
-  for (const p of rest) if (!p || !LABEL_RE.test(p)) return null;
+  const tail = rest.slice(1);
+  for (const p of tail) if (!p || !LABEL_RE.test(p)) return null;
+
   switch (prefix) {
     case "Z":
-      if (rest.length !== 1) return null;
-      return { kind: "zone", warehouseCode, zone: rest[0] };
+      if (tail.length !== 1) return null;
+      return { kind: "zone", warehouseCode, zone: tail[0]! };
     case "S":
-      if (rest.length !== 2) return null;
+      if (tail.length !== 2) return null;
       return {
         kind: "shelf",
         warehouseCode,
-        zone: rest[0],
-        shelf: rest[1],
+        zone: tail[0]!,
+        shelf: tail[1]!,
       };
     case "B":
-      if (rest.length !== 3) return null;
+      if (tail.length !== 3) return null;
       return {
         kind: "bin",
         warehouseCode,
-        zone: rest[0],
-        shelf: rest[1],
-        bin: rest[2],
+        zone: tail[0]!,
+        shelf: tail[1]!,
+        bin: tail[2]!,
       };
     default:
       return null;
   }
 };
 
-// Look up a Bin's printable code from its row, given the parent
-// Warehouse.code. Pure helper; doesn't touch the DB.
+/** True when the segment is a compact scan prefix (not a full WH code). */
+export const isScanPrefixSegment = (segment: string): boolean =>
+  SCAN_PREFIX_RE.test(norm(segment));
+
 export const binCodeFromRow = (
   bin: { zone: string; shelf: string; bin: string },
-  warehouseCode: string
-): string =>
-  encodeBin(warehouseCode, bin.zone, bin.shelf, bin.bin);
+  warehouse: WarehouseCodeInput
+): string => {
+  const { code: whCode, scanPrefix } = warehouseParts(warehouse);
+  if (scanPrefix) {
+    return encodeBinCompact(scanPrefix, bin.zone, bin.shelf, bin.bin);
+  }
+  return encodeBin(whCode, bin.zone, bin.shelf, bin.bin);
+};

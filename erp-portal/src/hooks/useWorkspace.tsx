@@ -57,6 +57,7 @@ const ROUTE_TABS: Record<string, Omit<WorkspaceTab, "pinned">> = {
   "/transport":     { id: "transport",     title: "Transport",     path: "/transport",     icon: "Truck" },
   "/billing":       { id: "billing",       title: "Billing",       path: "/billing",       icon: "Receipt" },
   "/reports":       { id: "reports",       title: "Reports",       path: "/reports",       icon: "BarChart3" },
+  "/reports/containers": { id: "container-reports", title: "Containers", path: "/reports/containers", icon: "Boxes" },
   "/approvals":     { id: "approvals",     title: "Approvals",     path: "/approvals",     icon: "ClipboardList" },
   "/settings":      { id: "settings",      title: "Settings",      path: "/settings",      icon: "Settings" },
 };

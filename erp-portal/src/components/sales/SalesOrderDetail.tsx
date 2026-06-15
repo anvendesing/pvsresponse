@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Chip } from "@/components/common/Chip";
+import { primaryScanCode } from "@/lib/scanCode";
 import {
   api,
   type PackingSlipRow,
@@ -31,6 +32,7 @@ import { dt, dd, inr } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { resolveBillingTotals } from "@/lib/billingTotals";
 import { BillingTotalsBreakdown } from "@/components/billing/BillingTotalsBreakdown";
+import { fmtKg } from "@/lib/itemWeight";
 import { PickListEditor } from "./PickListEditor";
 import { PackingSlipEditor } from "./PackingSlipEditor";
 import { ShareDocumentMenu } from "@/components/common/ShareDocumentMenu";
@@ -357,6 +359,11 @@ export const SalesOrderDetail = ({ salesOrderId, onClose, onChanged }: Props) =>
                           {inr(totals.grandTotal)}
                         </div>
                         <BillingTotalsBreakdown totals={totals} variant="inline" />
+                        {so.totalWeightKg != null && so.totalWeightKg > 0 && (
+                          <div className="text-caption text-ink-muted mt-0.5">
+                            Est. weight {fmtKg(so.totalWeightKg)}
+                          </div>
+                        )}
                       </>
                     );
                   })()}
@@ -471,7 +478,18 @@ export const SalesOrderDetail = ({ salesOrderId, onClose, onChanged }: Props) =>
                             {it.product?.name ?? it.productId}
                           </div>
                           <div className="text-caption text-ink-muted font-mono">
-                            {it.variant?.sku ?? it.product?.sku ?? "—"}
+                            {it.variant
+                              ? primaryScanCode(it.variant)
+                              : primaryScanCode(it.product ?? { sku: "—", barcode: null })}
+                            {it.variant &&
+                              (it.variant.size || it.variant.color || it.variant.grade) && (
+                                <span className="ml-2 text-ink-muted">
+                                  ·{" "}
+                                  {[it.variant.size, it.variant.color, it.variant.grade]
+                                    .filter(Boolean)
+                                    .join(" / ")}
+                                </span>
+                              )}
                           </div>
                         </div>
                         <div className="col-span-1 text-right tnum">{it.qtyOrdered}</div>

@@ -24,6 +24,7 @@ import {
   ScanLine,
   Shield,
   Smartphone,
+  Package as PackageIcon,
   Tags,
   Trash2,
   Truck,
@@ -50,6 +51,8 @@ import { useBrand } from "@/hooks/useBrand";
 import { UserManager } from "@/components/settings/UserManager";
 import { CategoryManager } from "@/components/settings/CategoryManager";
 import { DispatchOptionManager } from "@/components/settings/DispatchOptionManager";
+import { ContainerTypeManager } from "@/components/settings/ContainerTypeManager";
+import { PackingSettings } from "@/components/settings/PackingSettings";
 
 type SettingsSection = { id: string; label: string; icon: typeof Building };
 
@@ -69,7 +72,11 @@ const SECTION_GROUPS: { heading: string; sections: SettingsSection[] }[] = [
   },
   {
     heading: "Sales & fulfilment",
-    sections: [{ id: "dispatch", label: "Dispatch options", icon: Truck }],
+    sections: [
+      { id: "dispatch", label: "Dispatch options", icon: Truck },
+      { id: "packing", label: "Packing", icon: PackageIcon },
+      { id: "containerTypes", label: "Container types", icon: PackageIcon },
+    ],
   },
   {
     heading: "Catalog & access",
@@ -169,6 +176,8 @@ export const Settings = () => {
 
           {active === "categories" && <CategoryManager />}
           {active === "dispatch" && <DispatchOptionManager />}
+          {active === "packing" && <PackingSettings />}
+          {active === "containerTypes" && <ContainerTypeManager />}
 
           {active === "users" && <UserManager />}
 
@@ -1536,16 +1545,15 @@ const WarehouseManager = () => {
 };
 
 // =====================================================================
-// Production master data: WorkCenters + Machines
+// Production master data: Facilities → Lines → Machines
 // =====================================================================
 //
-// Two stacked cards. WorkCenters represent production lines / cells /
-// stations. Machines belong to a work center and track operational
-// status. The "station" / "machine" free-text fields on existing BOMs
-// and work orders still work; pickers in those forms will be wired
-// to these masters in a follow-up so historical rows aren't disturbed.
+// Three stacked cards with progressive selection:
+//   FacilitiesCard  – always visible; click a row to select it
+//   LinesCard       – appears when a facility is selected
+//   MachinesCard    – appears when a production line is selected
 
-interface WorkCenterRow {
+interface FacilityRow {
   id: string;
   code: string;
   name: string;
@@ -1554,43 +1562,54 @@ interface WorkCenterRow {
   productionLineWarehouseId: string | null;
   productionLineWarehouse: { id: string; code: string; name: string } | null;
   active: boolean;
-  machines: Array<{
-    id: string;
-    code: string;
-    name: string;
-    status: string;
-    active: boolean;
-  }>;
+  lines: ProductionLineRow[];
+}
+
+interface ProductionLineRow {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  facilityId: string;
+  facility: { id: string; code: string; name: string };
+  capacityPerHour: number | null;
+  active: boolean;
+  machines: MachineRow[];
 }
 
 interface MachineRow {
   id: string;
   code: string;
   name: string;
-  workCenterId: string;
-  workCenter: { id: string; code: string; name: string };
+  productionLineId: string;
+  productionLine: { id: string; code: string; name: string };
   status: string;
   description: string | null;
   active: boolean;
 }
 
 const ProductionMaster = () => {
-  const [workCenters, setWorkCenters] = useState<WorkCenterRow[]>([]);
+  const [facilities, setFacilities] = useState<FacilityRow[]>([]);
+  const [lines, setLines] = useState<ProductionLineRow[]>([]);
   const [machines, setMachines] = useState<MachineRow[]>([]);
   const [warehouses, setWarehouses] = useState<WarehouseRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selectedFacilityId, setSelectedFacilityId] = useState<string | null>(null);
+  const [selectedLineId, setSelectedLineId] = useState<string | null>(null);
 
   const reload = async () => {
     setLoading(true);
     setError(null);
     try {
-      const [wc, m, wh] = await Promise.all([
-        api.workCenters(),
+      const [fac, ln, m, wh] = await Promise.all([
+        api.productionFacilities(),
+        api.productionLines(),
         api.machines(),
         api.warehouses({ includeInactive: false }),
       ]);
-      setWorkCenters(wc as unknown as WorkCenterRow[]);
+      setFacilities(fac as unknown as FacilityRow[]);
+      setLines(ln as unknown as ProductionLineRow[]);
       setMachines(m as unknown as MachineRow[]);
       setWarehouses(wh);
     } catch (e) {
@@ -1603,6 +1622,9 @@ const ProductionMaster = () => {
     void reload();
   }, []);
 
+  const facilityLines = lines.filter((l) => l.facilityId === selectedFacilityId);
+  const lineMachines = machines.filter((m) => m.productionLineId === selectedLineId);
+
   return (
     <>
       {error && (
@@ -1610,33 +1632,54 @@ const ProductionMaster = () => {
           {error}
         </div>
       )}
-      <WorkCentersCard
-        rows={workCenters}
+      <FacilitiesCard
+        rows={facilities}
         warehouses={warehouses}
         loading={loading}
+        selectedId={selectedFacilityId}
+        onSelect={(id) => {
+          setSelectedFacilityId(id);
+          setSelectedLineId(null);
+        }}
         onChanged={reload}
       />
-      <MachinesCard
-        rows={machines}
-        workCenters={workCenters}
-        loading={loading}
-        onChanged={reload}
-      />
+      {selectedFacilityId && (
+        <LinesCard
+          rows={facilityLines}
+          facilityId={selectedFacilityId}
+          loading={loading}
+          selectedId={selectedLineId}
+          onSelect={setSelectedLineId}
+          onChanged={reload}
+        />
+      )}
+      {selectedLineId && (
+        <MachinesCard
+          rows={lineMachines}
+          lines={facilityLines}
+          loading={loading}
+          onChanged={reload}
+        />
+      )}
     </>
   );
 };
 
-// ----- WorkCenters --------------------------------------------------
+// ----- Facilities ---------------------------------------------------
 
-const WorkCentersCard = ({
+const FacilitiesCard = ({
   rows,
   warehouses,
   loading,
+  selectedId,
+  onSelect,
   onChanged,
 }: {
-  rows: WorkCenterRow[];
+  rows: FacilityRow[];
   warehouses: WarehouseRow[];
   loading: boolean;
+  selectedId: string | null;
+  onSelect: (id: string | null) => void;
   onChanged: () => void | Promise<void>;
 }) => {
   const [draft, setDraft] = useState<{
@@ -1657,7 +1700,7 @@ const WorkCentersCard = ({
   } | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const startEdit = (r: WorkCenterRow) => {
+  const startEdit = (r: FacilityRow) => {
     setEditId(r.id);
     setEditDraft({
       code: r.code,
@@ -1674,7 +1717,7 @@ const WorkCentersCard = ({
     if (!draft.code.trim() || !draft.name.trim()) return;
     setBusy(true);
     try {
-      await api.createWorkCenter({
+      await api.createProductionFacility({
         code: draft.code.trim(),
         name: draft.name.trim(),
         description: draft.description.trim() || null,
@@ -1695,7 +1738,7 @@ const WorkCentersCard = ({
     if (!editId || !editDraft) return;
     setBusy(true);
     try {
-      await api.updateWorkCenter(editId, {
+      await api.updateProductionFacility(editId, {
         code: editDraft.code.trim(),
         name: editDraft.name.trim(),
         description: editDraft.description.trim() || null,
@@ -1713,12 +1756,13 @@ const WorkCentersCard = ({
     }
   };
 
-  const remove = async (r: WorkCenterRow) => {
-    if (!confirm(`Delete work center "${r.code}"?`)) return;
+  const remove = async (r: FacilityRow) => {
+    if (!confirm(`Delete facility "${r.code}"?`)) return;
     setBusy(true);
     try {
-      const res = await api.deleteWorkCenter(r.id);
+      const res = await api.deleteProductionFacility(r.id);
       if (res.softDeleted && res.message) alert(res.message);
+      if (selectedId === r.id) onSelect(null);
       await onChanged();
     } catch (e) {
       alert((e as Error).message);
@@ -1729,8 +1773,8 @@ const WorkCentersCard = ({
 
   return (
     <Card
-      title="Work centers (production lines)"
-      subtitle="Stations, cells and lines where production happens"
+      title="Production facilities"
+      subtitle="Rooms or areas where production happens — each contains production lines"
       actions={
         !draft && (
           <Button
@@ -1741,7 +1785,7 @@ const WorkCentersCard = ({
             }
             disabled={busy}
           >
-            Add work center
+            Add facility
           </Button>
         )
       }
@@ -1755,7 +1799,7 @@ const WorkCentersCard = ({
               <th className="text-left px-3 py-2">Name</th>
               <th className="text-right px-3 py-2">Capacity / hr</th>
               <th className="text-left px-3 py-2">Prod. warehouse</th>
-              <th className="text-right px-3 py-2">Machines</th>
+              <th className="text-right px-3 py-2">Lines</th>
               <th className="text-center px-3 py-2">Status</th>
               <th className="text-right px-3 py-2 w-24"></th>
             </tr>
@@ -1767,7 +1811,7 @@ const WorkCentersCard = ({
                   <Input
                     size="sm"
                     autoFocus
-                    placeholder="WC-PACK-1"
+                    placeholder="FAC-SOAP"
                     value={draft.code}
                     onChange={(e) => setDraft({ ...draft, code: e.target.value })}
                   />
@@ -1775,7 +1819,7 @@ const WorkCentersCard = ({
                 <td className="px-3 py-2">
                   <Input
                     size="sm"
-                    placeholder="Packaging line 1"
+                    placeholder="Soap Room"
                     value={draft.name}
                     onChange={(e) => setDraft({ ...draft, name: e.target.value })}
                   />
@@ -1839,7 +1883,7 @@ const WorkCentersCard = ({
             {!loading && rows.length === 0 && !draft && (
               <tr>
                 <td colSpan={7} className="px-3 py-6 text-center text-ink-muted">
-                  No work centers yet. Click <strong>Add work center</strong> to start.
+                  No facilities yet. Click <strong>Add facility</strong> to start.
                 </td>
               </tr>
             )}
@@ -1894,7 +1938,7 @@ const WorkCentersCard = ({
                       </select>
                     </td>
                     <td className="px-3 py-2 text-right text-ink-muted">
-                      {r.machines.length}
+                      {r.lines.length}
                     </td>
                     <td className="px-3 py-2 text-center">
                       <label className="inline-flex items-center gap-1 cursor-pointer">
@@ -1933,8 +1977,15 @@ const WorkCentersCard = ({
                   </tr>
                 );
               }
+              const isSelected = selectedId === r.id;
               return (
-                <tr key={r.id} className="border-t border-border hover:bg-canvas/50">
+                <tr
+                  key={r.id}
+                  className={`border-t border-border cursor-pointer ${
+                    isSelected ? "bg-primary-50" : "hover:bg-canvas/50"
+                  }`}
+                  onClick={() => onSelect(isSelected ? null : r.id)}
+                >
                   <td className="px-3 py-2 font-mono text-caption text-primary">
                     {r.code}
                   </td>
@@ -1958,13 +2009,13 @@ const WorkCentersCard = ({
                       <span className="text-ink-muted text-caption">—</span>
                     )}
                   </td>
-                  <td className="px-3 py-2 text-right tnum">{r.machines.length}</td>
+                  <td className="px-3 py-2 text-right tnum">{r.lines.length}</td>
                   <td className="px-3 py-2 text-center">
                     <Chip size="sm" tone={r.active ? "success" : "neutral"}>
                       {r.active ? "active" : "inactive"}
                     </Chip>
                   </td>
-                  <td className="px-3 py-2 text-right">
+                  <td className="px-3 py-2 text-right" onClick={(e) => e.stopPropagation()}>
                     <div className="flex justify-end gap-1">
                       <button
                         onClick={() => startEdit(r)}
@@ -1991,23 +2042,334 @@ const WorkCentersCard = ({
   );
 };
 
-// ----- Machines -----------------------------------------------------
+// ----- Production Lines (nested under selected Facility) ------------
 
-const MachinesCard = ({
+const LinesCard = ({
   rows,
-  workCenters,
+  facilityId,
   loading,
+  selectedId,
+  onSelect,
   onChanged,
 }: {
-  rows: MachineRow[];
-  workCenters: WorkCenterRow[];
+  rows: ProductionLineRow[];
+  facilityId: string;
   loading: boolean;
+  selectedId: string | null;
+  onSelect: (id: string | null) => void;
   onChanged: () => void | Promise<void>;
 }) => {
   const [draft, setDraft] = useState<{
     code: string;
     name: string;
-    workCenterId: string;
+    capacity: string;
+    description: string;
+  } | null>(null);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<{
+    code: string;
+    name: string;
+    capacity: string;
+    description: string;
+    active: boolean;
+  } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const startEdit = (r: ProductionLineRow) => {
+    setEditId(r.id);
+    setEditDraft({
+      code: r.code,
+      name: r.name,
+      capacity: r.capacityPerHour ? String(r.capacityPerHour) : "",
+      description: r.description ?? "",
+      active: r.active,
+    });
+  };
+
+  const submitNew = async () => {
+    if (!draft) return;
+    if (!draft.code.trim() || !draft.name.trim()) return;
+    setBusy(true);
+    try {
+      await api.createProductionLine({
+        code: draft.code.trim(),
+        name: draft.name.trim(),
+        description: draft.description.trim() || null,
+        facilityId,
+        capacityPerHour: draft.capacity ? Number(draft.capacity) : null,
+        active: true,
+      });
+      setDraft(null);
+      await onChanged();
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitEdit = async () => {
+    if (!editId || !editDraft) return;
+    setBusy(true);
+    try {
+      await api.updateProductionLine(editId, {
+        code: editDraft.code.trim(),
+        name: editDraft.name.trim(),
+        description: editDraft.description.trim() || null,
+        capacityPerHour: editDraft.capacity ? Number(editDraft.capacity) : null,
+        active: editDraft.active,
+      });
+      setEditId(null);
+      setEditDraft(null);
+      await onChanged();
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (r: ProductionLineRow) => {
+    if (!confirm(`Delete production line "${r.code}"?`)) return;
+    setBusy(true);
+    try {
+      const res = await api.deleteProductionLine(r.id);
+      if (res.softDeleted && res.message) alert(res.message);
+      if (selectedId === r.id) onSelect(null);
+      await onChanged();
+    } catch (e) {
+      alert((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card
+      title="Production lines"
+      subtitle="Lines within the selected facility — click a row to manage its machines"
+      actions={
+        !draft && (
+          <Button
+            size="sm"
+            icon={<Plus size={14} />}
+            onClick={() =>
+              setDraft({ code: "", name: "", capacity: "", description: "" })
+            }
+            disabled={busy}
+          >
+            Add line
+          </Button>
+        )
+      }
+      noPadding
+    >
+      <div className="overflow-x-auto">
+        <table className="w-full text-body-sm">
+          <thead className="bg-canvas text-caption uppercase font-semibold text-ink-muted">
+            <tr>
+              <th className="text-left px-3 py-2">Code</th>
+              <th className="text-left px-3 py-2">Name</th>
+              <th className="text-right px-3 py-2">Capacity / hr</th>
+              <th className="text-right px-3 py-2">Machines</th>
+              <th className="text-center px-3 py-2">Status</th>
+              <th className="text-right px-3 py-2 w-24"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {draft && (
+              <tr className="border-t border-border bg-primary-50/40">
+                <td className="px-3 py-2">
+                  <Input
+                    size="sm"
+                    autoFocus
+                    placeholder="LINE-SOAP-BOIL"
+                    value={draft.code}
+                    onChange={(e) => setDraft({ ...draft, code: e.target.value })}
+                  />
+                </td>
+                <td className="px-3 py-2">
+                  <Input
+                    size="sm"
+                    placeholder="Boiling Line"
+                    value={draft.name}
+                    onChange={(e) => setDraft({ ...draft, name: e.target.value })}
+                  />
+                </td>
+                <td className="px-3 py-2">
+                  <Input
+                    size="sm"
+                    type="number"
+                    min={0}
+                    placeholder="50"
+                    value={draft.capacity}
+                    onChange={(e) => setDraft({ ...draft, capacity: e.target.value })}
+                  />
+                </td>
+                <td className="px-3 py-2 text-right text-ink-muted">—</td>
+                <td className="px-3 py-2 text-center">
+                  <Chip size="sm" tone="success">new</Chip>
+                </td>
+                <td className="px-3 py-2 text-right">
+                  <div className="flex justify-end gap-1">
+                    <Button size="sm" icon={<Save size={12} />} onClick={submitNew} disabled={busy}>
+                      Save
+                    </Button>
+                    <button
+                      onClick={() => setDraft(null)}
+                      className="h-7 w-7 grid place-items-center rounded text-ink-muted hover:bg-canvas"
+                      title="Cancel"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            )}
+            {loading && rows.length === 0 && !draft && (
+              <tr>
+                <td colSpan={6} className="px-3 py-6 text-center text-ink-muted">
+                  <Loader2 size={14} className="inline animate-spin mr-1" /> Loading…
+                </td>
+              </tr>
+            )}
+            {!loading && rows.length === 0 && !draft && (
+              <tr>
+                <td colSpan={6} className="px-3 py-6 text-center text-ink-muted">
+                  No lines yet. Click <strong>Add line</strong> to create one.
+                </td>
+              </tr>
+            )}
+            {rows.map((r) => {
+              const isEditing = editId === r.id && editDraft;
+              if (isEditing) {
+                return (
+                  <tr key={r.id} className="border-t border-border bg-primary-50/40">
+                    <td className="px-3 py-2">
+                      <Input
+                        size="sm"
+                        value={editDraft.code}
+                        onChange={(e) => setEditDraft({ ...editDraft, code: e.target.value })}
+                      />
+                    </td>
+                    <td className="px-3 py-2">
+                      <Input
+                        size="sm"
+                        value={editDraft.name}
+                        onChange={(e) => setEditDraft({ ...editDraft, name: e.target.value })}
+                      />
+                    </td>
+                    <td className="px-3 py-2">
+                      <Input
+                        size="sm"
+                        type="number"
+                        min={0}
+                        value={editDraft.capacity}
+                        onChange={(e) => setEditDraft({ ...editDraft, capacity: e.target.value })}
+                      />
+                    </td>
+                    <td className="px-3 py-2 text-right text-ink-muted">
+                      {r.machines.length}
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      <label className="inline-flex items-center gap-1 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={editDraft.active}
+                          onChange={(e) => setEditDraft({ ...editDraft, active: e.target.checked })}
+                        />
+                        <span className="text-caption">Active</span>
+                      </label>
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <div className="flex justify-end gap-1">
+                        <Button size="sm" icon={<Save size={12} />} onClick={submitEdit} disabled={busy}>
+                          Save
+                        </Button>
+                        <button
+                          onClick={() => { setEditId(null); setEditDraft(null); }}
+                          className="h-7 w-7 grid place-items-center rounded text-ink-muted hover:bg-canvas"
+                          title="Cancel"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              }
+              const isSelected = selectedId === r.id;
+              return (
+                <tr
+                  key={r.id}
+                  className={`border-t border-border cursor-pointer ${
+                    isSelected ? "bg-primary-50" : "hover:bg-canvas/50"
+                  }`}
+                  onClick={() => onSelect(isSelected ? null : r.id)}
+                >
+                  <td className="px-3 py-2 font-mono text-caption text-primary">
+                    {r.code}
+                  </td>
+                  <td className="px-3 py-2 font-medium">
+                    {r.name}
+                    {r.description && (
+                      <div className="text-caption text-ink-muted">{r.description}</div>
+                    )}
+                  </td>
+                  <td className="px-3 py-2 text-right tnum">
+                    {r.capacityPerHour ?? "—"}
+                  </td>
+                  <td className="px-3 py-2 text-right tnum">{r.machines.length}</td>
+                  <td className="px-3 py-2 text-center">
+                    <Chip size="sm" tone={r.active ? "success" : "neutral"}>
+                      {r.active ? "active" : "inactive"}
+                    </Chip>
+                  </td>
+                  <td className="px-3 py-2 text-right" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex justify-end gap-1">
+                      <button
+                        onClick={() => startEdit(r)}
+                        className="h-7 px-2 rounded text-primary hover:bg-primary-50 text-caption"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => remove(r)}
+                        className="h-7 w-7 grid place-items-center rounded text-danger hover:bg-danger-soft"
+                        title="Delete"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </Card>
+  );
+};
+
+// ----- Machines (nested under selected Production Line) -------------
+
+const MachinesCard = ({
+  rows,
+  lines,
+  loading,
+  onChanged,
+}: {
+  rows: MachineRow[];
+  lines: ProductionLineRow[];
+  loading: boolean;
+  onChanged: () => void | Promise<void>;
+}) => {
+  const defaultLineId = lines[0]?.id ?? "";
+  const [draft, setDraft] = useState<{
+    code: string;
+    name: string;
+    productionLineId: string;
     status: "running" | "idle" | "maintenance" | "broken";
     description: string;
   } | null>(null);
@@ -2015,7 +2377,7 @@ const MachinesCard = ({
   const [editDraft, setEditDraft] = useState<{
     code: string;
     name: string;
-    workCenterId: string;
+    productionLineId: string;
     status: "running" | "idle" | "maintenance" | "broken";
     description: string;
     active: boolean;
@@ -2024,13 +2386,13 @@ const MachinesCard = ({
 
   const submitNew = async () => {
     if (!draft) return;
-    if (!draft.code.trim() || !draft.name.trim() || !draft.workCenterId) return;
+    if (!draft.code.trim() || !draft.name.trim() || !draft.productionLineId) return;
     setBusy(true);
     try {
       await api.createMachine({
         code: draft.code.trim(),
         name: draft.name.trim(),
-        workCenterId: draft.workCenterId,
+        productionLineId: draft.productionLineId,
         status: draft.status,
         description: draft.description.trim() || null,
         active: true,
@@ -2049,7 +2411,7 @@ const MachinesCard = ({
     setEditDraft({
       code: r.code,
       name: r.name,
-      workCenterId: r.workCenterId,
+      productionLineId: r.productionLineId,
       status: r.status as "running" | "idle" | "maintenance" | "broken",
       description: r.description ?? "",
       active: r.active,
@@ -2063,7 +2425,7 @@ const MachinesCard = ({
       await api.updateMachine(editId, {
         code: editDraft.code.trim(),
         name: editDraft.name.trim(),
-        workCenterId: editDraft.workCenterId,
+        productionLineId: editDraft.productionLineId,
         status: editDraft.status,
         description: editDraft.description.trim() || null,
         active: editDraft.active,
@@ -2101,7 +2463,7 @@ const MachinesCard = ({
   return (
     <Card
       title="Machines"
-      subtitle="Specific assets that live on a work center"
+      subtitle="Specific assets that live on the selected production line"
       actions={
         !draft && (
           <Button
@@ -2111,17 +2473,13 @@ const MachinesCard = ({
               setDraft({
                 code: "",
                 name: "",
-                workCenterId: workCenters[0]?.id ?? "",
+                productionLineId: defaultLineId,
                 status: "idle",
                 description: "",
               })
             }
-            disabled={busy || workCenters.length === 0}
-            title={
-              workCenters.length === 0
-                ? "Add a work center first"
-                : "Add a machine"
-            }
+            disabled={busy || lines.length === 0}
+            title={lines.length === 0 ? "Select a production line first" : "Add a machine"}
           >
             Add machine
           </Button>
@@ -2129,9 +2487,9 @@ const MachinesCard = ({
       }
       noPadding
     >
-      {workCenters.length === 0 && !loading ? (
+      {lines.length === 0 && !loading ? (
         <div className="px-4 py-6 text-center text-ink-muted text-body-sm">
-          Add a work center first - every machine belongs to one.
+          Select a production line above — every machine belongs to one.
         </div>
       ) : (
         <div className="overflow-x-auto">
@@ -2140,7 +2498,7 @@ const MachinesCard = ({
               <tr>
                 <th className="text-left px-3 py-2">Code</th>
                 <th className="text-left px-3 py-2">Name</th>
-                <th className="text-left px-3 py-2">Work center</th>
+                <th className="text-left px-3 py-2">Production line</th>
                 <th className="text-center px-3 py-2">Status</th>
                 <th className="text-center px-3 py-2">Active</th>
                 <th className="text-right px-3 py-2 w-24"></th>
@@ -2153,7 +2511,7 @@ const MachinesCard = ({
                     <Input
                       size="sm"
                       autoFocus
-                      placeholder="PCH-SEAL-02"
+                      placeholder="MCH-BOILER-1"
                       value={draft.code}
                       onChange={(e) => setDraft({ ...draft, code: e.target.value })}
                     />
@@ -2161,22 +2519,20 @@ const MachinesCard = ({
                   <td className="px-3 py-2">
                     <Input
                       size="sm"
-                      placeholder="Pouch sealer 2"
+                      placeholder="Soap boiler 1"
                       value={draft.name}
                       onChange={(e) => setDraft({ ...draft, name: e.target.value })}
                     />
                   </td>
                   <td className="px-3 py-2">
                     <select
-                      value={draft.workCenterId}
-                      onChange={(e) =>
-                        setDraft({ ...draft, workCenterId: e.target.value })
-                      }
+                      value={draft.productionLineId}
+                      onChange={(e) => setDraft({ ...draft, productionLineId: e.target.value })}
                       className="h-8 w-full bg-white border border-border rounded text-body-sm px-2 outline-none focus:border-primary"
                     >
-                      {workCenters.map((wc) => (
-                        <option key={wc.id} value={wc.id}>
-                          {wc.code} · {wc.name}
+                      {lines.map((l) => (
+                        <option key={l.id} value={l.id}>
+                          {l.code} · {l.name}
                         </option>
                       ))}
                     </select>
@@ -2201,12 +2557,7 @@ const MachinesCard = ({
                   <td className="px-3 py-2 text-center text-ink-muted">—</td>
                   <td className="px-3 py-2 text-right">
                     <div className="flex justify-end gap-1">
-                      <Button
-                        size="sm"
-                        icon={<Save size={12} />}
-                        onClick={submitNew}
-                        disabled={busy}
-                      >
+                      <Button size="sm" icon={<Save size={12} />} onClick={submitNew} disabled={busy}>
                         Save
                       </Button>
                       <button
@@ -2230,7 +2581,7 @@ const MachinesCard = ({
               {!loading && rows.length === 0 && !draft && (
                 <tr>
                   <td colSpan={6} className="px-3 py-6 text-center text-ink-muted">
-                    No machines yet.
+                    No machines yet. Click <strong>Add machine</strong> to add one.
                   </td>
                 </tr>
               )}
@@ -2243,31 +2594,25 @@ const MachinesCard = ({
                         <Input
                           size="sm"
                           value={editDraft.code}
-                          onChange={(e) =>
-                            setEditDraft({ ...editDraft, code: e.target.value })
-                          }
+                          onChange={(e) => setEditDraft({ ...editDraft, code: e.target.value })}
                         />
                       </td>
                       <td className="px-3 py-2">
                         <Input
                           size="sm"
                           value={editDraft.name}
-                          onChange={(e) =>
-                            setEditDraft({ ...editDraft, name: e.target.value })
-                          }
+                          onChange={(e) => setEditDraft({ ...editDraft, name: e.target.value })}
                         />
                       </td>
                       <td className="px-3 py-2">
                         <select
-                          value={editDraft.workCenterId}
-                          onChange={(e) =>
-                            setEditDraft({ ...editDraft, workCenterId: e.target.value })
-                          }
+                          value={editDraft.productionLineId}
+                          onChange={(e) => setEditDraft({ ...editDraft, productionLineId: e.target.value })}
                           className="h-8 w-full bg-white border border-border rounded text-body-sm px-2 outline-none focus:border-primary"
                         >
-                          {workCenters.map((wc) => (
-                            <option key={wc.id} value={wc.id}>
-                              {wc.code} · {wc.name}
+                          {lines.map((l) => (
+                            <option key={l.id} value={l.id}>
+                              {l.code} · {l.name}
                             </option>
                           ))}
                         </select>
@@ -2293,26 +2638,16 @@ const MachinesCard = ({
                         <input
                           type="checkbox"
                           checked={editDraft.active}
-                          onChange={(e) =>
-                            setEditDraft({ ...editDraft, active: e.target.checked })
-                          }
+                          onChange={(e) => setEditDraft({ ...editDraft, active: e.target.checked })}
                         />
                       </td>
                       <td className="px-3 py-2 text-right">
                         <div className="flex justify-end gap-1">
-                          <Button
-                            size="sm"
-                            icon={<Save size={12} />}
-                            onClick={submitEdit}
-                            disabled={busy}
-                          >
+                          <Button size="sm" icon={<Save size={12} />} onClick={submitEdit} disabled={busy}>
                             Save
                           </Button>
                           <button
-                            onClick={() => {
-                              setEditId(null);
-                              setEditDraft(null);
-                            }}
+                            onClick={() => { setEditId(null); setEditDraft(null); }}
                             className="h-7 w-7 grid place-items-center rounded text-ink-muted hover:bg-canvas"
                             title="Cancel"
                           >
@@ -2331,9 +2666,9 @@ const MachinesCard = ({
                     <td className="px-3 py-2 font-medium">{r.name}</td>
                     <td className="px-3 py-2">
                       <span className="font-mono text-caption text-primary">
-                        {r.workCenter.code}
+                        {r.productionLine.code}
                       </span>{" "}
-                      <span className="text-ink-muted">· {r.workCenter.name}</span>
+                      <span className="text-ink-muted">· {r.productionLine.name}</span>
                     </td>
                     <td className="px-3 py-2 text-center">
                       <Chip size="sm" tone={statusTone(r.status)}>

@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Chip } from "@/components/common/Chip";
+import { primaryScanCode } from "@/lib/scanCode";
 import { Input } from "@/components/common/Input";
 import {
   api,
@@ -29,6 +30,7 @@ import { dt, inr } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { resolveBillingTotals } from "@/lib/billingTotals";
 import { BillingTotalsBreakdown } from "@/components/billing/BillingTotalsBreakdown";
+import { PackingContainersPanel } from "@/components/sales/PackingContainersPanel";
 
 interface Props {
   packingSlipId: string;
@@ -56,6 +58,14 @@ export const PackingSlipEditor = ({ packingSlipId, onClose, onChanged }: Props) 
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [issues, setIssues] = useState<{ id: string; reason: string }[]>([]);
+  // Container gate state. allocIssues holds the per-line shortage list
+  // returned when the operator clicks Lock pack before allocating every
+  // packed unit into a sealed container.
+  const [allocIssues, setAllocIssues] = useState<
+    { packingSlipItemId: string; qtyPacked: number; allocated: number; reason: string }[]
+  >([]);
+  const [multiContainerEnabled, setMultiContainerEnabled] = useState(true);
+  const [requireSealConfirm, setRequireSealConfirm] = useState(true);
   // Per-line short-stock entries returned by the server when a pack-to-
   // invoice attempt would oversell. Cleared on every save / re-open.
   const [oversells, setOversells] = useState<
@@ -105,6 +115,23 @@ export const PackingSlipEditor = ({ packingSlipId, onClose, onChanged }: Props) 
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [packingSlipId]);
+
+  useEffect(() => {
+    // Pull the two pack toggles from CompanyProfile so the gate
+    // behaviour and seal-confirmation modal match the global config.
+    let alive = true;
+    api
+      .getCompanyProfile()
+      .then((p) => {
+        if (!alive) return;
+        setMultiContainerEnabled(p.packMultiContainerEnabled !== false);
+        setRequireSealConfirm(p.packRequireSealConfirmation !== false);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const isLocked = ps && ps.status !== "open";
 
@@ -157,6 +184,7 @@ export const PackingSlipEditor = ({ packingSlipId, onClose, onChanged }: Props) 
     setBusy(true);
     setError(null);
     setOversells([]);
+    setAllocIssues([]);
     try {
       const items = Object.entries(drafts).map(([id, qtyPacked]) => ({ id, qtyPacked }));
       await api.updatePackingSlip(ps.id, { items });
@@ -174,10 +202,31 @@ export const PackingSlipEditor = ({ packingSlipId, onClose, onChanged }: Props) 
       // to do, so handle the same insufficient_stock 409 shape here.
       if (e instanceof ApiError && e.status === 409) {
         const det = e.details as
-          | { code?: string; details?: { sku: string; requested: number; available: number }[] }
+          | {
+              code?: string;
+              details?: unknown;
+            }
           | undefined;
         if (det?.code === "insufficient_stock" && Array.isArray(det.details)) {
-          setOversells(det.details);
+          setOversells(
+            det.details as {
+              sku: string;
+              requested: number;
+              available: number;
+            }[]
+          );
+        } else if (
+          det?.code === "container_allocation_incomplete" &&
+          Array.isArray(det.details)
+        ) {
+          setAllocIssues(
+            det.details as {
+              packingSlipItemId: string;
+              qtyPacked: number;
+              allocated: number;
+              reason: string;
+            }[]
+          );
         }
       }
       setError((e as Error).message);
@@ -311,6 +360,18 @@ export const PackingSlipEditor = ({ packingSlipId, onClose, onChanged }: Props) 
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {ps && multiContainerEnabled && (
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  onClose();
+                  navigate(`/reports/containers?slip=${ps.id}`);
+                }}
+              >
+                Manifest
+              </Button>
+            )}
             {ps?.salesOrder && (
               <ShareDocumentMenu
                 size="sm"
@@ -394,6 +455,29 @@ export const PackingSlipEditor = ({ packingSlipId, onClose, onChanged }: Props) 
                   </div>
                   <button
                     onClick={() => setAutoPackMismatches([])}
+                    className="text-caption text-ink-muted hover:text-ink"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            )}
+            {allocIssues.length > 0 && (
+              <div className="bg-warning-soft border-b border-warning px-5 py-2 text-body-sm">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle size={14} className="text-warning mt-0.5 shrink-0" />
+                  <div className="flex-1">
+                    <div className="font-semibold text-ink mb-1">
+                      Container allocation incomplete
+                    </div>
+                    <div className="space-y-1 text-caption">
+                      {allocIssues.map((i, idx) => (
+                        <div key={idx}>{i.reason}</div>
+                      ))}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setAllocIssues([])}
                     className="text-caption text-ink-muted hover:text-ink"
                   >
                     Dismiss
@@ -494,7 +578,9 @@ export const PackingSlipEditor = ({ packingSlipId, onClose, onChanged }: Props) 
                         <div className="col-span-4">
                           <div className="font-semibold">{it.product?.name}</div>
                           <div className="text-caption text-ink-muted font-mono">
-                            {it.variant?.sku ?? it.product?.sku}
+                            {it.variant
+                              ? primaryScanCode(it.variant)
+                              : primaryScanCode(it.product ?? { sku: "—", barcode: null })}
                           </div>
                           {issue && (
                             <div className="text-caption text-danger mt-0.5">{issue.reason}</div>
@@ -532,6 +618,16 @@ export const PackingSlipEditor = ({ packingSlipId, onClose, onChanged }: Props) 
                   })}
                 </div>
               </div>
+
+              {multiContainerEnabled && (
+                <PackingContainersPanel
+                  slipId={ps.id}
+                  status={ps.status}
+                  items={ps.items}
+                  requireSealConfirmation={requireSealConfirm}
+                  onChanged={() => setAllocIssues([])}
+                />
+              )}
 
               <div className="grid grid-cols-2 gap-4">
                 <div>

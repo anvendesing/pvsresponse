@@ -206,7 +206,8 @@ const validateAndCanonicalizeBomByproducts = async (
 const bomDetailInclude = {
   product: { select: { id: true, sku: true, name: true, type: true, uom: true } },
   variant: { select: { id: true, sku: true, size: true } },
-  defaultWorkCenter: { select: { id: true, code: true, name: true } },
+  defaultFacility: { select: { id: true, code: true, name: true } },
+  defaultLine: { select: { id: true, code: true, name: true } },
   defaultMachine: { select: { id: true, code: true, name: true } },
   items: {
     include: {
@@ -252,10 +253,14 @@ const bomCreate = z.object({
   revision: z.string().min(1).max(40).default("Rev-1.0"),
   outputQty: z.number().positive().default(1),
   active: z.boolean().default(true),
-  // Optional defaults for production scheduling. Both nullable: a
-  // BOM may have neither, just a work center, or a work center +
-  // a specific machine on that center.
-  defaultWorkCenterId: z.string().min(1).nullable().optional(),
+  // New two-level production defaults. Both nullable:
+  //   defaultFacilityId — the production facility (e.g. Soap Room) used to
+  //                       pre-fill the MO creation modal.
+  //   defaultLineId     — optional specific line preference; supervisor can
+  //                       override at MO assign time.
+  //   defaultMachineId  — optional default machine on the preferred line.
+  defaultFacilityId: z.string().min(1).nullable().optional(),
+  defaultLineId: z.string().min(1).nullable().optional(),
   defaultMachineId: z.string().min(1).nullable().optional(),
   items: z.array(bomItemInput).default([]),
   byproducts: z.array(bomByproductInput).default([]),
@@ -265,7 +270,8 @@ const bomUpdate = z.object({
   revision: z.string().min(1).max(40).optional(),
   outputQty: z.number().positive().optional(),
   active: z.boolean().optional(),
-  defaultWorkCenterId: z.string().min(1).nullable().optional(),
+  defaultFacilityId: z.string().min(1).nullable().optional(),
+  defaultLineId: z.string().min(1).nullable().optional(),
   defaultMachineId: z.string().min(1).nullable().optional(),
   // Replace-all semantics: if items is provided, replace the entire
   // component list. Omit items to leave them untouched.
@@ -277,30 +283,48 @@ const bomUpdate = z.object({
   // without touching the original.
 });
 
-// Validate that, if both default work center and machine are provided,
-// the machine actually belongs to that work center. Throws a 400-style
-// error so the BOM editor surfaces the mismatch instead of silently
-// linking a machine on a different line. Reused by POST /boms and
-// PATCH /boms/:id.
+// Validate the new two-level BOM defaults (facility → line → machine).
+// Enforces: line must belong to facility; machine must belong to line.
+// Throws 400-style errors so the BOM editor can surface them.
+// Reused by POST /boms and PATCH /boms/:id.
 const validateBomDefaults = async (
-  defaultWorkCenterId: string | null | undefined,
+  defaultFacilityId: string | null | undefined,
+  defaultLineId: string | null | undefined,
   defaultMachineId: string | null | undefined
 ): Promise<void> => {
-  if (defaultWorkCenterId) {
-    const wc = await db.workCenter.findUnique({
-      where: { id: defaultWorkCenterId },
+  if (defaultFacilityId) {
+    const fac = await db.productionFacility.findUnique({
+      where: { id: defaultFacilityId },
     });
-    if (!wc) {
-      throw Object.assign(new Error("Default work center not found."), {
+    if (!fac) {
+      throw Object.assign(new Error("Default production facility not found."), {
         statusCode: 404,
-        code: "default_work_center_not_found",
+        code: "default_facility_not_found",
       });
+    }
+  }
+  if (defaultLineId) {
+    const line = await db.productionLine.findUnique({
+      where: { id: defaultLineId },
+      select: { facilityId: true },
+    });
+    if (!line) {
+      throw Object.assign(new Error("Default production line not found."), {
+        statusCode: 404,
+        code: "default_line_not_found",
+      });
+    }
+    if (defaultFacilityId && line.facilityId !== defaultFacilityId) {
+      throw Object.assign(
+        new Error("Default production line does not belong to the chosen facility."),
+        { statusCode: 400, code: "line_facility_mismatch" }
+      );
     }
   }
   if (defaultMachineId) {
     const m = await db.machine.findUnique({
       where: { id: defaultMachineId },
-      select: { workCenterId: true },
+      select: { productionLineId: true },
     });
     if (!m) {
       throw Object.assign(new Error("Default machine not found."), {
@@ -308,15 +332,10 @@ const validateBomDefaults = async (
         code: "default_machine_not_found",
       });
     }
-    if (defaultWorkCenterId && m.workCenterId !== defaultWorkCenterId) {
+    if (defaultLineId && m.productionLineId !== defaultLineId) {
       throw Object.assign(
-        new Error(
-          "Default machine does not belong to the chosen work center."
-        ),
-        {
-          statusCode: 400,
-          code: "machine_workcenter_mismatch",
-        }
+        new Error("Default machine does not belong to the chosen production line."),
+        { statusCode: 400, code: "machine_line_mismatch" }
       );
     }
   }
@@ -341,15 +360,28 @@ const bomClone = z.object({
 
 const moCreate = z.object({
   bomId: z.string(),
-  // Free-text fields kept for backwards compatibility. When omitted,
-  // we resolve them from the BOM's defaultWorkCenter / defaultMachine
-  // master refs (if set), so the operator never has to retype the
-  // station that was already configured on the BOM.
+  // New facility/line FKs. facilityId defaults to BOM.defaultFacilityId.
+  // lineId defaults to BOM.defaultLineId and may stay null (supervisor assigns).
+  facilityId: z.string().optional(),
+  lineId: z.string().optional(),
+  // Legacy free-text fields kept for backwards compatibility.
   station: z.string().optional(),
   machine: z.string().optional(),
   plannedQty: z.number().positive(),
   startDate: z.string(),
   dueDate: z.string(),
+});
+
+const assignLine = z.object({
+  lineId: z.string().min(1),
+  workOrderAssignments: z
+    .array(
+      z.object({
+        workOrderId: z.string().min(1),
+        machineId: z.string().min(1).nullable().optional(),
+      })
+    )
+    .optional(),
 });
 
 const woUpdate = z.object({
@@ -484,15 +516,25 @@ const pickBinForReceive = async (
   });
 };
 
-// Flip machine.status by free-text name. WorkOrder.machine is a
-// free-text label (legacy), so we resolve to the master Machine row
-// when the name matches and update its status. No-ops silently when
-// the name is "—" or doesn't match anything - keeps callers simple.
-//
-// Called whenever an MO transitions through state: 'running' on
-// material issue (= line is now consuming raw materials) and 'idle'
-// on complete. Maintenance / broken statuses are operator-set and
-// never overwritten by this helper.
+// Set machine status by primary-key ID (preferred for new MOs with machineId FK).
+const setMachineStatusById = async (
+  machineId: string | null | undefined,
+  next: "running" | "idle"
+): Promise<void> => {
+  if (!machineId) return;
+  const m = await db.machine.findUnique({
+    where: { id: machineId },
+    select: { id: true, status: true },
+  });
+  if (!m) return;
+  if (m.status === "maintenance" || m.status === "broken") return;
+  if (m.status === next) return;
+  await db.machine.update({ where: { id: m.id }, data: { status: next } });
+};
+
+// Flip machine.status by free-text name (legacy path for old WOs that
+// still use the WorkOrder.machine text column). No-ops silently when
+// the name is "—" or doesn't match anything.
 const setMachineStatusByName = async (
   machineName: string | null | undefined,
   next: "running" | "idle"
@@ -541,12 +583,12 @@ const nextMoNo = async (): Promise<string> => {
 
 export const mfgRoutes = async (app: FastifyInstance) => {
   // ============= Production master data =============
-  // Work centers (production lines / cells / departments) and the
-  // machines that live on them. Lightweight CRUD - the values are
-  // also referenced from BOM / WO free-text "station" / "machine"
-  // fields so historical records keep rendering after rename.
+  // ProductionFacility (e.g. "Soap Room") contains ProductionLines
+  // (e.g. "Boiling Line", "Mixing Line"). Each line owns its Machines.
+  // The facility owns a shared production-line warehouse for material
+  // staging. Legacy /work-centers routes are aliased for one release.
 
-  const workCenterCreate = z.object({
+  const facilityCreate = z.object({
     code: z.string().min(1).max(40),
     name: z.string().min(1).max(120),
     description: z.string().nullable().optional(),
@@ -555,47 +597,51 @@ export const mfgRoutes = async (app: FastifyInstance) => {
     autoCreateProductionWarehouse: z.boolean().optional(),
     active: z.boolean().default(true),
   });
-  const workCenterUpdate = workCenterCreate.partial();
+  const facilityUpdate = facilityCreate.partial();
+
+  const productionLineCreate = z.object({
+    code: z.string().min(1).max(40),
+    name: z.string().min(1).max(120),
+    description: z.string().nullable().optional(),
+    facilityId: z.string().min(1),
+    capacityPerHour: z.number().positive().nullable().optional(),
+    active: z.boolean().default(true),
+  });
+  const productionLineUpdate = productionLineCreate.partial();
+
   const machineCreate = z.object({
     code: z.string().min(1).max(40),
     name: z.string().min(1).max(120),
-    workCenterId: z.string().min(1),
+    productionLineId: z.string().min(1),
     status: z.enum(["running", "idle", "maintenance", "broken"]).default("idle"),
     description: z.string().nullable().optional(),
     active: z.boolean().default(true),
   });
   const machineUpdate = machineCreate.partial();
 
-  app.get("/work-centers", { preHandler: [app.authenticate] }, async (req) => {
-    const q = (req.query as Record<string, string>) ?? {};
-    const where: Record<string, unknown> = {};
-    if (q.active === "1") where.active = true;
-    if (q.active === "0") where.active = false;
-    return db.workCenter.findMany({
-      where,
-      orderBy: { code: "asc" },
-      include: {
-        machines: { orderBy: { code: "asc" } },
-        productionLineWarehouse: { select: { id: true, code: true, name: true, kind: true } },
-      },
-    });
-  });
+  // Facility include helper
+  const facilityInclude = {
+    lines: {
+      orderBy: { code: "asc" as const },
+      include: { machines: { orderBy: { code: "asc" as const } } },
+    },
+    productionLineWarehouse: { select: { id: true, code: true, name: true, kind: true } },
+  } as const;
 
-  // Helper: create and link a dedicated production warehouse for a WC.
-  const ensureProductionWarehouse = async (wcId: string, wcCode: string, wcName: string) => {
-    const whCode = `WH-PROD-${wcCode.toUpperCase().replace(/[^A-Z0-9]+/g, "-")}`;
+  // Helper: create and link a dedicated production warehouse for a facility.
+  const ensureProductionWarehouse = async (facId: string, facCode: string, facName: string) => {
+    const whCode = `WH-PROD-${facCode.toUpperCase().replace(/[^A-Z0-9]+/g, "-")}`;
     let wh = await db.warehouse.findUnique({ where: { code: whCode } });
     if (!wh) {
       wh = await db.warehouse.create({
         data: {
           code: whCode,
-          name: `Production line — ${wcName}`,
+          name: `Production — ${facName}`,
           city: "Production",
           kind: "production",
           active: true,
         },
       });
-      // Create one default bin.
       await db.bin.create({
         data: {
           warehouseId: wh.id,
@@ -608,110 +654,235 @@ export const mfgRoutes = async (app: FastifyInstance) => {
         },
       });
     }
-    await db.workCenter.update({
-      where: { id: wcId },
+    await db.productionFacility.update({
+      where: { id: facId },
       data: { productionLineWarehouseId: wh.id },
     });
     return wh;
   };
 
-  app.post("/work-centers", { preHandler: [app.authenticate] }, async (req, reply) => {
-    if (!requireWriter(req, reply)) return;
-    const body = workCenterCreate.parse(req.body);
-    const dup = await db.workCenter.findUnique({ where: { code: body.code } });
+  // ---- Production facilities ----
+
+  const listFacilities = async (req: { query?: unknown }) => {
+    const q = (req.query as Record<string, string>) ?? {};
+    const where: Record<string, unknown> = {};
+    if (q.active === "1") where.active = true;
+    if (q.active === "0") where.active = false;
+    return db.productionFacility.findMany({
+      where,
+      orderBy: { code: "asc" },
+      include: facilityInclude,
+    });
+  };
+
+  app.get("/production-facilities", { preHandler: [app.authenticate] }, listFacilities);
+  // Legacy alias — kept for one release; prefer /production-facilities in new code.
+  app.get("/work-centers", { preHandler: [app.authenticate] }, listFacilities);
+
+  const createFacility = async (req: { body: unknown; user: { sub: string } }, reply: { code: (n: number) => { send: (b: unknown) => unknown }; send: (b: unknown) => unknown }) => {
+    const body = facilityCreate.parse(req.body);
+    const dup = await db.productionFacility.findUnique({ where: { code: body.code } });
     if (dup) {
       return reply.code(409).send({
-        error: { code: "duplicate_code", message: `Work center "${body.code}" already exists.` },
+        error: { code: "duplicate_code", message: `Facility "${body.code}" already exists.` },
       });
     }
     const { autoCreateProductionWarehouse, ...rest } = body;
-    const created = await db.workCenter.create({ data: rest });
+    const created = await db.productionFacility.create({ data: rest });
     if (autoCreateProductionWarehouse && !created.productionLineWarehouseId) {
       await ensureProductionWarehouse(created.id, created.code, created.name);
     }
-    const finalWc = await db.workCenter.findUnique({
+    const final = await db.productionFacility.findUnique({
       where: { id: created.id },
-      include: {
-        machines: { orderBy: { code: "asc" } },
-        productionLineWarehouse: { select: { id: true, code: true, name: true, kind: true } },
-      },
+      include: facilityInclude,
     });
-    await recordChange("WorkCenter", created.id, "insert", finalWc, req.user.sub);
-    return finalWc;
+    await recordChange("ProductionFacility", created.id, "insert", final, req.user.sub);
+    return final;
+  };
+
+  app.post("/production-facilities", { preHandler: [app.authenticate] }, async (req, reply) => {
+    if (!requireWriter(req, reply)) return;
+    return createFacility(req, reply);
+  });
+  app.post("/work-centers", { preHandler: [app.authenticate] }, async (req, reply) => {
+    if (!requireWriter(req, reply)) return;
+    return createFacility(req, reply);
   });
 
-  app.patch(
-    "/work-centers/:id",
-    { preHandler: [app.authenticate] },
-    async (req, reply) => {
-      if (!requireWriter(req, reply)) return;
-      const id = (req.params as { id: string }).id;
-      const body = workCenterUpdate.parse(req.body);
-      if (body.code) {
-        const dup = await db.workCenter.findFirst({
-          where: { code: body.code, NOT: { id } },
-        });
-        if (dup) {
-          return reply.code(409).send({ error: { code: "duplicate_code" } });
-        }
-      }
-      const { autoCreateProductionWarehouse, ...rest } = body;
-      const updated = await db.workCenter.update({ where: { id }, data: rest });
-
-      if (autoCreateProductionWarehouse && !updated.productionLineWarehouseId) {
-        await ensureProductionWarehouse(updated.id, updated.code, updated.name);
-      }
-
-      const finalWc = await db.workCenter.findUnique({
-        where: { id },
-        include: {
-          machines: { orderBy: { code: "asc" } },
-          productionLineWarehouse: { select: { id: true, code: true, name: true, kind: true } },
-        },
+  const patchFacility = async (
+    req: { params: unknown; body: unknown; user: { sub: string } },
+    reply: { code: (n: number) => { send: (b: unknown) => unknown }; send: (b: unknown) => unknown }
+  ) => {
+    const id = (req.params as { id: string }).id;
+    const body = facilityUpdate.parse(req.body);
+    if (body.code) {
+      const dup = await db.productionFacility.findFirst({
+        where: { code: body.code, NOT: { id } },
       });
-      await recordChange("WorkCenter", id, "update", finalWc, req.user.sub);
-      return finalWc;
+      if (dup) return reply.code(409).send({ error: { code: "duplicate_code" } });
     }
-  );
+    const { autoCreateProductionWarehouse, ...rest } = body;
+    const updated = await db.productionFacility.update({ where: { id }, data: rest });
+    if (autoCreateProductionWarehouse && !updated.productionLineWarehouseId) {
+      await ensureProductionWarehouse(updated.id, updated.code, updated.name);
+    }
+    const final = await db.productionFacility.findUnique({
+      where: { id },
+      include: facilityInclude,
+    });
+    await recordChange("ProductionFacility", id, "update", final, req.user.sub);
+    return final;
+  };
 
-  app.delete(
-    "/work-centers/:id",
-    { preHandler: [app.authenticate] },
-    async (req, reply) => {
-      if (!requireWriter(req, reply)) return;
-      const id = (req.params as { id: string }).id;
-      const machineCount = await db.machine.count({ where: { workCenterId: id } });
-      if (machineCount > 0) {
-        // Soft-delete to preserve referential integrity for any
-        // machines still parked on this center. Operator must move
-        // those machines first if a hard delete is desired.
-        const updated = await db.workCenter.update({
-          where: { id },
-          data: { active: false },
-        });
-        await recordChange("WorkCenter", id, "update", updated, req.user.sub);
-        return reply.send({
-          softDeleted: true,
-          message: `Work center has ${machineCount} machine${machineCount === 1 ? "" : "s"} - marked inactive instead of deleted.`,
-        });
-      }
-      await db.workCenter.delete({ where: { id } });
-      await recordChange("WorkCenter", id, "delete", { id }, req.user.sub);
-      return reply.send({ deleted: true });
+  app.patch("/production-facilities/:id", { preHandler: [app.authenticate] }, async (req, reply) => {
+    if (!requireWriter(req, reply)) return;
+    return patchFacility(req, reply);
+  });
+  app.patch("/work-centers/:id", { preHandler: [app.authenticate] }, async (req, reply) => {
+    if (!requireWriter(req, reply)) return;
+    return patchFacility(req, reply);
+  });
+
+  const deleteFacility = async (
+    req: { params: unknown; user: { sub: string } },
+    reply: { code: (n: number) => { send: (b: unknown) => unknown }; send: (b: unknown) => unknown }
+  ) => {
+    const id = (req.params as { id: string }).id;
+    const lineCount = await db.productionLine.count({ where: { facilityId: id } });
+    if (lineCount > 0) {
+      const updated = await db.productionFacility.update({
+        where: { id },
+        data: { active: false },
+      });
+      await recordChange("ProductionFacility", id, "update", updated, req.user.sub);
+      return reply.send({
+        softDeleted: true,
+        message: `Facility has ${lineCount} line${lineCount === 1 ? "" : "s"} — marked inactive instead of deleted.`,
+      });
     }
-  );
+    await db.productionFacility.delete({ where: { id } });
+    await recordChange("ProductionFacility", id, "delete", { id }, req.user.sub);
+    return reply.send({ deleted: true });
+  };
+
+  app.delete("/production-facilities/:id", { preHandler: [app.authenticate] }, async (req, reply) => {
+    if (!requireWriter(req, reply)) return;
+    return deleteFacility(req, reply);
+  });
+  app.delete("/work-centers/:id", { preHandler: [app.authenticate] }, async (req, reply) => {
+    if (!requireWriter(req, reply)) return;
+    return deleteFacility(req, reply);
+  });
+
+  // ---- Production lines ----
+
+  app.get("/production-lines", { preHandler: [app.authenticate] }, async (req) => {
+    const q = (req.query as Record<string, string>) ?? {};
+    const where: Record<string, unknown> = {};
+    if (q.facilityId) where.facilityId = q.facilityId;
+    if (q.active === "1") where.active = true;
+    if (q.active === "0") where.active = false;
+    return db.productionLine.findMany({
+      where,
+      orderBy: { code: "asc" },
+      include: {
+        facility: { select: { id: true, code: true, name: true } },
+        machines: { orderBy: { code: "asc" } },
+      },
+    });
+  });
+
+  app.post("/production-lines", { preHandler: [app.authenticate] }, async (req, reply) => {
+    if (!requireWriter(req, reply)) return;
+    const body = productionLineCreate.parse(req.body);
+    const dup = await db.productionLine.findUnique({ where: { code: body.code } });
+    if (dup) {
+      return reply.code(409).send({
+        error: { code: "duplicate_code", message: `Production line "${body.code}" already exists.` },
+      });
+    }
+    const facility = await db.productionFacility.findUnique({ where: { id: body.facilityId } });
+    if (!facility) {
+      return reply.code(404).send({ error: { code: "facility_not_found" } });
+    }
+    const created = await db.productionLine.create({
+      data: body,
+      include: {
+        facility: { select: { id: true, code: true, name: true } },
+        machines: { orderBy: { code: "asc" } },
+      },
+    });
+    await recordChange("ProductionLine", created.id, "insert", created, req.user.sub);
+    return created;
+  });
+
+  app.patch("/production-lines/:id", { preHandler: [app.authenticate] }, async (req, reply) => {
+    if (!requireWriter(req, reply)) return;
+    const id = (req.params as { id: string }).id;
+    const body = productionLineUpdate.parse(req.body);
+    if (body.code) {
+      const dup = await db.productionLine.findFirst({ where: { code: body.code, NOT: { id } } });
+      if (dup) return reply.code(409).send({ error: { code: "duplicate_code" } });
+    }
+    if (body.facilityId) {
+      const fac = await db.productionFacility.findUnique({ where: { id: body.facilityId } });
+      if (!fac) return reply.code(404).send({ error: { code: "facility_not_found" } });
+    }
+    const updated = await db.productionLine.update({
+      where: { id },
+      data: body,
+      include: {
+        facility: { select: { id: true, code: true, name: true } },
+        machines: { orderBy: { code: "asc" } },
+      },
+    });
+    await recordChange("ProductionLine", id, "update", updated, req.user.sub);
+    return updated;
+  });
+
+  app.delete("/production-lines/:id", { preHandler: [app.authenticate] }, async (req, reply) => {
+    if (!requireWriter(req, reply)) return;
+    const id = (req.params as { id: string }).id;
+    const machineCount = await db.machine.count({ where: { productionLineId: id } });
+    const moCount = await db.productionOrder.count({ where: { lineId: id } });
+    if (machineCount > 0 || moCount > 0) {
+      const updated = await db.productionLine.update({
+        where: { id },
+        data: { active: false },
+      });
+      await recordChange("ProductionLine", id, "update", updated, req.user.sub);
+      return reply.send({
+        softDeleted: true,
+        message: `Line has ${machineCount} machine(s) / ${moCount} MO(s) — marked inactive instead of deleted.`,
+      });
+    }
+    await db.productionLine.delete({ where: { id } });
+    await recordChange("ProductionLine", id, "delete", { id }, req.user.sub);
+    return reply.send({ deleted: true });
+  });
+
+  // ---- Machines ----
 
   app.get("/machines", { preHandler: [app.authenticate] }, async (req) => {
     const q = (req.query as Record<string, string>) ?? {};
     const where: Record<string, unknown> = {};
-    if (q.workCenterId) where.workCenterId = q.workCenterId;
+    if (q.productionLineId) where.productionLineId = q.productionLineId;
+    if (q.facilityId) {
+      // Convenience: filter machines by facility (all lines in facility).
+      where.productionLine = { facilityId: q.facilityId };
+    }
     if (q.active === "1") where.active = true;
     if (q.active === "0") where.active = false;
     return db.machine.findMany({
       where,
       orderBy: { code: "asc" },
       include: {
-        workCenter: { select: { id: true, code: true, name: true } },
+        productionLine: {
+          select: {
+            id: true, code: true, name: true,
+            facility: { select: { id: true, code: true, name: true } },
+          },
+        },
       },
     });
   });
@@ -725,15 +896,20 @@ export const mfgRoutes = async (app: FastifyInstance) => {
         error: { code: "duplicate_code", message: `Machine "${body.code}" already exists.` },
       });
     }
-    const wc = await db.workCenter.findUnique({ where: { id: body.workCenterId } });
-    if (!wc) {
-      return reply
-        .code(404)
-        .send({ error: { code: "work_center_not_found" } });
+    const line = await db.productionLine.findUnique({ where: { id: body.productionLineId } });
+    if (!line) {
+      return reply.code(404).send({ error: { code: "production_line_not_found" } });
     }
     const created = await db.machine.create({
       data: body,
-      include: { workCenter: { select: { id: true, code: true, name: true } } },
+      include: {
+        productionLine: {
+          select: {
+            id: true, code: true, name: true,
+            facility: { select: { id: true, code: true, name: true } },
+          },
+        },
+      },
     });
     await recordChange("Machine", created.id, "insert", created, req.user.sub);
     return created;
@@ -752,16 +928,23 @@ export const mfgRoutes = async (app: FastifyInstance) => {
         });
         if (dup) return reply.code(409).send({ error: { code: "duplicate_code" } });
       }
-      if (body.workCenterId) {
-        const wc = await db.workCenter.findUnique({
-          where: { id: body.workCenterId },
+      if (body.productionLineId) {
+        const line = await db.productionLine.findUnique({
+          where: { id: body.productionLineId },
         });
-        if (!wc) return reply.code(404).send({ error: { code: "work_center_not_found" } });
+        if (!line) return reply.code(404).send({ error: { code: "production_line_not_found" } });
       }
       const updated = await db.machine.update({
         where: { id },
         data: body,
-        include: { workCenter: { select: { id: true, code: true, name: true } } },
+        include: {
+          productionLine: {
+            select: {
+              id: true, code: true, name: true,
+              facility: { select: { id: true, code: true, name: true } },
+            },
+          },
+        },
       });
       await recordChange("Machine", id, "update", updated, req.user.sub);
       return updated;
@@ -796,27 +979,7 @@ export const mfgRoutes = async (app: FastifyInstance) => {
     else if (q.variantId) where.variantId = q.variantId;
     return db.bom.findMany({
       where,
-      include: {
-        product: { select: { id: true, sku: true, name: true, type: true, uom: true } },
-        variant: { select: { id: true, sku: true, size: true } },
-        defaultWorkCenter: { select: { id: true, code: true, name: true } },
-        defaultMachine: { select: { id: true, code: true, name: true } },
-        items: {
-          include: {
-            product: {
-              select: { id: true, sku: true, name: true, uom: true, type: true },
-            },
-          },
-        },
-        byproducts: {
-          include: {
-            product: {
-              select: { id: true, sku: true, name: true, uom: true, type: true },
-            },
-            variant: { select: { id: true, sku: true, size: true } },
-          },
-        },
-      },
+      include: bomDetailInclude,
       orderBy: { createdAt: "desc" },
     });
   });
@@ -958,9 +1121,9 @@ export const mfgRoutes = async (app: FastifyInstance) => {
         error: { code: err.code ?? "uom_validation_failed", message: err.message },
       });
     }
-    // Validate optional defaults (work center / machine) before persist.
+    // Validate optional defaults (facility → line → machine) before persist.
     try {
-      await validateBomDefaults(body.defaultWorkCenterId, body.defaultMachineId);
+      await validateBomDefaults(body.defaultFacilityId, body.defaultLineId, body.defaultMachineId);
     } catch (e) {
       const err = e as Error & { statusCode?: number; code?: string };
       return reply
@@ -987,7 +1150,8 @@ export const mfgRoutes = async (app: FastifyInstance) => {
         revision: body.revision,
         outputQty: body.outputQty,
         active: body.active,
-        defaultWorkCenterId: body.defaultWorkCenterId ?? null,
+        defaultFacilityId: body.defaultFacilityId ?? null,
+        defaultLineId: body.defaultLineId ?? null,
         defaultMachineId: body.defaultMachineId ?? null,
         items: { create: canonicalItems },
         byproducts: {
@@ -1242,23 +1406,27 @@ export const mfgRoutes = async (app: FastifyInstance) => {
           });
         }
       }
-      // Validate work-center / machine defaults if either is being
-      // changed in this PATCH. Pull the effective values: a field
-      // present in the body wins, otherwise fall back to existing.
+      // Validate facility/line/machine defaults if any are being changed.
+      // Pull effective values: body field wins, else fall back to existing.
       if (
-        body.defaultWorkCenterId !== undefined ||
+        body.defaultFacilityId !== undefined ||
+        body.defaultLineId !== undefined ||
         body.defaultMachineId !== undefined
       ) {
-        const nextWc =
-          body.defaultWorkCenterId !== undefined
-            ? body.defaultWorkCenterId
-            : existing.defaultWorkCenterId;
+        const nextFacility =
+          body.defaultFacilityId !== undefined
+            ? body.defaultFacilityId
+            : existing.defaultFacilityId;
+        const nextLine =
+          body.defaultLineId !== undefined
+            ? body.defaultLineId
+            : existing.defaultLineId;
         const nextMachine =
           body.defaultMachineId !== undefined
             ? body.defaultMachineId
             : existing.defaultMachineId;
         try {
-          await validateBomDefaults(nextWc, nextMachine);
+          await validateBomDefaults(nextFacility, nextLine, nextMachine);
         } catch (e) {
           const err = e as Error & { statusCode?: number; code?: string };
           return reply.code(err.statusCode ?? 400).send({
@@ -1306,8 +1474,11 @@ export const mfgRoutes = async (app: FastifyInstance) => {
             revision: body.revision,
             outputQty: body.outputQty,
             active: body.active,
-            ...(body.defaultWorkCenterId !== undefined && {
-              defaultWorkCenterId: body.defaultWorkCenterId,
+            ...(body.defaultFacilityId !== undefined && {
+              defaultFacilityId: body.defaultFacilityId,
+            }),
+            ...(body.defaultLineId !== undefined && {
+              defaultLineId: body.defaultLineId,
             }),
             ...(body.defaultMachineId !== undefined && {
               defaultMachineId: body.defaultMachineId,
@@ -1375,10 +1546,15 @@ export const mfgRoutes = async (app: FastifyInstance) => {
 
   app.get("/production-orders", async (req) => {
     const q = (req.query as Record<string, string>) ?? {};
+    const where: Record<string, unknown> = {};
+    if (q.status) where.status = q.status;
+    if (q.facilityId) where.facilityId = q.facilityId;
     return db.productionOrder.findMany({
-      where: { ...(q.status ? { status: q.status } : {}) },
+      where,
       include: {
         bom: { include: { product: { select: { sku: true, name: true } } } },
+        facility: { select: { id: true, code: true, name: true } },
+        line: { select: { id: true, code: true, name: true } },
         workOrders: true,
       },
       orderBy: { startDate: "desc" },
@@ -1408,6 +1584,8 @@ export const mfgRoutes = async (app: FastifyInstance) => {
             },
           },
         },
+        facility: { select: { id: true, code: true, name: true } },
+        line: { select: { id: true, code: true, name: true } },
         workOrders: { orderBy: { workOrderNo: "asc" } },
       },
     });
@@ -1744,35 +1922,53 @@ export const mfgRoutes = async (app: FastifyInstance) => {
     const bom = await db.bom.findUnique({
       where: { id: body.bomId },
       include: {
-        defaultWorkCenter: { select: { id: true, name: true } },
+        defaultFacility: { select: { id: true, name: true } },
+        defaultLine: { select: { id: true, name: true } },
         defaultMachine: { select: { id: true, name: true } },
       },
     });
     if (!bom) return reply.code(404).send({ error: { code: "bom_not_found" } });
-    // Resolve station + machine: caller-supplied values win, otherwise
-    // fall back to the BOM's default work center / machine names.
-    // Final fallback keeps the legacy "Assembly 1" / "—" placeholders
-    // so existing screens that scan the field for non-empty content
-    // keep working.
-    const station = body.station?.trim()
-      || bom.defaultWorkCenter?.name
-      || "Assembly 1";
-    const machine = body.machine?.trim()
-      || bom.defaultMachine?.name
-      || "—";
+
+    // Resolve facilityId: caller wins, then BOM default, then error.
+    const facilityId = body.facilityId ?? bom.defaultFacilityId ?? null;
+    if (!facilityId) {
+      return reply.code(400).send({
+        error: {
+          code: "facility_required",
+          message: "A production facility is required. Set one on the BOM or pass facilityId.",
+        },
+      });
+    }
+    // Validate the facility exists.
+    const facility = await db.productionFacility.findUnique({
+      where: { id: facilityId },
+      select: { id: true, name: true },
+    });
+    if (!facility) {
+      return reply.code(404).send({ error: { code: "facility_not_found" } });
+    }
+
+    // lineId may stay null — supervisor assigns later.
+    const lineId = body.lineId ?? bom.defaultLineId ?? null;
+
+    // Legacy station / machine text kept for backward compat.
+    const station = body.station?.trim() || facility.name || "Assembly 1";
+    const machine = body.machine?.trim() || bom.defaultMachine?.name || "—";
+
     const orderNo = await nextMoNo();
     const created = await db.productionOrder.create({
       data: {
         orderNo,
         bomId: body.bomId,
         station,
+        facilityId,
+        lineId: lineId ?? null,
         plannedQty: body.plannedQty,
         startDate: new Date(body.startDate),
         dueDate: new Date(body.dueDate),
       },
     });
-    // Auto-create one WorkOrder for the assembly station so the MO has
-    // something to track from the start.
+    // Auto-create one WorkOrder so the MO has something to track immediately.
     await db.workOrder.create({
       data: {
         workOrderNo: `${orderNo}/1`,
@@ -1781,11 +1977,71 @@ export const mfgRoutes = async (app: FastifyInstance) => {
         machine,
         workers: "",
         target: body.plannedQty,
+        lineId: lineId ?? null,
       },
     });
     await recordChange("ProductionOrder", created.id, "insert", created, req.user.sub);
     return created;
   });
+
+  // PATCH /production-orders/:id/assign-line
+  // Supervisor action: assign an MO (and optionally its WOs) to a specific
+  // production line within the MO's facility.
+  app.patch(
+    "/production-orders/:id/assign-line",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      if (!requireWriter(req, reply)) return;
+      const id = (req.params as { id: string }).id;
+      const body = assignLine.parse(req.body);
+
+      const po = await db.productionOrder.findUnique({
+        where: { id },
+        select: { id: true, orderNo: true, facilityId: true, status: true },
+      });
+      if (!po) return reply.code(404).send({ error: { code: "not_found" } });
+      if (po.status === "completed") {
+        return reply.code(409).send({ error: { code: "already_completed" } });
+      }
+
+      // Validate that the requested line belongs to the MO's facility.
+      const line = await db.productionLine.findUnique({
+        where: { id: body.lineId },
+        select: { id: true, name: true, facilityId: true },
+      });
+      if (!line) return reply.code(404).send({ error: { code: "line_not_found" } });
+      if (po.facilityId && line.facilityId !== po.facilityId) {
+        return reply.code(400).send({
+          error: {
+            code: "line_facility_mismatch",
+            message: `Line "${line.name}" does not belong to this MO's production facility.`,
+          },
+        });
+      }
+
+      // Stamp the MO.
+      const updated = await db.productionOrder.update({
+        where: { id },
+        data: { lineId: body.lineId },
+      });
+
+      // Optionally stamp individual WOs with line + machine.
+      if (body.workOrderAssignments?.length) {
+        for (const wa of body.workOrderAssignments) {
+          await db.workOrder.update({
+            where: { id: wa.workOrderId },
+            data: {
+              lineId: body.lineId,
+              ...(wa.machineId !== undefined && { machineId: wa.machineId }),
+            },
+          });
+        }
+      }
+
+      await recordChange("ProductionOrder", id, "update", updated, req.user.sub);
+      return updated;
+    }
+  );
 
   // POST /production-orders/:id/release
   // Checks whether the production-line warehouse has enough material
@@ -1801,13 +2057,11 @@ export const mfgRoutes = async (app: FastifyInstance) => {
       const po = await db.productionOrder.findUnique({
         where: { id },
         include: {
-          bom: {
-            include: {
-              defaultWorkCenter: {
-                include: {
-                  productionLineWarehouse: { select: { id: true, code: true } },
-                },
-              },
+          bom: { select: { productId: true, variantId: true } },
+          facility: {
+            select: {
+              id: true,
+              productionLineWarehouse: { select: { id: true, code: true } },
             },
           },
         },
@@ -1826,7 +2080,7 @@ export const mfgRoutes = async (app: FastifyInstance) => {
       }
 
       const productionLineWhId =
-        po.bom.defaultWorkCenter?.productionLineWarehouse?.id ?? null;
+        po.facility?.productionLineWarehouse?.id ?? null;
 
       const remaining = Math.max(0, po.plannedQty - po.actualQty);
       const planQty = remaining > 0 ? remaining : po.plannedQty;
@@ -1969,7 +2223,7 @@ export const mfgRoutes = async (app: FastifyInstance) => {
         transferOrderIds,
         allMet: shortages.length === 0,
         productionLineWarehouse: productionLineWhId
-          ? po.bom.defaultWorkCenter?.productionLineWarehouse
+          ? po.facility?.productionLineWarehouse
           : null,
       };
     }
@@ -1990,13 +2244,11 @@ export const mfgRoutes = async (app: FastifyInstance) => {
       const po = await db.productionOrder.findUnique({
         where: { id },
         include: {
-          bom: {
-            include: {
-              defaultWorkCenter: {
-                include: {
-                  productionLineWarehouse: { select: { id: true } },
-                },
-              },
+          bom: { select: { productId: true, variantId: true } },
+          facility: {
+            select: {
+              id: true,
+              productionLineWarehouse: { select: { id: true } },
             },
           },
         },
@@ -2028,11 +2280,11 @@ export const mfgRoutes = async (app: FastifyInstance) => {
         });
       }
 
-      // When the BOM's work center has a production-line warehouse, issue
+      // When the MO's facility has a production-line warehouse, issue
       // ONLY from that warehouse. If it doesn't have one, fall back to
       // the operator-specified warehouse (or any warehouse).
       const productionLineWhId =
-        po.bom.defaultWorkCenter?.productionLineWarehouse?.id ?? null;
+        po.facility?.productionLineWarehouse?.id ?? null;
 
       // Check requireMoReleaseBeforeIssue setting.
       const settings = await db.companyProfile.findFirst({
@@ -2164,14 +2416,17 @@ export const mfgRoutes = async (app: FastifyInstance) => {
         data: { status: po.status === "planned" ? "in-progress" : po.status },
       });
       // Mark the machines on this MO's WOs as running so the live
-      // production-lines panel reflects what's actually consuming
-      // material right now.
+      // production lines panel reflects what's actually consuming material.
       const wos = await db.workOrder.findMany({
         where: { productionOrderId: id },
-        select: { machine: true },
+        select: { machine: true, machineId: true },
       });
       for (const w of wos) {
-        await setMachineStatusByName(w.machine, "running");
+        if (w.machineId) {
+          await setMachineStatusById(w.machineId, "running");
+        } else {
+          await setMachineStatusByName(w.machine, "running");
+        }
       }
       await recordChange("ProductionOrder", id, "update", updated, req.user.sub);
 
@@ -2213,11 +2468,12 @@ export const mfgRoutes = async (app: FastifyInstance) => {
                   },
                 },
               },
-              defaultWorkCenter: {
-                include: {
-                  productionLineWarehouse: { select: { id: true } },
-                },
-              },
+            },
+          },
+          facility: {
+            select: {
+              id: true,
+              productionLineWarehouse: { select: { id: true } },
             },
           },
         },
@@ -2262,7 +2518,7 @@ export const mfgRoutes = async (app: FastifyInstance) => {
       // exactly like /complete does (putaway rule -> production-line
       // warehouse -> any usable bin).
       const productionLineWhId =
-        po.bom.defaultWorkCenter?.productionLineWarehouse?.id ?? null;
+        po.facility?.productionLineWarehouse?.id ?? null;
       const landingWhId = productionLineWhId ?? null;
 
       const byproductPostings: Array<{
@@ -2497,11 +2753,12 @@ export const mfgRoutes = async (app: FastifyInstance) => {
                   },
                 },
               },
-              defaultWorkCenter: {
-                include: {
-                  productionLineWarehouse: { select: { id: true, code: true, kind: true } },
-                },
-              },
+            },
+          },
+          facility: {
+            select: {
+              id: true,
+              productionLineWarehouse: { select: { id: true, code: true, kind: true } },
             },
           },
         },
@@ -2521,7 +2778,7 @@ export const mfgRoutes = async (app: FastifyInstance) => {
       }
 
       const productionLineWhId =
-        po.bom.defaultWorkCenter?.productionLineWarehouse?.id ?? null;
+        po.facility?.productionLineWarehouse?.id ?? null;
       const landingWhId = productionLineWhId ?? body.warehouseId ?? null;
 
       const dest = await resolvePutawayDestination(
@@ -2809,20 +3066,30 @@ export const mfgRoutes = async (app: FastifyInstance) => {
       // Release the machines this MO was running on.
       const finishedWos = await db.workOrder.findMany({
         where: { productionOrderId: id },
-        select: { machine: true },
+        select: { machine: true, machineId: true },
       });
       for (const w of finishedWos) {
-        if (!w.machine || w.machine === "—") continue;
-        const stillBusy = await db.workOrder.findFirst({
-          where: {
-            machine: w.machine,
-            status: { in: ["running", "queued"] },
-            productionOrderId: { not: id },
-          },
-          select: { id: true },
-        });
-        if (!stillBusy) {
-          await setMachineStatusByName(w.machine, "idle");
+        if (w.machineId) {
+          const stillBusy = await db.workOrder.findFirst({
+            where: {
+              machineId: w.machineId,
+              status: { in: ["running", "queued"] },
+              productionOrderId: { not: id },
+            },
+            select: { id: true },
+          });
+          if (!stillBusy) await setMachineStatusById(w.machineId, "idle");
+        } else {
+          if (!w.machine || w.machine === "—") continue;
+          const stillBusy = await db.workOrder.findFirst({
+            where: {
+              machine: w.machine,
+              status: { in: ["running", "queued"] },
+              productionOrderId: { not: id },
+            },
+            select: { id: true },
+          });
+          if (!stillBusy) await setMachineStatusByName(w.machine, "idle");
         }
       }
       await recordChange("ProductionOrder", id, "update", updated, req.user.sub);

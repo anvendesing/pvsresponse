@@ -7,6 +7,7 @@ import { normalizeUomCode } from "../lib/uom.js";
 import { binCodeFromRow } from "../lib/codes.js";
 import { customerNetOpenBalance } from "./customer-payments.js";
 import { generateVariantSku, generateVariantBarcode } from "../lib/tax.js";
+import { productMatchesQuery, normalizeSearchTerm, codesEqual } from "../lib/text-search.js";
 import { createWriteStream, mkdirSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -55,6 +56,10 @@ const variantInput = z.object({
   packSize: z.number().positive().nullable().optional(),
   costPriceOverride: z.number().nullable().optional(),
   sellingPriceOverride: z.number().nullable().optional(),
+  // Gross weight (kg) of one variant unit. Null = inherit Product.weightKg
+  // (which itself may be null, in which case the packing weight
+  // estimator falls back to parsing the size string).
+  weightKg: z.number().min(0).max(5000).nullable().optional(),
   stockOnHand: z.number().int().nonnegative().default(0),
   active: z.boolean().default(true),
 });
@@ -77,6 +82,7 @@ const variantPersist = (v: z.infer<typeof variantInput> & { sku: string; barcode
     packSize: v.packSize == null ? 1 : Number(v.packSize),
     costPriceOverride: v.costPriceOverride ?? null,
     sellingPriceOverride: v.sellingPriceOverride ?? null,
+    weightKg: v.weightKg ?? null,
     stockOnHand: v.stockOnHand,
     active: v.active,
   };
@@ -97,6 +103,10 @@ const productCreate = z.object({
   sellingPrice: z.number().nonnegative(),
   reorderLevel: z.number().int().nonnegative().default(0),
   stockOnHand: z.number().int().nonnegative().default(0),
+  // Parent gross weight (kg) per UoM unit. Optional override for the
+  // packing-container weight estimator; variant.weightKg trumps this
+  // when set.
+  weightKg: z.number().min(0).max(5000).nullable().optional(),
   batchTracked: z.boolean().default(false),
   // Free-form catalogue description. Empty / null clears the column.
   description: z.string().max(5000).nullish(),
@@ -133,25 +143,17 @@ export const catalogRoutes = async (app: FastifyInstance) => {
 
   app.get("/products", async (req) => {
     const q = (req.query as Record<string, string>) ?? {};
-    return db.product.findMany({
+    const limit = q.limit ? parseInt(q.limit, 10) : 200;
+    const needle = q.q ? normalizeSearchTerm(q.q) : "";
+    const all = await db.product.findMany({
       where: {
         ...(q.type ? { type: q.type } : {}),
-        ...(q.q
-          ? {
-              OR: [
-                { name: { contains: q.q } },
-                { sku: { contains: q.q } },
-                { barcode: { contains: q.q } },
-                { variants: { some: { sku: { contains: q.q } } } },
-                { variants: { some: { barcode: { contains: q.q } } } },
-              ],
-            }
-          : {}),
       },
       include: productInclude,
       orderBy: { sku: "asc" },
-      take: q.limit ? parseInt(q.limit, 10) : 200,
     });
+    if (!needle) return all.slice(0, limit);
+    return all.filter((p) => productMatchesQuery(p, needle)).slice(0, limit);
   });
 
   app.get("/products/:id", async (req, reply) => {
@@ -175,15 +177,24 @@ export const catalogRoutes = async (app: FastifyInstance) => {
   });
 
   app.get("/products/by-barcode/:code", async (req, reply) => {
-    const code = (req.params as { code: string }).code;
-    const p = await db.product.findUnique({ where: { barcode: code }, include: productInclude });
-    if (p) return p;
-    const v = await db.productVariant.findUnique({
-      where: { barcode: code },
-      include: { product: { include: productInclude } },
+    const code = (req.params as { code: string }).code.trim();
+    if (!code) return reply.code(404).send({ error: { code: "not_found" } });
+    const products = await db.product.findMany({
+      where: {
+        OR: [
+          { barcode: { not: "" } },
+          { variants: { some: { barcode: { not: null } } } },
+        ],
+      },
+      include: productInclude,
     });
-    if (!v) return reply.code(404).send({ error: { code: "not_found" } });
-    return { ...v.product, matchedVariantId: v.id };
+    const parent = products.find((p) => codesEqual(p.barcode, code));
+    if (parent) return parent;
+    for (const p of products) {
+      const v = p.variants.find((vv) => vv.barcode && codesEqual(vv.barcode, code));
+      if (v) return { ...p, matchedVariantId: v.id };
+    }
+    return reply.code(404).send({ error: { code: "not_found" } });
   });
 
   app.post("/products", { preHandler: [app.authenticate] }, async (req, reply) => {
@@ -848,7 +859,7 @@ export const catalogRoutes = async (app: FastifyInstance) => {
             shelf: body.shelf.toUpperCase(),
             bin: body.bin.toUpperCase(),
           },
-          wh.code
+          wh
         ),
       };
       try {
@@ -967,7 +978,7 @@ export const catalogRoutes = async (app: FastifyInstance) => {
         if (body.bin !== undefined) {
           const current = await db.bin.findUnique({
             where: { id },
-            include: { warehouse: { select: { code: true } } },
+            include: { warehouse: { select: { code: true, scanPrefix: true } } },
           });
           if (current) {
             data.code = binCodeFromRow(
@@ -976,7 +987,7 @@ export const catalogRoutes = async (app: FastifyInstance) => {
                 shelf: current.shelf,
                 bin: body.bin.toUpperCase(),
               },
-              current.warehouse.code
+              current.warehouse
             );
           }
         }
@@ -1304,7 +1315,7 @@ export const catalogRoutes = async (app: FastifyInstance) => {
         for (const b of affected) {
           await db.bin.update({
             where: { id: b.id },
-            data: { code: binCodeFromRow({ zone: b.zone, shelf: b.shelf, bin: b.bin }, wh.code) },
+            data: { code: binCodeFromRow({ zone: b.zone, shelf: b.shelf, bin: b.bin }, wh) },
           });
         }
       }
@@ -1382,7 +1393,7 @@ export const catalogRoutes = async (app: FastifyInstance) => {
         for (const b of affected) {
           await db.bin.update({
             where: { id: b.id },
-            data: { code: binCodeFromRow({ zone: b.zone, shelf: b.shelf, bin: b.bin }, wh.code) },
+            data: { code: binCodeFromRow({ zone: b.zone, shelf: b.shelf, bin: b.bin }, wh) },
           });
         }
       }

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api, ApiError, auth } from "../../lib/api";
-import { variantSkuLine } from "../../lib/variantAttrs";
+import { variantAttrs } from "../../lib/variantAttrs";
+import { formatScanRef, primaryScanCode, scanCodeSet } from "../../lib/scanCode";
 import { BarcodeScanner } from "../BarcodeScanner";
 import { newClientOpId } from "../clientOpId";
 import {
@@ -113,14 +114,22 @@ export const MobilePickLine = () => {
   // change hook order between renders. Once `line` is null the values
   // are sensible defaults that the JSX never renders anyway.
   const expectedBinCode = line?.bin?.code ?? null;
-  const productExpected = (line?.variant?.sku ?? line?.product?.sku ?? "").toUpperCase();
+  const expectedProductCodes = useMemo(
+    () =>
+      scanCodeSet([
+        line?.product ?? null,
+        line?.variant ?? null,
+      ]),
+    [line?.product, line?.variant]
+  );
+  const productExpected = primaryScanCode(line?.variant ?? line?.product ?? { sku: "" });
   const binMismatch = !!(
     expectedBinCode &&
     binCode &&
     binCode.trim().toUpperCase() !== expectedBinCode.toUpperCase()
   );
   const productMismatch =
-    !!productCode && productCode.trim().toUpperCase() !== productExpected;
+    !!productCode && !expectedProductCodes.has(productCode.trim().toUpperCase());
   const shortPick = !!line && qty < line.qtyToPick;
 
   // Suggest a reason if the worker is about to short-pick / has scanned
@@ -196,7 +205,8 @@ export const MobilePickLine = () => {
   }
 
   const sku = line.variant?.sku ?? line.product?.sku ?? "?";
-  const skuLine = variantSkuLine(sku, line.variant);
+  const scanRef = formatScanRef(line.variant ?? line.product ?? { sku });
+  const attrs = variantAttrs(line.variant);
   const uom = line.variant?.uom ?? line.product?.uom ?? "pcs";
 
   const submit = async () => {
@@ -241,7 +251,10 @@ export const MobilePickLine = () => {
           <span className="text-base font-medium text-slate-900">{line.product?.name ?? "—"}</span>
           <span className="shrink-0 text-xs text-slate-500">to pick {line.qtyToPick} {uom}</span>
         </div>
-        <div className="mt-1 font-mono text-xs text-slate-500">{skuLine}</div>
+        <div className="mt-1 font-mono text-xs text-slate-500">
+          {scanRef}
+          {attrs ? <span className="text-slate-400"> · {attrs}</span> : null}
+        </div>
         {expectedBinCode && (
           <div className="mt-2 text-[11px] text-slate-500">
             expected bin: <span className="font-mono">{expectedBinCode}</span>
@@ -264,7 +277,7 @@ export const MobilePickLine = () => {
           onChange={setProductCode}
           onScan={() => setScanTarget("product")}
           mismatch={productMismatch}
-          placeholder={sku}
+          placeholder={productExpected}
         />
         <div>
           <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-slate-500">

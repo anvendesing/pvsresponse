@@ -593,6 +593,7 @@ const TripDetail = ({
   onOpenInvoice,
   onReschedule,
 }: TripDetailProps) => {
+  const navigate = useNavigate();
   const [editingDate, setEditingDate] = useState(false);
   const [newDate, setNewDate] = useState(dayKey(trip.scheduledDate));
   const used = trip.dispatches.reduce((s, d) => s + (d.weightKg ?? 0), 0);
@@ -705,6 +706,14 @@ const TripDetail = ({
                 Mark all delivered
               </Button>
             )}
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => navigate(`/reports/containers?trip=${trip.id}`)}
+              title="View per-container manifest for this trip"
+            >
+              Manifest
+            </Button>
           </div>
         </div>
 

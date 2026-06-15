@@ -20,11 +20,14 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Chip } from "@/components/common/Chip";
+import { effectiveUom } from "@/data/types";
+import { primaryScanCode } from "@/lib/scanCode";
 import { ShareDocumentMenu } from "@/components/common/ShareDocumentMenu";
 import { api, type InvoiceDetail as InvoiceDetailRow } from "@/lib/api";
 import { dt, inr } from "@/lib/format";
 import { resolveBillingTotals, sumLineAmounts } from "@/lib/billingTotals";
 import { BillingTotalsBreakdown } from "@/components/billing/BillingTotalsBreakdown";
+import { fmtKg } from "@/lib/itemWeight";
 import { TripPicker } from "./TripPicker";
 import { CourierPicker } from "./CourierPicker";
 
@@ -301,6 +304,11 @@ export const InvoiceDetail = ({ invoiceId, onClose, onChanged }: Props) => {
                     <div className="text-caption text-ink-muted">
                       incl. tax {inr(inv.tax)}
                     </div>
+                    {inv.totalWeightKg != null && inv.totalWeightKg > 0 && (
+                      <div className="text-caption text-ink-muted mt-1">
+                        Est. weight {fmtKg(inv.totalWeightKg)}
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -348,7 +356,9 @@ export const InvoiceDetail = ({ invoiceId, onClose, onChanged }: Props) => {
                         <div className="col-span-6">
                           <div className="font-semibold">{it.product.name}</div>
                           <div className="text-caption text-ink-muted font-mono">
-                            {it.variant?.sku ?? it.product.sku}
+                            {it.variant
+                              ? primaryScanCode(it.variant)
+                              : primaryScanCode(it.product)}
                             {it.variant &&
                               (it.variant.size || it.variant.color || it.variant.grade) && (
                                 <span className="ml-2">
@@ -367,7 +377,7 @@ export const InvoiceDetail = ({ invoiceId, onClose, onChanged }: Props) => {
                         <div className="col-span-2 text-right tnum">
                           {it.qty}{" "}
                           <span className="text-ink-muted text-caption">
-                            {it.product.uom}
+                            {effectiveUom(it.product, it.variant)}
                           </span>
                         </div>
                         <div className="col-span-2 text-right tnum">{inr(it.rate)}</div>

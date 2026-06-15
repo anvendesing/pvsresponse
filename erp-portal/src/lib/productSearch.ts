@@ -27,12 +27,12 @@ const effectivePrice = (p: Product, v?: ProductVariant) =>
 const productMatchesTerm = (p: Product, term: string): boolean =>
   p.name.toLowerCase().includes(term) ||
   p.sku.toLowerCase().includes(term) ||
-  p.barcode.includes(term) ||
+  (p.barcode ?? "").toLowerCase().includes(term) ||
   (p.category?.name ?? "").toLowerCase().includes(term);
 
 const variantMatchesTerm = (v: ProductVariant, term: string): boolean =>
   v.sku.toLowerCase().includes(term) ||
-  (v.barcode ?? "").includes(term) ||
+  (v.barcode ?? "").toLowerCase().includes(term) ||
   (v.size ?? "").toLowerCase().includes(term) ||
   (v.color ?? "").toLowerCase().includes(term) ||
   (v.grade ?? "").toLowerCase().includes(term);

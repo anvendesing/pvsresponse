@@ -37,13 +37,13 @@ export const ScannerOverlay = ({ open, onClose }: Props) => {
       products
         .filter(
           (p) =>
-            p.barcode.includes(code) ||
+            p.barcode.toLowerCase().includes(c) ||
             p.sku.toLowerCase().includes(c) ||
             p.name.toLowerCase().includes(c) ||
             (p.variants ?? []).some(
               (v) =>
                 v.sku.toLowerCase().includes(c) ||
-                (v.barcode ?? "").includes(code)
+                (v.barcode ?? "").toLowerCase().includes(c)
             )
         )
         .slice(0, 5)

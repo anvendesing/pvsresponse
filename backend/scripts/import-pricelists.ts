@@ -884,7 +884,7 @@ const productTypeForCategory = (c: Category): string => {
   }
 };
 
-const variantSku = (familyCode: string, idx: number, v: VariantSpec): string => {
+export const variantSku = (familyCode: string, idx: number, v: VariantSpec): string => {
   const sizeBits = v.sizeUnit
     ? `${v.sizeMagnitude}${v.sizeUnit}`.toUpperCase().replace(/\./g, "")
     : "";
@@ -907,6 +907,45 @@ const variantSku = (familyCode: string, idx: number, v: VariantSpec): string => 
   return [familyCode, qualBits, sizeBits, containerBits, String(idx + 1).padStart(2, "0")]
     .filter(Boolean)
     .join("-");
+};
+
+/** De-dup family codes the same way importAll does (curated map collisions). */
+export const dedupFamilyCodes = (families: Family[]): void => {
+  const seenCodes = new Set<string>();
+  for (const f of families) {
+    let c = f.code;
+    let i = 0;
+    while (seenCodes.has(c)) {
+      i++;
+      c = f.code.slice(0, 3) + i;
+    }
+    f.code = c;
+    seenCodes.add(c);
+  }
+};
+
+/**
+ * Map variant SKU → price-list Code No (OS/RC/CH…) using the same family/SKU
+ * logic as importAll. Each row's productCode is the variant barcode.
+ */
+export const buildSkuBarcodeMap = (
+  mrpPath: string,
+  dealerPath: string
+): Map<string, string> => {
+  const mrpRows = parseFile(mrpPath, false);
+  const dealerRows = parseFile(dealerPath, true);
+  const merged = merge(mrpRows, dealerRows);
+  const families = buildFamilies(merged);
+  dedupFamilyCodes(families);
+  const map = new Map<string, string>();
+  for (const f of families) {
+    for (let i = 0; i < f.variants.length; i++) {
+      const v = f.variants[i];
+      const sku = variantSku(f.code, i, v);
+      map.set(sku, v.productCode);
+    }
+  }
+  return map;
 };
 
 const importAll = async () => {
@@ -959,18 +998,7 @@ const importAll = async () => {
     throw new Error("Run the main db:seed first to create RETAIL + DEALER price lists.");
   }
 
-  // De-dup family codes (in case curated map or autoCode collide)
-  const seenCodes = new Set<string>();
-  for (const f of families) {
-    let c = f.code;
-    let i = 0;
-    while (seenCodes.has(c)) {
-      i++;
-      c = f.code.slice(0, 3) + i;
-    }
-    f.code = c;
-    seenCodes.add(c);
-  }
+  dedupFamilyCodes(families);
 
   // Write products + variants + prices
   let productCount = 0;
@@ -1028,7 +1056,8 @@ const importAll = async () => {
         data: {
           productId: product.id,
           sku,
-          barcode: `BC-${sku}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`,
+          barcode: v.productCode,
+          uom: "pc",
           size: v.sizeLabel,
           color: v.qualifier ?? null,
           grade: v.containerHint ?? null,
@@ -1099,11 +1128,13 @@ const importAll = async () => {
   }
 };
 
-importAll()
-  .catch((e) => {
-    console.error(e);
-    process.exit(1);
-  })
-  .finally(async () => {
-    await db.$disconnect();
-  });
+if (process.argv[1]?.replace(/\\/g, "/").includes("import-pricelists")) {
+  importAll()
+    .catch((e) => {
+      console.error(e);
+      process.exit(1);
+    })
+    .finally(async () => {
+      await db.$disconnect();
+    });
+}
