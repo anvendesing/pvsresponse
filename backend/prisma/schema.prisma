@@ -344,7 +344,11 @@ model Customer {
   code            String            @unique
   name            String
   gst             String?
+  // Structured ship-to / billing address (Indian postal format).
+  addressLine     String?
   city            String?
+  state           String?
+  pincode         String?
   contact         String?
   // Total credit we extend to this customer. Outstanding (unpaid) invoice
   // balance is computed at runtime and compared against this when accepting

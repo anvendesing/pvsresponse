@@ -55,7 +55,7 @@ const listInclude = {
 } as const;
 
 const detailInclude = {
-  customer: { select: { id: true, code: true, name: true, city: true } },
+  customer: { select: { id: true, code: true, name: true, addressLine: true, city: true, state: true, pincode: true } },
   assignedTo: { select: { id: true, name: true } },
   createdBy: { select: { id: true, name: true } },
   items: {

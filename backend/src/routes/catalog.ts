@@ -6,6 +6,7 @@ import { recordChange } from "../sync/log.js";
 import { normalizeUomCode } from "../lib/uom.js";
 import { binCodeFromRow } from "../lib/codes.js";
 import { customerNetOpenBalance } from "./customer-payments.js";
+import { customerAddressBody, customerAddressPatch, pincodeSchema } from "../lib/customer-address.js";
 import { generateVariantSku, generateVariantBarcode } from "../lib/tax.js";
 import { productMatchesQuery, normalizeSearchTerm, codesEqual } from "../lib/text-search.js";
 import { createWriteStream, mkdirSync } from "fs";
@@ -1502,11 +1503,11 @@ export const catalogRoutes = async (app: FastifyInstance) => {
     code: z.string().trim().toUpperCase().optional(),
     name: z.string().trim().min(1),
     gst: z.string().trim().nullable().optional(),
-    city: z.string().trim().nullable().optional(),
     contact: z.string().trim().nullable().optional(),
     creditLimit: z.number().nonnegative().default(0),
     priceListId: z.string().nullable().optional(),
     active: z.boolean().default(true),
+    ...customerAddressBody,
   });
 
   app.post("/customers", { preHandler: [app.authenticate] }, async (req, reply) => {
@@ -1525,7 +1526,10 @@ export const catalogRoutes = async (app: FastifyInstance) => {
         code,
         name: body.name,
         gst: body.gst ?? null,
-        city: body.city ?? null,
+        addressLine: body.addressLine,
+        city: body.city,
+        state: body.state ?? null,
+        pincode: body.pincode,
         contact: body.contact ?? null,
         creditLimit: body.creditLimit,
         priceListId: body.priceListId ?? null,
@@ -1547,13 +1551,40 @@ export const catalogRoutes = async (app: FastifyInstance) => {
         code: z.string().trim().toUpperCase().optional(),
         name: z.string().optional(),
         gst: z.string().nullable().optional(),
-        city: z.string().nullable().optional(),
         contact: z.string().nullable().optional(),
         creditLimit: z.number().nonnegative().optional(),
         priceListId: z.string().nullable().optional(),
         active: z.boolean().optional(),
+        ...customerAddressPatch,
       })
       .parse(req.body);
+
+    const existing = await db.customer.findUnique({ where: { id } });
+    if (!existing) return reply.code(404).send({ error: { code: "not_found" } });
+
+    const merged = {
+      addressLine: body.addressLine ?? existing.addressLine,
+      city: body.city ?? existing.city,
+      state: body.state !== undefined ? body.state : existing.state,
+      pincode: body.pincode ?? existing.pincode,
+    };
+    if (!merged.addressLine?.trim() || !merged.city?.trim() || !merged.pincode?.trim()) {
+      return reply.code(400).send({
+        error: {
+          code: "incomplete_address",
+          message: "Address line, city, and pincode are required on every customer.",
+        },
+      });
+    }
+    if (!pincodeSchema.safeParse(merged.pincode).success) {
+      return reply.code(400).send({
+        error: {
+          code: "invalid_pincode",
+          message: "Pincode must be a valid 6-digit Indian postal code.",
+        },
+      });
+    }
+
     try {
       const updated = await db.customer.update({
         where: { id },

@@ -307,7 +307,7 @@ const dispatchOptionSelect = {
 } as const;
 
 const fullQuoteInclude = {
-  customer: { select: { id: true, code: true, name: true, gst: true, city: true, creditLimit: true } },
+  customer: { select: { id: true, code: true, name: true, gst: true, addressLine: true, city: true, state: true, pincode: true, creditLimit: true } },
   dispatchOption: { select: dispatchOptionSelect },
   items: {
     include: {
@@ -319,7 +319,7 @@ const fullQuoteInclude = {
 } as const;
 
 const fullSoInclude = {
-  customer: { select: { id: true, code: true, name: true, gst: true, city: true } },
+  customer: { select: { id: true, code: true, name: true, gst: true, addressLine: true, city: true, state: true, pincode: true } },
   dispatchOption: { select: dispatchOptionSelect },
   items: {
     include: {
@@ -626,7 +626,7 @@ export const salesRoutes = async (app: FastifyInstance) => {
           : {}),
       },
       include: {
-        customer: { select: { id: true, code: true, name: true, city: true } },
+        customer: { select: { id: true, code: true, name: true, addressLine: true, city: true, state: true, pincode: true } },
         _count: { select: { items: true, revisions: true } },
       },
       orderBy: { createdAt: "desc" },
@@ -707,7 +707,7 @@ export const salesRoutes = async (app: FastifyInstance) => {
     const quote = await db.quote.findUnique({
       where: { shareToken: token },
       include: {
-        customer: { select: { name: true, gst: true, city: true, contact: true } },
+        customer: { select: { name: true, gst: true, addressLine: true, city: true, state: true, pincode: true, contact: true } },
         dispatchOption: { select: { code: true, name: true, category: true } },
         items: {
           include: {
@@ -1203,7 +1203,7 @@ export const salesRoutes = async (app: FastifyInstance) => {
           : {}),
       },
       include: {
-        customer: { select: { id: true, code: true, name: true, city: true } },
+        customer: { select: { id: true, code: true, name: true, addressLine: true, city: true, state: true, pincode: true } },
         _count: { select: { items: true, invoices: true } },
         items: { select: { qtyOrdered: true, qtyInvoiced: true, qtyCancelled: true } },
       },

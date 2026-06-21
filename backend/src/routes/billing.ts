@@ -7,6 +7,7 @@ import { checkStockRules } from "../lib/stock-rules.js";
 import { resolveGstRate, computeTax, lineTax } from "../lib/tax.js";
 import { evaluateCreditGate } from "./sales.js";
 import { applyAdvancesToInvoice } from "./customer-payments.js";
+import { formatCustomerDestination } from "../lib/customer-address.js";
 import { recomputeInvoiceWeight } from "../lib/document-weight.js";
 
 const invoiceCreate = z.object({
@@ -30,7 +31,7 @@ export const billingRoutes = async (app: FastifyInstance) => {
     return db.invoice.findMany({
       where: { ...(q.status ? { status: q.status } : {}) },
       include: {
-        customer: { select: { name: true, code: true, city: true } },
+        customer: { select: { name: true, code: true, addressLine: true, city: true, state: true, pincode: true } },
         items: {
           include: {
             product: { select: { sku: true, name: true, uom: true } },
@@ -479,6 +480,15 @@ export const billingRoutes = async (app: FastifyInstance) => {
           },
         });
       }
+      if (!inv.customer.pincode?.trim()) {
+        return reply.code(400).send({
+          error: {
+            code: "missing_pincode",
+            message:
+              "Customer pincode is required for dispatch. Update the customer address in Customers.",
+          },
+        });
+      }
 
       // Validate the target trip if tripId is set.
       let trip: Awaited<ReturnType<typeof db.trip.findUnique>> | null = null;
@@ -525,7 +535,8 @@ export const billingRoutes = async (app: FastifyInstance) => {
           // dispatch columns stay null. Direct dispatches keep them.
           vehicle: trip ? null : (body.vehicle ?? null),
           driver: trip ? null : (body.driver ?? null),
-          destination: body.destination?.trim() || inv.customer.city || inv.customer.name,
+          destination:
+            body.destination?.trim() || formatCustomerDestination(inv.customer),
           etaHours: body.etaHours,
           weightKg: effectiveWeight,
           status: body.status,

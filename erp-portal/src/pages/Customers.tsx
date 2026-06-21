@@ -18,8 +18,9 @@ import {
   type CustomerStatement,
   type PriceListRow,
 } from "@/lib/api";
-import { inr } from "@/lib/format";
+import { inr, arBalanceInr } from "@/lib/format";
 import { cn } from "@/lib/cn";
+import { formatCustomerSummary, validatePincode } from "@/lib/customerAddress";
 import { RecordPaymentModal } from "@/components/customers/RecordPaymentModal";
 
 type ActiveFilter = "all" | "active" | "inactive";
@@ -58,6 +59,8 @@ export const Customers = () => {
         c.code.toLowerCase().includes(term) ||
         (c.gst ?? "").toLowerCase().includes(term) ||
         (c.city ?? "").toLowerCase().includes(term) ||
+        (c.pincode ?? "").toLowerCase().includes(term) ||
+        (c.addressLine ?? "").toLowerCase().includes(term) ||
         (c.contact ?? "").toLowerCase().includes(term)
       );
     });
@@ -108,7 +111,10 @@ export const Customers = () => {
         <div>
           <div className="font-semibold text-ink">{r.name}</div>
           <div className="text-caption text-ink-muted">
-            {[r.city, r.contact].filter(Boolean).join(" · ") || "—"}
+            {[formatCustomerSummary(r), r.contact].filter(Boolean).join(" · ") || "—"}
+            {!r.pincode && (
+              <span className="ml-1 text-warning font-semibold">· no pincode</span>
+            )}
           </div>
         </div>
       ),
@@ -195,8 +201,8 @@ export const Customers = () => {
     },
     {
       key: "history",
-      header: "Activity",
-      width: "160px",
+      header: "Sales activity",
+      width: "140px",
       cell: (r) => {
         const c = r._count;
         if (!c) return <span className="text-caption text-ink-muted">—</span>;
@@ -230,28 +236,29 @@ export const Customers = () => {
     },
     {
       key: "actions",
-      header: "",
-      width: "100px",
+      header: "Actions",
+      width: "120px",
       align: "right",
+      className: "sticky right-0 bg-surface shadow-[-4px_0_8px_-4px_rgba(0,0,0,0.08)]",
       cell: (r) => (
         <div className="flex items-center gap-1 justify-end">
           <button
             onClick={(e) => { e.stopPropagation(); setStatementCustomer(r); }}
-            className="h-7 w-7 grid place-items-center rounded-md text-ink-muted hover:bg-canvas hover:text-primary"
-            title="View statement"
+            className="h-7 px-2 grid place-items-center rounded-md text-ink-muted hover:bg-canvas hover:text-primary"
+            title="Payment history (AR statement)"
           >
             <BookOpen size={14} />
           </button>
           <button
             onClick={(e) => { e.stopPropagation(); setPaymentTarget(r); }}
-            className="h-7 w-7 grid place-items-center rounded-md text-ink-muted hover:bg-canvas hover:text-success"
+            className="h-7 px-2 grid place-items-center rounded-md text-ink-muted hover:bg-canvas hover:text-success"
             title="Record payment"
           >
             <DollarSign size={14} />
           </button>
           <button
             onClick={(e) => { e.stopPropagation(); openEdit(r); }}
-            className="h-7 w-7 grid place-items-center rounded-md text-ink-muted hover:bg-canvas hover:text-primary"
+            className="h-7 px-2 grid place-items-center rounded-md text-ink-muted hover:bg-canvas hover:text-primary"
             title="Edit customer"
           >
             <Pencil size={14} />
@@ -289,7 +296,7 @@ export const Customers = () => {
         <Input
           size="sm"
           iconLeft={<Search size={14} />}
-          placeholder="Search by name, code, GSTIN, city, contact…"
+          placeholder="Search by name, code, GSTIN, city, pincode, address…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
           className="!h-8 max-w-xs"
@@ -310,7 +317,12 @@ export const Customers = () => {
             </button>
           ))}
         </div>
-        <span className="ml-auto text-caption text-ink-muted">
+        <span className="ml-auto text-caption text-ink-muted hidden sm:inline">
+          Scroll right for Actions ·{" "}
+          <BookOpen size={12} className="inline -mt-0.5" /> statement ·{" "}
+          <DollarSign size={12} className="inline -mt-0.5" /> record payment
+        </span>
+        <span className="ml-auto text-caption text-ink-muted sm:hidden">
           {filtered.length} customer{filtered.length === 1 ? "" : "s"}
         </span>
       </div>
@@ -422,7 +434,10 @@ const CustomerEditor = ({
   const [code, setCode] = useState(customer?.code ?? "");
   const [name, setName] = useState(customer?.name ?? "");
   const [gst, setGst] = useState(customer?.gst ?? "");
+  const [addressLine, setAddressLine] = useState(customer?.addressLine ?? customer?.city ?? "");
   const [city, setCity] = useState(customer?.city ?? "");
+  const [state, setState] = useState(customer?.state ?? "");
+  const [pincode, setPincode] = useState(customer?.pincode ?? "");
   const [contact, setContact] = useState(customer?.contact ?? "");
   const [creditLimit, setCreditLimit] = useState<number>(customer?.creditLimit ?? 0);
   const [priceListId, setPriceListId] = useState<string>(customer?.priceListId ?? "");
@@ -430,7 +445,13 @@ const CustomerEditor = ({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const canSave = name.trim().length > 0 && !busy;
+  const pincodeError = validatePincode(pincode);
+  const canSave =
+    name.trim().length > 0 &&
+    addressLine.trim().length >= 3 &&
+    city.trim().length >= 2 &&
+    !pincodeError &&
+    !busy;
 
   const submit = async () => {
     setBusy(true);
@@ -440,7 +461,10 @@ const CustomerEditor = ({
         name: name.trim(),
         code: code.trim() || undefined,
         gst: gst.trim() || null,
-        city: city.trim() || null,
+        addressLine: addressLine.trim(),
+        city: city.trim(),
+        state: state.trim() || null,
+        pincode: pincode.trim(),
         contact: contact.trim() || null,
         creditLimit: Number.isFinite(creditLimit) ? Math.max(0, creditLimit) : 0,
         priceListId: priceListId || null,
@@ -550,14 +574,6 @@ const CustomerEditor = ({
                 disabled={busy}
               />
             </Field>
-            <Field label="City">
-              <Input
-                value={city}
-                onChange={(e) => setCity(e.target.value)}
-                placeholder="Bengaluru"
-                disabled={busy}
-              />
-            </Field>
             <Field label="Contact">
               <Input
                 value={contact}
@@ -565,6 +581,41 @@ const CustomerEditor = ({
                 placeholder="+91 98765 43210 / name@example.com"
                 disabled={busy}
               />
+            </Field>
+            <Field label="Address line *" className="col-span-2">
+              <Input
+                value={addressLine}
+                onChange={(e) => setAddressLine(e.target.value)}
+                placeholder="Door no, street, area, landmark"
+                disabled={busy}
+              />
+            </Field>
+            <Field label="City / town *">
+              <Input
+                value={city}
+                onChange={(e) => setCity(e.target.value)}
+                placeholder="Nellore"
+                disabled={busy}
+              />
+            </Field>
+            <Field label="State">
+              <Input
+                value={state}
+                onChange={(e) => setState(e.target.value)}
+                placeholder="Andhra Pradesh"
+                disabled={busy}
+              />
+            </Field>
+            <Field label="Pincode *" hint="Required for courier posting and address slips">
+              <Input
+                value={pincode}
+                onChange={(e) => setPincode(e.target.value.replace(/\D/g, "").slice(0, 6))}
+                placeholder="524004"
+                disabled={busy}
+              />
+              {pincode && pincodeError && (
+                <div className="text-caption text-danger mt-1">{pincodeError}</div>
+              )}
             </Field>
             <Field label="Credit limit (₹)" hint="0 = cash only">
               <Input
@@ -716,7 +767,7 @@ const CustomerStatementPanel = ({
       className="fixed inset-0 z-[60] bg-ink/40 flex justify-end"
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
-      <div className="bg-surface h-full w-full max-w-2xl flex flex-col shadow-2xl">
+      <div className="bg-surface h-full w-full max-w-3xl flex flex-col shadow-2xl">
         {/* Header */}
         <div className="px-5 py-4 border-b border-border flex items-center gap-3 shrink-0">
           <BookOpen size={18} className="text-primary" />
@@ -740,12 +791,16 @@ const CustomerStatementPanel = ({
         </div>
 
         {/* Summary KPI row */}
-        {stmt && (
-          <div className="grid grid-cols-3 gap-0 border-b border-border shrink-0">
+        {stmt && (() => {
+          const closing = stmt.entries[stmt.entries.length - 1]?.balance ?? 0;
+          const closingFmt = arBalanceInr(closing);
+          return (
+          <div className="border-b border-border shrink-0">
+            <div className="grid grid-cols-3 gap-0">
             {[
               {
-                label: "Open Balance",
-                value: inr(stmt.customer.openBalance),
+                label: "Open AR (owed)",
+                value: stmt.customer.openBalance > 0 ? inr(stmt.customer.openBalance) : "—",
                 highlight: stmt.customer.openBalance > 0,
               },
               {
@@ -766,13 +821,38 @@ const CustomerStatementPanel = ({
             ].map((k) => (
               <div key={k.label} className="px-4 py-3 border-r last:border-r-0 border-border">
                 <p className="text-caption text-ink-muted">{k.label}</p>
-                <p className={cn("text-h3 font-bold tnum", k.highlight ? "text-warning" : "text-ink")}>
+                <p className={cn("text-h3 font-bold tnum whitespace-nowrap", k.highlight ? "text-warning" : "text-ink")}>
                   {k.value}
                 </p>
               </div>
             ))}
+            </div>
+            <div className="px-4 py-2 bg-canvas border-t border-border flex items-center justify-between gap-3 text-body-sm">
+              <span className="text-ink-muted">
+                Ledger closing balance
+                <span className="hidden sm:inline"> · Dr = owes · Cr = advance</span>
+              </span>
+              <span
+                className={cn(
+                  "font-bold tnum whitespace-nowrap",
+                  closingFmt.tone === "owed" && "text-warning",
+                  closingFmt.tone === "advance" && "text-success",
+                  closingFmt.tone === "zero" && "text-ink-muted"
+                )}
+              >
+                {closingFmt.text}
+              </span>
+            </div>
+            {closingFmt.tone === "advance" && (
+              <div className="px-4 py-2 bg-success/5 border-t border-success/20 text-caption text-ink">
+                Payments exceed invoiced amount — customer has{" "}
+                <strong>{inr(Math.abs(closing))}</strong> advance on account.
+                This is not an error; large prepayments show as <strong>Cr</strong> balances.
+              </div>
+            )}
           </div>
-        )}
+          );
+        })()}
 
         {/* Open-balance breakdown banner. The KPI strip's Open Balance
             includes any un-invoiced commitment from partially-fulfilled
@@ -881,9 +961,9 @@ const CustomerStatementPanel = ({
                   <th className="px-3 py-2 text-left text-caption font-semibold text-ink-muted">Date</th>
                   <th className="px-3 py-2 text-left text-caption font-semibold text-ink-muted">Ref</th>
                   <th className="px-3 py-2 text-left text-caption font-semibold text-ink-muted">Description</th>
-                  <th className="px-3 py-2 text-right text-caption font-semibold text-ink-muted">Debit</th>
-                  <th className="px-3 py-2 text-right text-caption font-semibold text-ink-muted">Credit</th>
-                  <th className="px-3 py-2 text-right text-caption font-semibold text-ink-muted">Balance</th>
+                  <th className="px-3 py-2 text-right text-caption font-semibold text-ink-muted whitespace-nowrap">Debit</th>
+                  <th className="px-3 py-2 text-right text-caption font-semibold text-ink-muted whitespace-nowrap">Credit</th>
+                  <th className="px-3 py-2 text-right text-caption font-semibold text-ink-muted whitespace-nowrap min-w-[9rem]">Balance</th>
                 </tr>
               </thead>
               <tbody>
@@ -908,14 +988,27 @@ const CustomerStatementPanel = ({
                         </span>
                       )}
                     </td>
-                    <td className="px-3 py-2 text-right tnum text-error font-medium">
+                    <td className="px-3 py-2 text-right tnum text-error font-medium whitespace-nowrap">
                       {e.debit > 0 ? inr(e.debit) : ""}
                     </td>
-                    <td className="px-3 py-2 text-right tnum text-success font-medium">
+                    <td className="px-3 py-2 text-right tnum text-success font-medium whitespace-nowrap">
                       {e.credit > 0 ? inr(e.credit) : ""}
                     </td>
-                    <td className="px-3 py-2 text-right tnum font-semibold">
-                      {inr(e.balance)}
+                    <td className="px-3 py-2 text-right tnum font-semibold whitespace-nowrap min-w-[9rem]">
+                      {(() => {
+                        const b = arBalanceInr(e.balance);
+                        return (
+                          <span
+                            className={cn(
+                              b.tone === "owed" && "text-warning",
+                              b.tone === "advance" && "text-success",
+                              b.tone === "zero" && "text-ink-muted"
+                            )}
+                          >
+                            {b.text}
+                          </span>
+                        );
+                      })()}
                     </td>
                   </tr>
                 ))}
@@ -923,8 +1016,8 @@ const CustomerStatementPanel = ({
               <tfoot>
                 <tr className="bg-canvas border-t-2 border-border font-semibold">
                   <td colSpan={5} className="px-3 py-2 text-right text-body-sm">Closing balance</td>
-                  <td className="px-3 py-2 text-right tnum text-ink">
-                    {inr(stmt.entries[stmt.entries.length - 1]?.balance ?? 0)}
+                  <td className="px-3 py-2 text-right tnum text-ink whitespace-nowrap min-w-[9rem]">
+                    {arBalanceInr(stmt.entries[stmt.entries.length - 1]?.balance ?? 0).text}
                   </td>
                 </tr>
               </tfoot>

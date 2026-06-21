@@ -24,6 +24,7 @@ import { effectiveUom } from "@/data/types";
 import { primaryScanCode } from "@/lib/scanCode";
 import { ShareDocumentMenu } from "@/components/common/ShareDocumentMenu";
 import { api, type InvoiceDetail as InvoiceDetailRow } from "@/lib/api";
+import { formatCustomerSummary, formatCustomerAddress } from "@/lib/customerAddress";
 import { dt, inr } from "@/lib/format";
 import { resolveBillingTotals, sumLineAmounts } from "@/lib/billingTotals";
 import { BillingTotalsBreakdown } from "@/components/billing/BillingTotalsBreakdown";
@@ -143,7 +144,7 @@ export const InvoiceDetail = ({ invoiceId, onClose, onChanged }: Props) => {
         invoiceId: inv.id,
         tripId,
         weightKg: estimatedWeightKg,
-        destination: inv.customer.city ?? undefined,
+        destination: formatCustomerSummary(inv.customer) || undefined,
       });
       setShowTripPicker(false);
       setOkBanner(`Drop added to trip ${tripNo}.`);
@@ -285,10 +286,10 @@ export const InvoiceDetail = ({ invoiceId, onClose, onChanged }: Props) => {
                       Bill to
                     </div>
                     <div className="text-body font-bold">{inv.customer.name}</div>
-                    <div className="text-body-sm text-ink-muted">
-                      {inv.customer.city}
+                    <div className="text-body-sm text-ink-muted whitespace-pre-line">
+                      {formatCustomerAddress(inv.customer)}
                       {inv.customer.gst && (
-                        <span> · GSTIN {inv.customer.gst}</span>
+                        <span className="block mt-1">GSTIN {inv.customer.gst}</span>
                       )}
                     </div>
                     <div className="text-caption text-ink-muted mt-1 space-x-3">

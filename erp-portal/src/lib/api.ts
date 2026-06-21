@@ -214,7 +214,10 @@ export interface CustomerRow {
   id: string;
   code: string;
   name: string;
+  addressLine?: string | null;
   city?: string | null;
+  state?: string | null;
+  pincode?: string | null;
   gst?: string | null;
   contact?: string | null;
   creditLimit?: number;
@@ -317,8 +320,11 @@ export interface CustomerStatement {
 export interface CustomerInput {
   code?: string;
   name: string;
+  addressLine: string;
+  city: string;
+  state?: string | null;
+  pincode: string;
   gst?: string | null;
-  city?: string | null;
   contact?: string | null;
   creditLimit?: number;
   priceListId?: string | null;
@@ -4101,6 +4107,26 @@ export const api = {
       clientOpId?: string;
     }
   ) => fetcher<Raw>(`/bins/${binId}/reassign`, { method: "POST", body }),
+  bulkZoneStock: (
+    warehouseId: string,
+    zone: string,
+    body: {
+      reasonCode?:
+        | "physical_match"
+        | "damage"
+        | "found_elsewhere"
+        | "product_swap"
+        | "spillage"
+        | "expired"
+        | "other";
+      remarks?: string | null;
+      items: Array<{ binId: string; barcode?: string; qty?: number }>;
+    }
+  ) =>
+    fetcher<Raw>(
+      `/warehouses/${warehouseId}/zones/${encodeURIComponent(zone)}/bins/bulk-stock`,
+      { method: "POST", body }
+    ),
   logScanEvent: (body: {
     kind: "bin" | "shelf" | "zone" | "product" | "unknown";
     code: string;
