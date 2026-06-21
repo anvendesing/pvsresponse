@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import type { Product } from "../../data/types";
 import { api, auth } from "../../lib/api";
 import { searchProductsForBinAssign } from "../../lib/productSearch";
@@ -260,6 +260,15 @@ export const MobileCount = () => {
 
   return (
     <div className="px-4 pt-4 pb-8">
+      <div className="mb-4 flex gap-2">
+        <Link
+          to="/m/bulk-zone"
+          className="flex-1 rounded-xl bg-white px-3 py-3 text-center text-sm font-semibold text-[#003087] ring-1 ring-slate-200 shadow-sm"
+        >
+          Bulk zone update
+        </Link>
+      </div>
+
       {/* Mode switcher */}
       <div className="mb-4 flex rounded-2xl bg-slate-200 p-1 gap-0.5">
         {(["scan", "adjust"] as const).map((m) => (

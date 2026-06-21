@@ -182,6 +182,12 @@ export const MobileTasks = () => {
             desc="Scan a bin to recount, reassign, or adjust stock"
           />
           <QuickLink
+            to="/m/bulk-zone"
+            icon="📋"
+            title="Bulk zone stock update"
+            desc="Update barcode and qty for all bins in a zone at once"
+          />
+          <QuickLink
             to="/m/returns"
             icon="↩️"
             title="Customer Returns"

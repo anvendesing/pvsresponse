@@ -49,6 +49,7 @@ import { MobileBin } from "./mobile/screens/MobileBin";
 import { MobileProfile } from "./mobile/screens/MobileProfile";
 import { MobileGrnList, MobileGrnReceive } from "./mobile/screens/MobileGrn";
 import { MobileCount } from "./mobile/screens/MobileCount";
+import { MobileBulkZone } from "./mobile/screens/MobileBulkZone";
 import { MobileReturnList, MobileReturnDetail } from "./mobile/screens/MobileReturn";
 import { Store } from "./pages/Store";
 
@@ -96,6 +97,7 @@ const App = () => {
         <Route path="/m/grn/:poId" element={<MobileGrnReceive />} />
         {/* Bin cycle count / stock adjustment */}
         <Route path="/m/count" element={<MobileCount />} />
+        <Route path="/m/bulk-zone" element={<MobileBulkZone />} />
         {/* Returns processing */}
         <Route path="/m/returns" element={<MobileReturnList />} />
         <Route path="/m/returns/:id" element={<MobileReturnDetail />} />

@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronRight,
+  ClipboardList,
   Map as MapIcon,
   Pencil,
   Plus,
@@ -26,6 +27,7 @@ import type { Bin } from "@/data/types";
 import { num } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { BinLayoutModal } from "@/components/warehouse/BinLayoutModal";
+import { BulkZoneStockPanel } from "@/components/warehouse/BulkZoneStockPanel";
 
 import type { WarehouseRow } from "@/lib/api";
 
@@ -257,6 +259,7 @@ export const Warehouse = () => {
 
   // Bin layout (add/edit/delete) modal & banners.
   const [layoutMode, setLayoutMode] = useState<"single" | "bulk" | null>(null);
+  const [bulkStockMode, setBulkStockMode] = useState(false);
   const [editing, setEditing] = useState<Bin | null>(null);
   const [okBanner, setOkBanner] = useState<string | null>(null);
   const [errBanner, setErrBanner] = useState<string | null>(null);
@@ -377,6 +380,20 @@ export const Warehouse = () => {
   const totalBins = bins.length;
   const occupiedBins = bins.filter((b) => b.qty).length;
 
+  if (bulkStockMode) {
+    return (
+      <BulkZoneStockPanel
+        warehouses={warehouses}
+        bins={bins}
+        onClose={() => setBulkStockMode(false)}
+        onSaved={async () => {
+          await refreshBins();
+          setOkBanner("Bulk stock update saved.");
+        }}
+      />
+    );
+  }
+
   return (
     <div className="h-full flex flex-col">
       <Toolbar
@@ -388,6 +405,14 @@ export const Warehouse = () => {
         }
         right={
           <>
+            <Button
+              variant="outline"
+              size="sm"
+              icon={<ClipboardList size={14} />}
+              onClick={() => setBulkStockMode(true)}
+            >
+              Bulk stock update
+            </Button>
             <Button
               variant="outline"
               size="sm"

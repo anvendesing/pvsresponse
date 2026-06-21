@@ -4,6 +4,12 @@ import { db } from "../db.js";
 import { recordChange } from "../sync/log.js";
 import { checkStockRules } from "../lib/stock-rules.js";
 import { productMatchesQuery, normalizeSearchTerm } from "../lib/text-search.js";
+import { resolveProductScan } from "../lib/resolve-product-scan.js";
+import {
+  applyBinReassign,
+  applyBinRecount,
+  RECOUNT_REASONS,
+} from "../lib/bin-stock-update.js";
 
 const transferSchema = z.object({
   productId: z.string(),
@@ -550,16 +556,7 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
 
   // ================================================== Cycle counts (mobile) ===
   // Reason codes are deliberately closed-set; "other" + free-text remarks
-  // is the escape hatch.
-  const RECOUNT_REASONS = [
-    "physical_match",
-    "damage",
-    "found_elsewhere",
-    "product_swap",
-    "spillage",
-    "expired",
-    "other",
-  ] as const;
+  // is the escape hatch. (RECOUNT_REASONS imported from bin-stock-update.)
 
   // Variance threshold: any recount where the absolute delta exceeds
   // 10% of the previous qty (or 50 units flat) gets BinCount.flagged=true.
@@ -974,6 +971,170 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
 
       await recordChange("BinCount", result.id, "insert", result, req.user.sub);
       return result;
+    }
+  );
+
+  // POST /warehouses/:warehouseId/zones/:zone/bins/bulk-stock
+  // Bulk cycle-count / reassign for every bin in a zone. Rows with no
+  // barcode and no qty are skipped (no change). Qty-only rows recount the
+  // existing product; barcode+qty rows reassign or recount depending on match.
+  app.post(
+    "/warehouses/:warehouseId/zones/:zone/bins/bulk-stock",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      const { warehouseId, zone } = req.params as {
+        warehouseId: string;
+        zone: string;
+      };
+      const body = z
+        .object({
+          reasonCode: z.enum(RECOUNT_REASONS).default("physical_match"),
+          remarks: z.string().max(500).nullable().optional(),
+          items: z
+            .array(
+              z.object({
+                binId: z.string().min(1),
+                barcode: z.string().optional(),
+                qty: z.number().nonnegative().optional(),
+              })
+            )
+            .min(1)
+            .max(500),
+        })
+        .parse(req.body);
+
+      const wh = await db.warehouse.findUnique({
+        where: { id: warehouseId },
+        select: { id: true, code: true },
+      });
+      if (!wh) {
+        return reply.code(404).send({ error: { code: "not_found", message: "Warehouse not found" } });
+      }
+
+      const zoneBins = await db.bin.findMany({
+        where: { warehouseId, zone },
+      });
+      const binById = new Map(zoneBins.map((b) => [b.id, b]));
+
+      type RowResult =
+        | { binId: string; status: "skipped"; reason: string }
+        | { binId: string; status: "applied"; action: "recount" | "reassign"; location: string }
+        | { binId: string; status: "error"; message: string };
+
+      const results: RowResult[] = [];
+
+      for (const item of body.items) {
+        const barcode = item.barcode?.trim() ?? "";
+        const hasBarcode = barcode.length > 0;
+        const hasQty = item.qty !== undefined;
+
+        if (!hasBarcode && !hasQty) {
+          results.push({ binId: item.binId, status: "skipped", reason: "no_input" });
+          continue;
+        }
+
+        const bin = binById.get(item.binId);
+        if (!bin) {
+          results.push({
+            binId: item.binId,
+            status: "error",
+            message: `Bin is not in ${wh.code} zone ${zone}`,
+          });
+          continue;
+        }
+
+        const location = `${bin.zone}/${bin.shelf}/${bin.bin}`;
+
+        try {
+          if (hasBarcode && !hasQty) {
+            results.push({
+              binId: item.binId,
+              status: "skipped",
+              reason: "qty_required_with_barcode",
+            });
+            continue;
+          }
+
+          if (!hasBarcode && hasQty) {
+            if (!bin.productId) {
+              results.push({
+                binId: item.binId,
+                status: "error",
+                message: "Empty bin — scan a product barcode to assign stock",
+              });
+              continue;
+            }
+            const after = Math.round(item.qty!);
+            if (after === (bin.qty ?? 0)) {
+              results.push({ binId: item.binId, status: "skipped", reason: "unchanged" });
+              continue;
+            }
+            const count = await applyBinRecount(bin, {
+              qtyAfter: after,
+              reasonCode: body.reasonCode,
+              remarks: body.remarks,
+              userId: req.user.sub,
+            });
+            await recordChange("BinCount", count.id, "insert", count, req.user.sub);
+            results.push({ binId: item.binId, status: "applied", action: "recount", location });
+            continue;
+          }
+
+          // barcode + qty
+          const resolved = await resolveProductScan(barcode);
+          if (!resolved) {
+            results.push({
+              binId: item.binId,
+              status: "error",
+              message: `Unknown barcode or SKU: ${barcode}`,
+            });
+            continue;
+          }
+
+          const after = Math.round(item.qty!);
+          const sameProduct =
+            bin.productId === resolved.productId &&
+            (bin.variantId ?? null) === resolved.variantId;
+
+          if (sameProduct) {
+            if (after === (bin.qty ?? 0)) {
+              results.push({ binId: item.binId, status: "skipped", reason: "unchanged" });
+              continue;
+            }
+            const count = await applyBinRecount(bin, {
+              qtyAfter: after,
+              reasonCode: body.reasonCode,
+              remarks: body.remarks,
+              userId: req.user.sub,
+            });
+            await recordChange("BinCount", count.id, "insert", count, req.user.sub);
+            results.push({ binId: item.binId, status: "applied", action: "recount", location });
+          } else {
+            const count = await applyBinReassign(bin, {
+              productId: resolved.productId,
+              variantId: resolved.variantId,
+              qty: after,
+              reasonCode: sameProduct ? body.reasonCode : "product_swap",
+              remarks: body.remarks,
+              userId: req.user.sub,
+            });
+            await recordChange("BinCount", count.id, "insert", count, req.user.sub);
+            results.push({ binId: item.binId, status: "applied", action: "reassign", location });
+          }
+        } catch (e) {
+          results.push({
+            binId: item.binId,
+            status: "error",
+            message: (e as Error).message ?? "Update failed",
+          });
+        }
+      }
+
+      const applied = results.filter((r) => r.status === "applied").length;
+      const skipped = results.filter((r) => r.status === "skipped").length;
+      const errors = results.filter((r) => r.status === "error").length;
+
+      return { applied, skipped, errors, results };
     }
   );
 };
