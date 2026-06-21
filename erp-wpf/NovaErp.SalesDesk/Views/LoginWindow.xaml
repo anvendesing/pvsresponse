@@ -1,0 +1,62 @@
+<Window x:Class="NovaErp.SalesDesk.Views.LoginWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="NovaERP Sales Desk"
+        Height="720" Width="1100"
+        WindowStartupLocation="CenterScreen"
+        Background="{StaticResource CanvasBrush}">
+  <Grid>
+    <Grid.ColumnDefinitions>
+      <ColumnDefinition Width="45*" />
+      <ColumnDefinition Width="55*" />
+    </Grid.ColumnDefinitions>
+
+    <!-- Brand panel -->
+    <Grid Grid.Column="0">
+      <Grid.Background>
+        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+          <GradientStop Color="#003087" Offset="0" />
+          <GradientStop Color="#00246B" Offset="1" />
+        </LinearGradientBrush>
+      </Grid.Background>
+      <Canvas Opacity="0.12">
+        <Ellipse Width="400" Height="400" Canvas.Left="40" Canvas.Top="80" Fill="#009CDE" />
+        <Ellipse Width="480" Height="480" Canvas.Left="220" Canvas.Top="320" Fill="#F5BA2E" />
+      </Canvas>
+      <StackPanel Margin="48" VerticalAlignment="Center">
+        <Border Background="White" CornerRadius="8" Width="44" Height="44" Margin="0,0,0,24">
+          <TextBlock Text="N" FontSize="24" FontWeight="Bold" Foreground="{StaticResource PrimaryBrush}"
+                     HorizontalAlignment="Center" VerticalAlignment="Center" />
+        </Border>
+        <TextBlock Text="NovaERP Sales Desk" FontSize="32" FontWeight="Bold" Foreground="White" Margin="0,0,0,8" />
+        <TextBlock Text="Keyboard-first quoting, orders &amp; fulfilment" FontSize="14" Foreground="#CCFFFFFF" Margin="0,0,0,32" />
+        <TextBlock Text="Ctrl+N new quote · Ctrl+K customer · F3 product · F10 pick/pack complete"
+                   TextWrapping="Wrap" Foreground="#AAFFFFFF" FontFamily="{StaticResource MonoFont}" FontSize="12" />
+      </StackPanel>
+      <StackPanel VerticalAlignment="Bottom" Margin="48" Orientation="Horizontal">
+        <Ellipse Width="8" Height="8" Fill="{Binding BackendOnline, Converter={StaticResource BoolToBrushConverter}}" Margin="0,0,8,0" />
+        <TextBlock Text="{Binding BackendOnline, Converter={StaticResource OnlineTextConverter}}" Foreground="#CCFFFFFF" FontSize="12" />
+      </StackPanel>
+    </Grid>
+
+    <!-- Login form -->
+    <Border Grid.Column="1" Background="{StaticResource CanvasBrush}" Padding="56">
+      <StackPanel VerticalAlignment="Center" MaxWidth="420">
+        <TextBlock Text="Sign in" FontSize="28" FontWeight="Bold" Foreground="{StaticResource InkBrush}" Margin="0,0,0,8" />
+        <TextBlock Text="Use your ERP credentials (billing or supervisor role)." Foreground="{StaticResource InkMutedBrush}" Margin="0,0,0,24" />
+
+        <TextBlock Text="Username" FontWeight="SemiBold" Margin="0,0,0,6" />
+        <TextBox Style="{StaticResource ErpTextBox}" Text="{Binding Username, UpdateSourceTrigger=PropertyChanged}" Margin="0,0,0,16" />
+
+        <TextBlock Text="Password" FontWeight="SemiBold" Margin="0,0,0,6" />
+        <PasswordBox x:Name="PasswordBox" Padding="10,8" Margin="0,0,0,8" PasswordChanged="PasswordBox_OnPasswordChanged" />
+
+        <TextBlock Text="{Binding ErrorMessage}" Foreground="{StaticResource DangerBrush}" TextWrapping="Wrap" Margin="0,0,0,12" />
+
+        <Button Style="{StaticResource ErpPrimaryButton}" Content="Sign in" Command="{Binding LoginCommand}"
+                IsEnabled="{Binding IsBusy, Converter={StaticResource InverseBoolConverter}}" Height="44" Margin="0,8,0,0" />
+        <TextBlock Text="Enter to submit · API: localhost:4000/v1" Style="{StaticResource ShortcutHint}" Margin="0,16,0,0" HorizontalAlignment="Center" />
+      </StackPanel>
+    </Border>
+  </Grid>
+</Window>

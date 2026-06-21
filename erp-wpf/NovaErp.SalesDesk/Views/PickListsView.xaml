@@ -1,0 +1,14 @@
+<UserControl x:Class="NovaErp.SalesDesk.Views.PickListsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <DataGrid Style="{StaticResource ErpDataGrid}" ItemsSource="{Binding Items}" SelectedItem="{Binding Selected}"
+            MouseDoubleClick="Grid_OnOpen" KeyDown="Grid_OnKeyDown">
+    <DataGrid.Columns>
+      <DataGridTextColumn Header="Pick #" Binding="{Binding PickListNo}" Width="120" />
+      <DataGridTextColumn Header="SO" Binding="{Binding SalesOrder.SoNo}" Width="100" />
+      <DataGridTextColumn Header="Customer" Binding="{Binding SalesOrder.Customer.Name}" Width="*" />
+      <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="100" />
+      <DataGridTextColumn Header="Created" Binding="{Binding CreatedAt}" Width="160" />
+    </DataGrid.Columns>
+  </DataGrid>
+</UserControl>

@@ -1,0 +1,118 @@
+<UserControl x:Class="NovaErp.SalesDesk.Views.QuoteEditorView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <StackPanel>
+    <Border Style="{StaticResource ErpToolbar}" Margin="-16,-16,-16,16" Padding="16,12">
+      <DockPanel>
+        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+          <Button Style="{StaticResource ErpGhostButton}" Content="Back · Esc" Command="{Binding BackCommand}" Margin="0,0,4,0" />
+          <Button Style="{StaticResource ErpSecondaryButton}" Content="Save · Ctrl+S" Command="{Binding SaveCommand}" Margin="0,0,4,0" />
+          <Button Style="{StaticResource ErpSecondaryButton}" Content="Submit" Command="{Binding SubmitCommand}" Margin="0,0,4,0" />
+          <Button Style="{StaticResource ErpPrimaryButton}" Content="Convert to SO" Command="{Binding ConvertToSalesOrderCommand}" />
+        </StackPanel>
+        <StackPanel>
+          <TextBlock Text="{Binding Title}" Style="{StaticResource H2}" />
+          <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+            <TextBlock Text="{Binding QuoteNo}" FontFamily="{StaticResource MonoFont}" Foreground="{StaticResource PrimaryBrush}" FontWeight="SemiBold" />
+            <TextBlock Text=" · " Foreground="{StaticResource InkMutedBrush}" />
+            <Border Style="{StaticResource StatusChip}" Padding="8,2">
+              <TextBlock Text="{Binding Status}" FontSize="11" FontWeight="SemiBold" Foreground="{StaticResource PrimaryBrush}" />
+            </Border>
+          </StackPanel>
+        </StackPanel>
+      </DockPanel>
+    </Border>
+
+    <Grid>
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="*" />
+        <ColumnDefinition Width="16" />
+        <ColumnDefinition Width="360" />
+      </Grid.ColumnDefinitions>
+
+      <StackPanel Grid.Column="0">
+        <DataGrid Style="{StaticResource ErpDataGrid}" ItemsSource="{Binding Lines}" MinHeight="280">
+          <DataGrid.Columns>
+            <DataGridTextColumn Header="SKU" Binding="{Binding Sku}" Width="100" IsReadOnly="True" />
+            <DataGridTextColumn Header="Product" Binding="{Binding Name}" Width="*" IsReadOnly="True" />
+            <DataGridTextColumn Header="Variant" Binding="{Binding VariantLabel}" Width="100" IsReadOnly="True" />
+            <DataGridTextColumn Header="Qty" Binding="{Binding Qty, UpdateSourceTrigger=PropertyChanged}" Width="70" />
+            <DataGridTextColumn Header="Rate" Binding="{Binding Rate, UpdateSourceTrigger=PropertyChanged}" Width="90" />
+            <DataGridTextColumn Header="Disc" Binding="{Binding Discount, UpdateSourceTrigger=PropertyChanged}" Width="70" />
+            <DataGridTextColumn Header="Amount" Binding="{Binding Amount, Converter={StaticResource InrConverter}}" Width="100" IsReadOnly="True" />
+            <DataGridTemplateColumn Width="50">
+              <DataGridTemplateColumn.CellTemplate>
+                <DataTemplate>
+                  <Button Content="✕" Command="{Binding DataContext.RemoveLineCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                          CommandParameter="{Binding}" Style="{StaticResource ErpGhostButton}" Padding="4,0" />
+                </DataTemplate>
+              </DataGridTemplateColumn.CellTemplate>
+            </DataGridTemplateColumn>
+          </DataGrid.Columns>
+        </DataGrid>
+        <DockPanel Margin="0,16,0,0">
+          <TextBlock DockPanel.Dock="Right" Text="{Binding Total, StringFormat=Total ₹ {0:N2}}" Style="{StaticResource AmountLarge}" />
+          <StackPanel>
+            <TextBlock Style="{StaticResource FieldLabel}" Text="Notes" />
+            <TextBox Style="{StaticResource ErpTextBox}" Text="{Binding Notes, UpdateSourceTrigger=PropertyChanged}" MinHeight="48" TextWrapping="Wrap" AcceptsReturn="True" />
+          </StackPanel>
+        </DockPanel>
+      </StackPanel>
+
+      <StackPanel Grid.Column="2">
+        <Border Style="{StaticResource ErpCard}" Margin="0,0,0,16">
+          <StackPanel>
+            <TextBlock Style="{StaticResource FieldLabel}" Text="Customer · Ctrl+K" />
+            <TextBox x:Name="CustomerBox" Style="{StaticResource ErpSearchBox}" Text="{Binding CustomerSearch, UpdateSourceTrigger=PropertyChanged}" />
+            <ListBox ItemsSource="{Binding CustomerMatches}" Style="{StaticResource ErpListBox}" Margin="0,8,0,0"
+                     Visibility="{Binding ShowCustomerMatches, Converter={StaticResource BoolToVisibilityConverter}}"
+                     MouseDoubleClick="CustomerList_OnPick">
+              <ListBox.ItemTemplate>
+                <DataTemplate>
+                  <StackPanel>
+                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" />
+                    <TextBlock FontSize="11" Foreground="{StaticResource InkMutedBrush}">
+                      <Run Text="{Binding Code}" FontFamily="{StaticResource MonoFont}" Foreground="{StaticResource PrimaryBrush}" />
+                      <Run Text=" · AR ₹" /><Run Text="{Binding OpenBalance, StringFormat=N2}" />
+                    </TextBlock>
+                  </StackPanel>
+                </DataTemplate>
+              </ListBox.ItemTemplate>
+            </ListBox>
+            <TextBlock Margin="0,8,0,0" Visibility="{Binding SelectedCustomer, Converter={StaticResource NullToVisibilityConverter}}">
+              <Run Text="Selected: " Foreground="{StaticResource InkMutedBrush}" />
+              <Run Text="{Binding SelectedCustomer.Name}" FontWeight="SemiBold" />
+            </TextBlock>
+          </StackPanel>
+        </Border>
+
+        <Border Style="{StaticResource ErpCard}">
+          <StackPanel>
+            <TextBlock Style="{StaticResource FieldLabel}" Text="Product · F3" />
+            <TextBox Style="{StaticResource ErpSearchBox}" Text="{Binding ProductSearch, UpdateSourceTrigger=PropertyChanged}" />
+            <ListBox ItemsSource="{Binding ProductMatches}" Style="{StaticResource ErpListBox}" Margin="0,8,0,0"
+                     DisplayMemberPath="Display"
+                     Visibility="{Binding ShowProductMatches, Converter={StaticResource BoolToVisibilityConverter}}"
+                     MouseDoubleClick="ProductList_OnPick" />
+            <Grid Margin="0,12,0,0">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="8" />
+                <ColumnDefinition Width="80" />
+              </Grid.ColumnDefinitions>
+              <ComboBox Grid.Column="0" ItemsSource="{Binding SelectedProduct.Variants}" SelectedItem="{Binding SelectedVariant}"
+                        DisplayMemberPath="Label" MinHeight="40" />
+              <StackPanel Grid.Column="2">
+                <TextBlock Style="{StaticResource FieldLabel}" Text="Qty" />
+                <TextBox Style="{StaticResource ErpTextBox}" Text="{Binding LineQty, UpdateSourceTrigger=PropertyChanged}" />
+              </StackPanel>
+            </Grid>
+            <Button Style="{StaticResource ErpPrimaryButton}" Content="Add line · Enter" Command="{Binding AddLineCommand}" Margin="0,16,0,0" HorizontalAlignment="Stretch" />
+          </StackPanel>
+        </Border>
+      </StackPanel>
+    </Grid>
+
+    <TextBlock Text="{Binding ErrorMessage}" Foreground="{StaticResource DangerBrush}" Margin="0,12,0,0" TextWrapping="Wrap" />
+  </StackPanel>
+</UserControl>

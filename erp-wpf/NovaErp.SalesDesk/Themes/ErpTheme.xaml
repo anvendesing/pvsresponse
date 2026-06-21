@@ -1,0 +1,400 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+  <!-- Trust Blue Pay — trust-blue-pay-DESIGN.md + erp-portal tailwind -->
+  <Color x:Key="PrimaryColor">#003087</Color>
+  <Color x:Key="PrimaryHoverColor">#00246B</Color>
+  <Color x:Key="Primary50Color">#E6EBF5</Color>
+  <Color x:Key="SecondaryColor">#009CDE</Color>
+  <Color x:Key="InkColor">#1A1A2E</Color>
+  <Color x:Key="InkMutedColor">#687173</Color>
+  <Color x:Key="CanvasColor">#F5F7FA</Color>
+  <Color x:Key="SurfaceColor">#FFFFFF</Color>
+  <Color x:Key="BorderColor">#CBD2D6</Color>
+  <Color x:Key="SuccessColor">#019C34</Color>
+  <Color x:Key="SuccessSoftColor">#E6F4EA</Color>
+  <Color x:Key="WarningColor">#F5BA2E</Color>
+  <Color x:Key="WarningSoftColor">#FFF8E1</Color>
+  <Color x:Key="DangerColor">#D20000</Color>
+  <Color x:Key="DangerSoftColor">#FDE7E7</Color>
+  <Color x:Key="InfoSoftColor">#E1F4FB</Color>
+
+  <SolidColorBrush x:Key="PrimaryBrush" Color="{StaticResource PrimaryColor}" />
+  <SolidColorBrush x:Key="PrimaryHoverBrush" Color="{StaticResource PrimaryHoverColor}" />
+  <SolidColorBrush x:Key="Primary50Brush" Color="{StaticResource Primary50Color}" />
+  <SolidColorBrush x:Key="SecondaryBrush" Color="{StaticResource SecondaryColor}" />
+  <SolidColorBrush x:Key="InkBrush" Color="{StaticResource InkColor}" />
+  <SolidColorBrush x:Key="InkMutedBrush" Color="{StaticResource InkMutedColor}" />
+  <SolidColorBrush x:Key="CanvasBrush" Color="{StaticResource CanvasColor}" />
+  <SolidColorBrush x:Key="SurfaceBrush" Color="{StaticResource SurfaceColor}" />
+  <SolidColorBrush x:Key="BorderBrush" Color="{StaticResource BorderColor}" />
+  <SolidColorBrush x:Key="SuccessBrush" Color="{StaticResource SuccessColor}" />
+  <SolidColorBrush x:Key="SuccessSoftBrush" Color="{StaticResource SuccessSoftColor}" />
+  <SolidColorBrush x:Key="WarningBrush" Color="{StaticResource WarningColor}" />
+  <SolidColorBrush x:Key="WarningSoftBrush" Color="{StaticResource WarningSoftColor}" />
+  <SolidColorBrush x:Key="DangerBrush" Color="{StaticResource DangerColor}" />
+  <SolidColorBrush x:Key="DangerSoftBrush" Color="{StaticResource DangerSoftColor}" />
+  <SolidColorBrush x:Key="InfoSoftBrush" Color="{StaticResource InfoSoftColor}" />
+
+  <FontFamily x:Key="SansFont">Segoe UI, Inter, system-ui, sans-serif</FontFamily>
+  <FontFamily x:Key="MonoFont">Cascadia Mono, JetBrains Mono, Consolas, monospace</FontFamily>
+
+  <!-- Typography -->
+  <Style x:Key="H1" TargetType="TextBlock">
+    <Setter Property="FontFamily" Value="{StaticResource SansFont}" />
+    <Setter Property="FontSize" Value="32" />
+    <Setter Property="FontWeight" Value="Bold" />
+    <Setter Property="Foreground" Value="{StaticResource InkBrush}" />
+  </Style>
+  <Style x:Key="H2" TargetType="TextBlock">
+    <Setter Property="FontFamily" Value="{StaticResource SansFont}" />
+    <Setter Property="FontSize" Value="24" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="Foreground" Value="{StaticResource InkBrush}" />
+  </Style>
+  <Style x:Key="H3" TargetType="TextBlock">
+    <Setter Property="FontFamily" Value="{StaticResource SansFont}" />
+    <Setter Property="FontSize" Value="20" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="Foreground" Value="{StaticResource InkBrush}" />
+  </Style>
+  <Style x:Key="Body" TargetType="TextBlock">
+    <Setter Property="FontFamily" Value="{StaticResource SansFont}" />
+    <Setter Property="FontSize" Value="14" />
+    <Setter Property="Foreground" Value="{StaticResource InkBrush}" />
+  </Style>
+  <Style x:Key="Caption" TargetType="TextBlock">
+    <Setter Property="FontFamily" Value="{StaticResource SansFont}" />
+    <Setter Property="FontSize" Value="12" />
+    <Setter Property="FontWeight" Value="Medium" />
+    <Setter Property="Foreground" Value="{StaticResource InkMutedBrush}" />
+  </Style>
+  <Style x:Key="AmountLarge" TargetType="TextBlock">
+    <Setter Property="FontFamily" Value="{StaticResource SansFont}" />
+    <Setter Property="FontSize" Value="28" />
+    <Setter Property="FontWeight" Value="Bold" />
+    <Setter Property="Foreground" Value="{StaticResource InkBrush}" />
+  </Style>
+  <Style x:Key="FieldLabel" TargetType="TextBlock">
+    <Setter Property="FontSize" Value="12" />
+    <Setter Property="FontWeight" Value="Medium" />
+    <Setter Property="Foreground" Value="{StaticResource InkBrush}" />
+    <Setter Property="Margin" Value="0,0,0,6" />
+  </Style>
+
+  <Style TargetType="Window">
+    <Setter Property="FontFamily" Value="{StaticResource SansFont}" />
+    <Setter Property="FontSize" Value="14" />
+    <Setter Property="Foreground" Value="{StaticResource InkBrush}" />
+    <Setter Property="Background" Value="{StaticResource CanvasBrush}" />
+  </Style>
+
+  <!-- Cards — 12px radius, 24px padding, e1 shadow -->
+  <Style x:Key="ErpCard" TargetType="Border">
+    <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
+    <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="12" />
+    <Setter Property="Padding" Value="24" />
+    <Setter Property="Effect">
+      <Setter.Value>
+        <DropShadowEffect Color="#003087" Opacity="0.06" BlurRadius="4" ShadowDepth="1" Direction="270" />
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <Style x:Key="ErpToolbar" TargetType="Border">
+    <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
+    <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+    <Setter Property="BorderThickness" Value="0,0,0,1" />
+    <Setter Property="Padding" Value="16,10" />
+  </Style>
+
+  <Style x:Key="KpiCard" TargetType="Border">
+    <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
+    <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="CornerRadius" Value="12" />
+    <Setter Property="Padding" Value="16,14" />
+    <Setter Property="MinWidth" Value="140" />
+  </Style>
+
+  <!-- Buttons — 40px md / 48px lg per design spec -->
+  <Style x:Key="ErpPrimaryButton" TargetType="Button">
+    <Setter Property="MinHeight" Value="40" />
+    <Setter Property="MinWidth" Value="120" />
+    <Setter Property="Padding" Value="16,10" />
+    <Setter Property="Background" Value="{StaticResource PrimaryBrush}" />
+    <Setter Property="Foreground" Value="White" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="FontSize" Value="14" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Button">
+          <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="8" Padding="{TemplateBinding Padding}">
+            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="bd" Property="Background" Value="{StaticResource PrimaryHoverBrush}" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter TargetName="bd" Property="Background" Value="{StaticResource BorderBrush}" />
+              <Setter Property="Foreground" Value="{StaticResource InkMutedBrush}" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <Style x:Key="ErpSecondaryButton" TargetType="Button">
+    <Setter Property="MinHeight" Value="40" />
+    <Setter Property="Padding" Value="16,10" />
+    <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
+    <Setter Property="Foreground" Value="{StaticResource PrimaryBrush}" />
+    <Setter Property="BorderBrush" Value="{StaticResource PrimaryBrush}" />
+    <Setter Property="BorderThickness" Value="2" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="FontSize" Value="14" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Button">
+          <Border x:Name="bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8" Padding="{TemplateBinding Padding}">
+            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="bd" Property="Background" Value="{StaticResource CanvasBrush}" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <Style x:Key="ErpGhostButton" TargetType="Button">
+    <Setter Property="MinHeight" Value="36" />
+    <Setter Property="Padding" Value="10,8" />
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="Foreground" Value="{StaticResource InkBrush}" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Button">
+          <Border x:Name="bd" Background="{TemplateBinding Background}" CornerRadius="8" Padding="{TemplateBinding Padding}">
+            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="bd" Property="Background" Value="{StaticResource CanvasBrush}" />
+              <Setter Property="Foreground" Value="{StaticResource PrimaryBrush}" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- Search input — canvas bg, 48px -->
+  <Style x:Key="ErpSearchBox" TargetType="TextBox">
+    <Setter Property="MinHeight" Value="40" />
+    <Setter Property="Padding" Value="12,10" />
+    <Setter Property="Background" Value="{StaticResource CanvasBrush}" />
+    <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="FontSize" Value="14" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="TextBox">
+          <Border x:Name="bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8">
+            <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}" />
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsKeyboardFocused" Value="True">
+              <Setter TargetName="bd" Property="Background" Value="{StaticResource SurfaceBrush}" />
+              <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource PrimaryBrush}" />
+              <Setter TargetName="bd" Property="BorderThickness" Value="2" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <Style x:Key="ErpTextBox" TargetType="TextBox">
+    <Setter Property="MinHeight" Value="40" />
+    <Setter Property="Padding" Value="12,10" />
+    <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
+    <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="FontSize" Value="14" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="TextBox">
+          <Border x:Name="bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8">
+            <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}" />
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsKeyboardFocused" Value="True">
+              <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource PrimaryBrush}" />
+              <Setter TargetName="bd" Property="BorderThickness" Value="2" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- Sidebar nav — active = primary bg white text -->
+  <Style x:Key="SidebarNavButton" TargetType="RadioButton">
+    <Setter Property="Foreground" Value="{StaticResource InkBrush}" />
+    <Setter Property="FontSize" Value="13" />
+    <Setter Property="FontWeight" Value="Medium" />
+    <Setter Property="Height" Value="36" />
+    <Setter Property="Margin" Value="8,2" />
+    <Setter Property="Padding" Value="10,0" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="RadioButton">
+          <Border x:Name="bd" Background="Transparent" CornerRadius="8" Padding="{TemplateBinding Padding}">
+            <ContentPresenter VerticalAlignment="Center" />
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsChecked" Value="True">
+              <Setter TargetName="bd" Property="Background" Value="{StaticResource PrimaryBrush}" />
+              <Setter Property="Foreground" Value="White" />
+            </Trigger>
+            <MultiTrigger>
+              <MultiTrigger.Conditions>
+                <Condition Property="IsMouseOver" Value="True" />
+                <Condition Property="IsChecked" Value="False" />
+              </MultiTrigger.Conditions>
+              <Setter TargetName="bd" Property="Background" Value="{StaticResource CanvasBrush}" />
+              <Setter Property="Foreground" Value="{StaticResource PrimaryBrush}" />
+            </MultiTrigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <!-- DataGrid -->
+  <Style x:Key="ErpDataGrid" TargetType="DataGrid">
+    <Setter Property="AutoGenerateColumns" Value="False" />
+    <Setter Property="CanUserAddRows" Value="False" />
+    <Setter Property="GridLinesVisibility" Value="Horizontal" />
+    <Setter Property="HeadersVisibility" Value="Column" />
+    <Setter Property="RowHeight" Value="48" />
+    <Setter Property="BorderThickness" Value="0" />
+    <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
+    <Setter Property="RowBackground" Value="{StaticResource SurfaceBrush}" />
+    <Setter Property="AlternatingRowBackground" Value="{StaticResource CanvasBrush}" />
+    <Setter Property="HorizontalGridLinesBrush" Value="{StaticResource BorderBrush}" />
+    <Setter Property="SelectionMode" Value="Single" />
+    <Setter Property="SelectionUnit" Value="FullRow" />
+    <Setter Property="KeyboardNavigation.TabNavigation" Value="Continue" />
+    <Setter Property="ColumnHeaderHeight" Value="40" />
+  </Style>
+
+  <Style TargetType="DataGridColumnHeader">
+    <Setter Property="Background" Value="{StaticResource CanvasBrush}" />
+    <Setter Property="Foreground" Value="{StaticResource InkMutedBrush}" />
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="FontSize" Value="12" />
+    <Setter Property="Padding" Value="12,8" />
+    <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+    <Setter Property="BorderThickness" Value="0,0,0,1" />
+  </Style>
+
+  <!-- Autocomplete list -->
+  <Style x:Key="ErpListBox" TargetType="ListBox">
+    <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}" />
+    <Setter Property="BorderThickness" Value="1" />
+    <Setter Property="Background" Value="{StaticResource SurfaceBrush}" />
+    <Setter Property="MaxHeight" Value="220" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ListBox">
+          <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8">
+            <Border.Effect>
+              <DropShadowEffect Color="#003087" Opacity="0.1" BlurRadius="16" ShadowDepth="4" Direction="270" />
+            </Border.Effect>
+            <ScrollViewer Padding="4">
+              <ItemsPresenter />
+            </ScrollViewer>
+          </Border>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <Style TargetType="ListBoxItem">
+    <Setter Property="Padding" Value="10,8" />
+    <Setter Property="Cursor" Value="Hand" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ListBoxItem">
+          <Border x:Name="bd" Padding="{TemplateBinding Padding}" CornerRadius="6" Background="Transparent">
+            <ContentPresenter />
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="bd" Property="Background" Value="{StaticResource CanvasBrush}" />
+            </Trigger>
+            <Trigger Property="IsSelected" Value="True">
+              <Setter TargetName="bd" Property="Background" Value="{StaticResource Primary50Brush}" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+  <Style x:Key="StatusChip" TargetType="Border">
+    <Setter Property="CornerRadius" Value="9999" />
+    <Setter Property="Padding" Value="10,4" />
+    <Setter Property="Background" Value="{StaticResource Primary50Brush}" />
+  </Style>
+
+  <Style x:Key="ShortcutHint" TargetType="TextBlock">
+    <Setter Property="FontSize" Value="11" />
+    <Setter Property="Foreground" Value="{StaticResource InkMutedBrush}" />
+    <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+  </Style>
+
+  <Style TargetType="TabControl">
+    <Setter Property="Background" Value="Transparent" />
+    <Setter Property="BorderThickness" Value="0" />
+  </Style>
+  <Style TargetType="TabItem">
+    <Setter Property="FontWeight" Value="SemiBold" />
+    <Setter Property="FontSize" Value="13" />
+    <Setter Property="Padding" Value="12,8" />
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="TabItem">
+          <Border x:Name="bd" Padding="{TemplateBinding Padding}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,2" Background="Transparent">
+            <ContentPresenter ContentSource="Header" />
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsSelected" Value="True">
+              <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource PrimaryBrush}" />
+              <Setter Property="Foreground" Value="{StaticResource PrimaryBrush}" />
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+
+</ResourceDictionary>
