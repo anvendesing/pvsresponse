@@ -1,48 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-
-// =====================================================================
-// BarcodeScanner
-// =====================================================================
-// Wraps the platform camera. Order of preference:
-//   1. Capacitor + @capacitor-mlkit/barcode-scanning (when running
-//      inside our wrapped Android APK) - real native ML Kit, fast,
-//      reliable on every Android phone.
-//   2. Web BarcodeDetector API (Chrome / Edge desktop dev).
-//   3. Manual entry fallback (worker types the code).
-//
-// Phase 1.5 will also add @zxing/browser for iOS Safari < 17.
-//
-// We deliberately avoid bundling a JS decoder by default to keep the
-// install size tiny - the native plugin already handles the slow path
-// for us on Android.
-
-// Lightweight type for the Capacitor global without taking a
-// compile-time dep on @capacitor/core (which isn't in this package).
-interface CapacitorGlobal {
-  isNativePlatform?: () => boolean;
-  getPlatform?: () => string;
-}
-
-interface MlkitScanResult {
-  barcodes?: Array<{ rawValue?: string; displayValue?: string }>;
-}
-interface MlkitPlugin {
-  isSupported: () => Promise<{ supported: boolean }>;
-  checkPermissions: () => Promise<{ camera: string }>;
-  requestPermissions: () => Promise<{ camera: string }>;
-  scan: (opts?: { formats?: string[] }) => Promise<MlkitScanResult>;
-}
-
-const getNativeScanner = (): MlkitPlugin | null => {
-  const win = window as unknown as {
-    Capacitor?: CapacitorGlobal & {
-      Plugins?: { BarcodeScanner?: MlkitPlugin };
-    };
-  };
-  const cap = win.Capacitor;
-  if (!cap?.isNativePlatform?.()) return null;
-  return cap.Plugins?.BarcodeScanner ?? null;
-};
+import {
+  ensureGoogleBarcodeModule,
+  getNativeScanner,
+} from "./ensureGoogleBarcodeModule";
 
 // Map the web format ids we already use to the ML Kit ones (which take
 // upper-case enum names).
@@ -97,10 +57,11 @@ export const BarcodeScanner = ({
 }: Props) => {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const [state, setState] = useState<
-    "init" | "ready" | "scanning-native" | "no-camera" | "no-detector" | "denied" | "error"
+    "init" | "ready" | "scanning-native" | "installing-module" | "no-camera" | "no-detector" | "denied" | "error"
   >("init");
   const [manual, setManual] = useState("");
   const [lastError, setLastError] = useState<string | null>(null);
+  const [installProgress, setInstallProgress] = useState(0);
 
   useEffect(() => {
     if (!active) return;
@@ -137,6 +98,12 @@ export const BarcodeScanner = ({
             if (!cancelled) setState("denied");
             return;
           }
+          setState("installing-module");
+          await ensureGoogleBarcodeModule(native, (pct) => {
+            if (!cancelled) setInstallProgress(pct);
+          });
+          if (cancelled) return;
+          setState("scanning-native");
           const result = await native.scan({ formats: toMlkitFormats(formats) });
           if (cancelled) return;
           const code = result.barcodes?.[0]?.rawValue ?? result.barcodes?.[0]?.displayValue;
@@ -263,6 +230,10 @@ export const BarcodeScanner = ({
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 px-6 text-center">
             <p className="text-base">
               {state === "init" && "Starting camera…"}
+              {state === "installing-module" &&
+                (installProgress > 0
+                  ? `Downloading scanner module… ${installProgress}%`
+                  : "Downloading scanner module (one-time, needs Wi‑Fi)…")}
               {state === "scanning-native" && "Native ML Kit scanner is open. Aim at the barcode…"}
               {state === "denied" && "Camera permission denied. Allow it in Settings → Apps → NovaERP Warehouse → Permissions, or type the code below."}
               {state === "no-camera" && "No camera detected on this device."}

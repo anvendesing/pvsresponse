@@ -7,6 +7,7 @@ import {
   onInstallReadyChange,
 } from "../pwa/install";
 import { useDeviceWarehouse } from "./useDeviceWarehouse";
+import { preloadGoogleBarcodeModule } from "./ensureGoogleBarcodeModule";
 
 // =====================================================================
 // MobileShell
@@ -38,6 +39,10 @@ export const MobileShell = () => {
   const user = auth.user();
   const [installReady, setInstallReady] = useState(false);
   const [online, setOnline] = useState(navigator.onLine);
+
+  useEffect(() => {
+    preloadGoogleBarcodeModule();
+  }, []);
 
   useEffect(() => {
     return onInstallReadyChange(setInstallReady);
