@@ -11,6 +11,7 @@ import { Printer } from "lucide-react";
 import { api, type PickListRow, type PublicCompany } from "@/lib/api";
 import { useBrand } from "@/hooks/useBrand";
 import { formatCustomerAddress } from "@/lib/customerAddress";
+import { primaryScanCode } from "@/lib/scanCode";
 
 const fmt = (d?: string | Date | null) => {
   if (!d) return "—";
