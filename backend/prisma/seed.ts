@@ -68,7 +68,8 @@ async function main() {
   const whSpec = [
     { code: "WH-MAIN", name: "Main Warehouse", city: "Pune" },
     { code: "WH-RAW", name: "Raw Materials Yard", city: "Pune" },
-    { code: "WH-FG", name: "Stock Room", city: "Pune" },
+    { code: "STR", name: "Stock Room", city: "Pune", scanPrefix: "STR" },
+    { code: "WH-FARM", name: "Farm Shop", city: "Pune", scanPrefix: "FSH" },
   ];
   for (const w of whSpec) await db.warehouse.create({ data: w });
   const warehouses = await db.warehouse.findMany();
@@ -352,10 +353,14 @@ async function main() {
     customerNames.map((name, i) =>
       db.customer.create({
         data: {
+          data: {
           code: `C${String(i + 1).padStart(3, "0")}`,
           name,
           gst: `27ABCDE${String(2000 + i)}F1Z${i % 9}`,
+          addressLine: `${100 + i} Industrial Area, Phase ${(i % 3) + 1}`,
           city: pick(cities, i),
+          state: "Maharashtra",
+          pincode: String(411000 + i * 11).padStart(6, "0").slice(0, 6),
           contact: `+91 9${String(700000000 + i * 33713).slice(-9)}`,
           // Tiered credit so the credit-limit gate has realistic data:
           // top 3 = 25L, next 4 = 10L, rest = 0 (cash-only).

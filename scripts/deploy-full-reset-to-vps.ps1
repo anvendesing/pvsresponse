@@ -57,7 +57,14 @@ function Invoke-Ssh([string]$Command) {
     if ($LASTEXITCODE -ne 0) { throw "SSH failed (exit $LASTEXITCODE)" }
 }
 
-Write-Host "=== Step 1: Snapshot local database ===" -ForegroundColor Cyan
+Write-Host "=== Step 1: Sync warehouse layout (prune + seed) ===" -ForegroundColor Cyan
+Push-Location (Join-Path $RepoRoot "backend")
+npm run db:sync-warehouse-layout:dev
+if ($LASTEXITCODE -ne 0) { throw "Warehouse layout sync failed" }
+Pop-Location
+
+Write-Host ""
+Write-Host "=== Step 2: Snapshot local database ===" -ForegroundColor Cyan
 $SnapshotLocal = Join-Path $RepoRoot "dev.db.snapshot"
 Push-Location (Join-Path $RepoRoot "backend")
 npx tsx scripts/snapshot-db.ts $SnapshotLocal
@@ -68,7 +75,7 @@ Write-Host "  $SnapshotLocal ($sizeMb MB)"
 
 if (-not $SkipGitPush) {
     Write-Host ""
-    Write-Host "=== Step 2: Push to origin/main ===" -ForegroundColor Cyan
+    Write-Host "=== Step 3: Push to origin/main ===" -ForegroundColor Cyan
     $dirty = git status --porcelain
     if ($dirty) {
         throw "Uncommitted changes remain. Commit first, then re-run."
@@ -82,7 +89,7 @@ if (-not $SkipGitPush) {
     }
 } else {
     Write-Host ""
-    Write-Host "=== Step 2: Skipped git push (-SkipGitPush) ===" -ForegroundColor Yellow
+    Write-Host "=== Step 3: Skipped git push (-SkipGitPush) ===" -ForegroundColor Yellow
 }
 
 if (-not $RepoPath) {
@@ -98,13 +105,13 @@ if (-not $RepoPath) {
 }
 
 Write-Host ""
-Write-Host "=== Step 3: Upload DB snapshot to VPS ===" -ForegroundColor Cyan
+Write-Host "=== Step 4: Upload DB snapshot to VPS ===" -ForegroundColor Cyan
 $RemoteDb = "/tmp/dev.db.snapshot"
 & scp @scpOpts $SnapshotLocal "${VpsUser}@${VpsHost}:${RemoteDb}"
 if ($LASTEXITCODE -ne 0) { throw "scp failed" }
 
 Write-Host ""
-Write-Host "=== Step 4: Full reset deploy on VPS ===" -ForegroundColor Cyan
+Write-Host "=== Step 5: Full reset deploy on VPS ===" -ForegroundColor Cyan
 $remoteFlags = @("--reset-data", "--replace-db", $RemoteDb)
 if ($UseGhcr) { $remoteFlags = @("--pull") + $remoteFlags } else { $remoteFlags = @("--build") + $remoteFlags }
 
@@ -118,7 +125,7 @@ Write-Host "  Remote: $remoteCmd"
 Invoke-Ssh $remoteCmd
 
 Write-Host ""
-Write-Host "=== Step 5: Upload product images (optional) ===" -ForegroundColor Cyan
+Write-Host "=== Step 6: Upload product images (optional) ===" -ForegroundColor Cyan
 $imgScript = Join-Path $RepoRoot "scripts\upload-images-to-vps.ps1"
 if (Test-Path $imgScript) {
     $imgArgs = @{ VpsHost = $VpsHost; VpsUser = $VpsUser }

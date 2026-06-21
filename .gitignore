@@ -31,6 +31,7 @@ out/
 # SQLite WAL/journal files are transient; the named Docker volume holds the real data
 prisma/dev.db
 prisma/test.db
+dev.db.snapshot
 
 # ── OS / Editor ───────────────────────────────────────────────────────────────
 .DS_Store
@@ -65,6 +66,10 @@ mobile/**/*.user
 mobile/**/*.suo
 *.apk
 *.aab
+
+# ── WPF Sales Desk (.NET) ─────────────────────────────────────────────────────
+erp-wpf/**/bin/
+erp-wpf/**/obj/
 
 # ── Cursor IDE local state (not project config) ──────────────────────────────
 .cursor/

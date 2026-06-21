@@ -230,7 +230,7 @@ export const workers: Worker[] = workerNames.map((name, i) => {
   };
 });
 
-const warehouses = ["WH-MAIN", "WH-RAW", "WH-FG"];
+const warehouses = ["WH-MAIN", "WH-RAW", "STR"];
 const zones = ["A", "B", "C"];
 export const bins: Bin[] = [];
 for (let w = 0; w < warehouses.length; w++) {

@@ -243,7 +243,7 @@ Ledger: `txnType: Production`, `ref: orderNo`.
 
 **Setup checklist**
 
-- [ ] Putaway rules with **fixed `toBinId`** in storage WH (e.g. `WH-FG`)
+- [ ] Putaway rules with **fixed `toBinId`** in storage WH (e.g. `STR`)
 - [ ] Either **no** facility production WH, **or** line WH = same site as storage rule
 
 **Runtime**
@@ -465,8 +465,8 @@ Legacy MO before full putaway/facility setup:
 
 | Event | Location |
 |-------|----------|
-| Materials issued | `WH-FG` · `A/S1/B2` (−99), `SMK/S1/01` (−100) |
-| FG on complete | `WH-FG` · `C/S1/B4` (+90, SKU 6RKS) |
+| Materials issued | `STR` · `A/S1/B2` (−99), `SMK/S1/01` (−100) |
+| FG on complete | `STR` · `C/S1/B4` (+90, SKU 6RKS) |
 | Putaway TO | None — no facility production WH configured |
 
 **To align with current features:** assign facility + production WH, add putaway rule (variant + **fixed bin**), optional stock rule on `C/S1/B4` with min qty 20 and BOM for auto-replenish MO.

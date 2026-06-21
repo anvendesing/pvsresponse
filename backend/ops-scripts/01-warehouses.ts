@@ -43,7 +43,7 @@ async function main() {
     whCount++;
 
     if (spec.kind === "production") {
-      // Floor bin: issue, WIP, temporary FG before putaway TO → WH-FG.
+      // Floor bin: issue, WIP, temporary FG before putaway TO → STR.
       await ensureDefaultBin({
         warehouseCode: spec.code,
         zone: "LINE",

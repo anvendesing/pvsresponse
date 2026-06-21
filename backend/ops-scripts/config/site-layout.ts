@@ -15,23 +15,23 @@
  * (ProductionFacility) and its default "Main Line" (ProductionLine). Additional
  * lines can be added later via Settings → Production facilities.
  *
- * **Stock Room (finished goods):** use your **existing** warehouse (default code
- * `WH-FG`, display name "Stock Room"). Scripts do **not** create it. Configure
+ * **Stock Room:** warehouse code **`STR`**, display name "Stock Room". Seeded by
+ * `npm run db:seed-stock-room`; migrates legacy **`WH-FG`** automatically.
  * **putaway rules for every variant** (and product) with destination = that warehouse and a
  * fixed bin — see README.
  *
  * **No separate ancillary warehouse:** the facility WH is the buffer. After
  * complete, a putaway TO moves FG to the finished-goods warehouse when the rule
- * points there. Later, manual transfer orders can reshuffle bins inside WH-FG.
+ * points there. Later, manual transfer orders can reshuffle bins inside STR.
  */
 
 export const SITE_CITY = "Kothavaripalle, AP";
 
 /**
- * Code of the finished-goods warehouse already in ERP (Settings → Warehouses).
- * Not created by ops scripts — only referenced in docs and work-center hints.
+ * Stock Room warehouse code (Settings → Warehouses). Was WH-FG before rename.
+ * Putaway rules and MO complete flows reference this code.
  */
-export const EXISTING_FINISHED_GOODS_WH_CODE = "WH-FG";
+export const EXISTING_FINISHED_GOODS_WH_CODE = "STR";
 
 /** Long-term raw / cold storage warehouses (created by script). */
 export const STORAGE_WAREHOUSES = [
@@ -104,7 +104,7 @@ export const PRODUCTION_FACILITIES: readonly FacilityDef[] = [
     putawayDestinationWhCode: EXISTING_FINISHED_GOODS_WH_CODE,
     replenishFromStorageCodes: [EXISTING_FINISHED_GOODS_WH_CODE, "WH-STO-COLD-1", "WH-STO-COLD-2"],
     description:
-      "Uses existing finished-goods warehouse as putaway destination (no extra location). Configure every variant putaway rule → WH-FG.",
+      "Uses Stock Room (STR) as putaway destination. Configure every variant putaway rule → STR.",
   },
   {
     facilityCode: "FAC-OIL",

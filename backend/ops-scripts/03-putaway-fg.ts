@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 /**
- * Step 3 — Finished-goods putaway: one fixed bin per variant in WH-FG.
+ * Step 3 — Finished-goods putaway: one fixed bin per variant in Stock Room (STR).
  *
  * Layout: 4 bins per shelf; each shelf gets a pseudo-random zone (stable on re-run).
  *

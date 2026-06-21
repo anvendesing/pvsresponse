@@ -1,5 +1,5 @@
 /**
- * Rename WH-FG → Stock Room, set scan prefix STR, seed zones A–D bins (Zone C layout).
+ * Ensure Stock Room exists as code STR (migrate legacy WH-FG), seed layout bins (zones B + C).
  *
  * Local dev:
  *   npm run db:seed-stock-room:dev
@@ -13,10 +13,13 @@
 import { PrismaClient } from "@prisma/client";
 import { binCodeFromRow } from "../lib/codes.js";
 import {
+  LEGACY_STOCK_ROOM_WH_CODE,
   STOCK_ROOM_BIN_COUNT,
   STOCK_ROOM_NAME,
   STOCK_ROOM_SCAN_PREFIX,
   STOCK_ROOM_WAREHOUSE_CODE,
+  STOCK_ROOM_ZONE_A_BIN_COUNT,
+  STOCK_ROOM_ZONE_B_BIN_COUNT,
   STOCK_ROOM_ZONE_C_BIN_COUNT,
   stockRoomBinRows,
 } from "../lib/stock-room-layout.js";
@@ -24,38 +27,60 @@ import {
 const dryRun = process.argv.includes("--dry-run");
 const db = new PrismaClient();
 
-async function main() {
+async function resolveStockRoomWarehouse() {
   let wh = await db.warehouse.findUnique({
     where: { code: STOCK_ROOM_WAREHOUSE_CODE },
   });
+
   if (!wh) {
-    throw new Error(
-      `Warehouse ${STOCK_ROOM_WAREHOUSE_CODE} not found. Create it in Settings or run prisma seed.`
-    );
-  }
-
-  const needsRename = wh.name !== STOCK_ROOM_NAME;
-  const needsPrefix = wh.scanPrefix !== STOCK_ROOM_SCAN_PREFIX;
-
-  if (!dryRun && (needsRename || needsPrefix)) {
-    await db.warehouse.update({
-      where: { id: wh.id },
-      data: {
+    const legacy = await db.warehouse.findUnique({
+      where: { code: LEGACY_STOCK_ROOM_WH_CODE },
+    });
+    if (legacy) {
+      if (!dryRun) {
+        await db.warehouse.update({
+          where: { id: legacy.id },
+          data: {
+            code: STOCK_ROOM_WAREHOUSE_CODE,
+            name: STOCK_ROOM_NAME,
+            scanPrefix: STOCK_ROOM_SCAN_PREFIX,
+          },
+        });
+      }
+      console.log(
+        dryRun ? "[DRY RUN] Would migrate" : "Migrated",
+        `${LEGACY_STOCK_ROOM_WH_CODE} → ${STOCK_ROOM_WAREHOUSE_CODE} ("${STOCK_ROOM_NAME}")`
+      );
+      wh = {
+        ...legacy,
+        code: STOCK_ROOM_WAREHOUSE_CODE,
         name: STOCK_ROOM_NAME,
         scanPrefix: STOCK_ROOM_SCAN_PREFIX,
-      },
-    });
-    console.log(`Updated ${wh.code}: name="${STOCK_ROOM_NAME}", scanPrefix=${STOCK_ROOM_SCAN_PREFIX}`);
-    wh = {
-      ...wh,
-      name: STOCK_ROOM_NAME,
-      scanPrefix: STOCK_ROOM_SCAN_PREFIX,
-    };
-  } else if (dryRun && (needsRename || needsPrefix)) {
-    console.log(
-      `[DRY RUN] Would rename to "${STOCK_ROOM_NAME}" and set scanPrefix=${STOCK_ROOM_SCAN_PREFIX}`
+      };
+    }
+  }
+
+  if (!wh) {
+    throw new Error(
+      `Stock Room warehouse not found (expected code ${STOCK_ROOM_WAREHOUSE_CODE} or legacy ${LEGACY_STOCK_ROOM_WH_CODE}). Run prisma seed or create in Settings.`
     );
   }
+
+  const needsMeta =
+    wh.name !== STOCK_ROOM_NAME || wh.scanPrefix !== STOCK_ROOM_SCAN_PREFIX;
+  if (needsMeta && !dryRun) {
+    await db.warehouse.update({
+      where: { id: wh.id },
+      data: { name: STOCK_ROOM_NAME, scanPrefix: STOCK_ROOM_SCAN_PREFIX },
+    });
+    wh = { ...wh, name: STOCK_ROOM_NAME, scanPrefix: STOCK_ROOM_SCAN_PREFIX };
+  }
+
+  return wh;
+}
+
+async function main() {
+  let wh = await resolveStockRoomWarehouse();
 
   const planned = stockRoomBinRows();
   const existing = await db.bin.findMany({
@@ -72,10 +97,10 @@ async function main() {
 
   console.log(
     dryRun ? "[DRY RUN] " : "",
-    `Stock Room (${wh.code}): ${planned.length} layout bins (${STOCK_ROOM_ZONE_C_BIN_COUNT} in zone C),`,
+    `Stock Room (${wh.code}): ${planned.length} layout bins (A=${STOCK_ROOM_ZONE_A_BIN_COUNT}, B=${STOCK_ROOM_ZONE_B_BIN_COUNT}, C=${STOCK_ROOM_ZONE_C_BIN_COUNT}),`,
     `${existing.length} already in DB, ${toCreate.length} to create`
   );
-  console.log("  Zones A, B, D reserved (empty). Zone C fully mapped.");
+  console.log("  Zone A: 6 shelves. Zone B: 18 shelves. Zone C fully mapped. Zone D reserved.");
 
   if (dryRun) {
     for (const r of toCreate.slice(0, 5)) {

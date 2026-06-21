@@ -1,16 +1,12 @@
 #!/usr/bin/env tsx
 /**
- * Printable CODE128 bin labels for Stock Room (STR).
- *
- * Default: zone C only (145 bins). Use --all for every bin in STR.
+ * Printable CODE128 bin labels for Farm Shop (WH-FARM).
  *
  * Run:
  *   cd backend
- *   npm run labels:stock-room
- *   npx tsx scripts/generate-stock-room-bin-labels-pdf.ts --zone B
- *   npx tsx scripts/generate-stock-room-bin-labels-pdf.ts --set b-s17-a
+ *   npm run labels:farm-shop
  *
- * Output: backend/output/stock-room-bin-labels.pdf
+ * Output: backend/output/farm-shop-bin-labels.pdf
  */
 
 import fs from "node:fs";
@@ -21,41 +17,19 @@ import bwipjs from "bwip-js";
 import { PrismaClient } from "@prisma/client";
 import { binCodeFromRow } from "../src/lib/codes.js";
 import {
-  STOCK_ROOM_PRINT_SET_B_S17_A_COUNT,
-  STOCK_ROOM_SCAN_PREFIX,
-  STOCK_ROOM_WAREHOUSE_CODE,
-  STOCK_ROOM_ZONE_A_BIN_COUNT,
-  STOCK_ROOM_ZONE_B_BIN_COUNT,
-  STOCK_ROOM_ZONE_C_BIN_COUNT,
-  stockRoomBinRows,
-  stockRoomPrintSet_B_S17_through_A,
-} from "../src/lib/stock-room-layout.js";
+  FARM_SHOP_SCAN_PREFIX,
+  FARM_SHOP_WAREHOUSE_CODE,
+  FARM_SHOP_ZONE_A_BIN_COUNT,
+  farmShopBinRows,
+} from "./config/farm-shop-layout.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = path.join(__dirname, "..", "output");
-const setArgIdx = process.argv.indexOf("--set");
-const printSet =
-  setArgIdx >= 0 && process.argv[setArgIdx + 1] === "b-s17-a" ? "b-s17-a" : null;
-const zoneArgIdx = process.argv.indexOf("--zone");
-const zoneFilter =
-  printSet
-    ? null
-    : process.argv.includes("--all")
-      ? null
-      : zoneArgIdx >= 0 && process.argv[zoneArgIdx + 1]
-        ? process.argv[zoneArgIdx + 1]!.toUpperCase()
-        : "C";
 const outArgIdx = process.argv.indexOf("--out");
 const OUT_FILE =
   outArgIdx >= 0 && process.argv[outArgIdx + 1]
     ? path.resolve(process.argv[outArgIdx + 1]!)
-    : printSet === "b-s17-a"
-      ? path.join(OUT_DIR, "stock-room-zone-b-s17-through-a-labels.pdf")
-      : zoneFilter === "B"
-        ? path.join(OUT_DIR, "stock-room-zone-b-bin-labels.pdf")
-        : zoneFilter === "A"
-          ? path.join(OUT_DIR, "stock-room-zone-a-bin-labels.pdf")
-          : path.join(OUT_DIR, "stock-room-bin-labels.pdf");
+    : path.join(OUT_DIR, "farm-shop-bin-labels.pdf");
 
 const PT = 72;
 const PAGE_W = 12 * PT;
@@ -107,7 +81,7 @@ const layout = largeMode
         labelH,
         perPage: cols * rows,
         barcode: { bcid: "code128" as const, scale: 4, height: 28, pad: 6 },
-        typography: { room: 14, locationMax: 22, code: 10, pad: 14, codeStrip: 14, barStrip: 72, codeGap: 4 },
+        typography: { room: 16, locationMax: 22, code: 10, pad: 14, codeStrip: 14, barStrip: 72, codeGap: 4 },
       };
     })()
   : {
@@ -154,59 +128,36 @@ interface LabelRow {
   bin: string;
 }
 
-const layoutKeys = printSet
-  ? new Set(stockRoomPrintSet_B_S17_through_A().map((r) => `${r.zone}/${r.shelf}/${r.bin}`))
-  : zoneFilter && ["A", "B", "C"].includes(zoneFilter)
-    ? new Set(
-        stockRoomBinRows()
-          .filter((r) => r.zone === zoneFilter)
-          .map((r) => `${r.zone}/${r.shelf}/${r.bin}`)
-      )
-    : null;
-
-const printOrder = printSet ? stockRoomPrintSet_B_S17_through_A() : null;
+const layoutKeys = new Set(
+  farmShopBinRows().map((r) => `${r.zone}/${r.shelf}/${r.bin}`)
+);
 
 async function loadLabels(db: PrismaClient): Promise<LabelRow[]> {
   const wh = await db.warehouse.findUnique({
-    where: { code: STOCK_ROOM_WAREHOUSE_CODE },
+    where: { code: FARM_SHOP_WAREHOUSE_CODE },
     select: { id: true, code: true, scanPrefix: true },
   });
   if (!wh) {
-    throw new Error(`Warehouse ${STOCK_ROOM_WAREHOUSE_CODE} not found.`);
+    throw new Error(
+      `Warehouse ${FARM_SHOP_WAREHOUSE_CODE} not found. Run: npm run db:seed-farm-shop:dev`
+    );
   }
 
-  const zoneWhere = printSet
-    ? { zone: { in: ["A", "B"] } }
-    : zoneFilter
-      ? { zone: zoneFilter }
-      : {};
-
   const bins = await db.bin.findMany({
-    where: { warehouseId: wh.id, ...zoneWhere },
-    orderBy: [{ zone: "asc" }, { shelf: "asc" }, { bin: "asc" }],
+    where: { warehouseId: wh.id, zone: "A" },
+    orderBy: [{ shelf: "asc" }, { bin: "asc" }],
   });
 
   if (bins.length === 0) {
     throw new Error(
-      `No bins in ${STOCK_ROOM_WAREHOUSE_CODE}. Run: npm run db:seed-stock-room:dev`
+      `No bins in ${FARM_SHOP_WAREHOUSE_CODE}. Run: npm run db:seed-farm-shop:dev`
     );
   }
 
-  const byKey = new Map<string, (typeof bins)[number]>();
+  const labels: LabelRow[] = [];
   for (const b of bins) {
     const key = `${b.zone}/${b.shelf}/${b.bin}`;
-    if (layoutKeys && !layoutKeys.has(key)) continue;
-    byKey.set(key, b);
-  }
-
-  const orderedKeys = printOrder
-    ? printOrder.map((r) => `${r.zone}/${r.shelf}/${r.bin}`)
-    : [...byKey.keys()].sort();
-
-  const labels: LabelRow[] = [];
-  for (const key of orderedKeys) {
-    const b = byKey.get(key);
-    if (!b) continue;
+    if (!layoutKeys.has(key)) continue;
     let code = b.code;
     if (!code) {
       code = binCodeFromRow(b, wh);
@@ -216,7 +167,7 @@ async function loadLabels(db: PrismaClient): Promise<LabelRow[]> {
   }
 
   if (labels.length === 0) {
-    throw new Error("No matching layout bins found. Run npm run db:seed-stock-room:dev");
+    throw new Error("No matching layout bins found. Run npm run db:seed-farm-shop:dev");
   }
   return labels;
 }
@@ -272,7 +223,7 @@ function drawLabel(
       .font("Helvetica-Bold")
       .fontSize(room)
       .fillColor("#003087")
-      .text("STOCK ROOM", x + pad, headerY, { width: innerW, align: "center", lineBreak: false });
+      .text("FARM SHOP", x + pad, headerY, { width: innerW, align: "center", lineBreak: false });
     headerY += room + 4;
     headerH = barTopY - headerY - 1;
   }
@@ -312,39 +263,23 @@ async function main() {
     doc.pipe(stream);
 
     const labelMm = `${LABEL_W_MM}×${LABEL_H_MM} mm`;
-    const zoneNote = printSet
-      ? "zone B S17–S18 then zone A (single print run)"
-      : zoneFilter
-        ? `zone ${zoneFilter} only`
-        : "all zones";
 
     doc.addPage();
-    doc.font("Helvetica-Bold").fontSize(20).fillColor("#003087").text("Stock Room bin labels", MARGIN, 48);
+    doc.font("Helvetica-Bold").fontSize(20).fillColor("#003087").text("Farm Shop bin labels", MARGIN, 48);
     doc
       .font("Helvetica")
       .fontSize(11)
       .fillColor("#333333")
       .text(
         [
-          `${labels.length} labels · ${STOCK_ROOM_WAREHOUSE_CODE} · ${zoneNote}`,
-          `Scan prefix ${STOCK_ROOM_SCAN_PREFIX} · compact code STR.CS05.08 (12 chars)`,
+          `${labels.length} labels · ${FARM_SHOP_WAREHOUSE_CODE} · zone A only`,
+          `Zone A layout: ${FARM_SHOP_ZONE_A_BIN_COUNT} bins · 25 shelves · scan prefix ${FARM_SHOP_SCAN_PREFIX}`,
           largeMode
             ? `Large mode · ${layout.perPage} per 12×18 sheet`
             : `Label size: ${labelMm} · ${layout.perPage} per 12×18 sheet (${layout.cols}×${layout.rows})`,
-          printSet === "b-s17-a"
-            ? `Print set: B S17–S18 (${STOCK_ROOM_PRINT_SET_B_S17_A_COUNT - STOCK_ROOM_ZONE_A_BIN_COUNT} bins) + zone A (${STOCK_ROOM_ZONE_A_BIN_COUNT} bins)`
-            : zoneFilter === "C"
-            ? `Zone C layout: ${STOCK_ROOM_ZONE_C_BIN_COUNT} bins · zone D reserved`
-            : zoneFilter === "B"
-              ? `Zone B layout: ${STOCK_ROOM_ZONE_B_BIN_COUNT} bins (18 shelves)`
-              : zoneFilter === "A"
-                ? `Zone A layout: ${STOCK_ROOM_ZONE_A_BIN_COUNT} bins (6 shelves)`
-                : "",
-          "Barcode: CODE128 · print at 100% on 50×25 mm stock or 12×18 tabloid.",
-          "Sheet 2: blank cut guide.",
-        ]
-          .filter(Boolean)
-          .join("\n"),
+          `Barcode: CODE128 · example ${FARM_SHOP_SCAN_PREFIX}.AS01.06`,
+          "Sheet 2: blank cut guide. Print at 100% on 50×25 mm stock or 12×18 tabloid.",
+        ].join("\n"),
         MARGIN,
         80,
         { width: PAGE_W - MARGIN * 2 }
