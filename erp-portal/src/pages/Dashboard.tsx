@@ -393,7 +393,7 @@ export const Dashboard = () => {
               {
                 icon: <Boxes size={14} />,
                 label: "Transfer TRF-413 completed",
-                desc: "WH-MAIN/A-2-1 → WH-FG/B-1-3",
+                desc: "WH-MAIN/A-2-1 → STR/B-1-3",
                 tone: "neutral" as const,
                 time: "22m",
               },

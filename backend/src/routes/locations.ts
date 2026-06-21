@@ -45,7 +45,7 @@ const taskSelect = {
     salesOrder: {
       select: {
         soNo: true,
-        customer: { select: { name: true, code: true, city: true } },
+        customer: { select: { name: true, code: true, addressLine: true, city: true, state: true, pincode: true } },
       },
     },
     _count: { select: { items: true } },
@@ -63,7 +63,7 @@ const taskSelect = {
     salesOrder: {
       select: {
         soNo: true,
-        customer: { select: { name: true, code: true, city: true } },
+        customer: { select: { name: true, code: true, addressLine: true, city: true, state: true, pincode: true } },
       },
     },
     _count: { select: { items: true } },

@@ -8,7 +8,7 @@ import { useParams, useSearchParams } from "react-router-dom";
 import { Printer } from "lucide-react";
 import { api, type PackingSlipRow, type PublicCompany } from "@/lib/api";
 import { useBrand } from "@/hooks/useBrand";
-import { primaryScanCode } from "@/lib/scanCode";
+import { formatCustomerAddress } from "@/lib/customerAddress";
 
 const fmt = (d?: string | Date | null) => {
   if (!d) return "—";
@@ -144,9 +144,9 @@ export const PrintPackingSlip = () => {
               <div className="text-base font-bold text-gray-900 mt-1">
                 {ps.salesOrder?.customer?.name ?? "—"}
               </div>
-              {ps.salesOrder?.customer?.city && (
-                <div className="text-sm text-gray-600">
-                  {ps.salesOrder.customer.city}
+              {ps.salesOrder?.customer && (
+                <div className="text-sm text-gray-600 whitespace-pre-line">
+                  {formatCustomerAddress(ps.salesOrder.customer)}
                 </div>
               )}
               {ps.salesOrder?.customer?.contact && (

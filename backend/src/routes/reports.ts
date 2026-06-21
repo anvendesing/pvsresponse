@@ -497,7 +497,7 @@ export const reportsRoutes = async (app: FastifyInstance) => {
             select: {
               id: true,
               soNo: true,
-              customer: { select: { id: true, code: true, name: true, city: true } },
+              customer: { select: { id: true, code: true, name: true, addressLine: true, city: true, state: true, pincode: true } },
             },
           },
           invoice: {
@@ -985,7 +985,7 @@ export const reportsRoutes = async (app: FastifyInstance) => {
                   id: true,
                   invoiceNo: true,
                   amount: true,
-                  customer: { select: { id: true, code: true, name: true, city: true } },
+                  customer: { select: { id: true, code: true, name: true, addressLine: true, city: true, state: true, pincode: true } },
                   packingSlip: {
                     include: {
                       containers: {

@@ -6,6 +6,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, type PublicCompany } from "@/lib/api";
+import { formatCustomerAddress } from "@/lib/customerAddress";
 
 const fmtDate = (d: string | Date) => {
   const date = typeof d === "string" ? new Date(d) : d;
@@ -29,8 +30,11 @@ const formatCompanyAddress = (c: PublicCompany | null): string => {
 interface DocCustomer {
   name: string;
   gst?: string | null;
-  city?: string | null;
   contact?: string | null;
+  addressLine?: string | null;
+  city?: string | null;
+  state?: string | null;
+  pincode?: string | null;
 }
 
 interface MetaItem {
@@ -184,8 +188,10 @@ export const PublicDocShell = ({
               <div className="text-base font-bold text-gray-900 mt-1">
                 {customer.name}
               </div>
-              {customer.city && (
-                <div className="text-sm text-gray-600">{customer.city}</div>
+              {formatCustomerAddress(customer) && (
+                <div className="text-sm text-gray-600 whitespace-pre-line">
+                  {formatCustomerAddress(customer)}
+                </div>
               )}
               {customer.gst && (
                 <div className="text-xs text-gray-500 mt-1">

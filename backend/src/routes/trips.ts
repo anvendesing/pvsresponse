@@ -37,7 +37,7 @@ const fullTripInclude = {
           amount: true,
           status: true,
           customer: {
-            select: { id: true, name: true, code: true, city: true, contact: true },
+            select: { id: true, name: true, code: true, addressLine: true, city: true, state: true, pincode: true, contact: true },
           },
         },
       },
@@ -437,7 +437,7 @@ export const tripRoutes = async (app: FastifyInstance) => {
               id: true,
               invoiceNo: true,
               amount: true,
-              customer: { select: { name: true, city: true } },
+              customer: { select: { name: true, addressLine: true, city: true, state: true, pincode: true } },
             },
           },
         },

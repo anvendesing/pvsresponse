@@ -5,6 +5,16 @@ export const inr = (n: number) =>
     maximumFractionDigits: 0,
   }).format(n);
 
+/** AR ledger running balance — Dr = customer owes us, Cr = advance on account. */
+export function arBalanceInr(balance: number): {
+  text: string;
+  tone: "owed" | "advance" | "zero";
+} {
+  if (balance > 0) return { text: `Dr ${inr(balance)}`, tone: "owed" };
+  if (balance < 0) return { text: `Cr ${inr(Math.abs(balance))}`, tone: "advance" };
+  return { text: inr(0), tone: "zero" };
+}
+
 export const num = (n: number, digits = 0) =>
   new Intl.NumberFormat("en-IN", {
     maximumFractionDigits: digits,

@@ -10,7 +10,7 @@ import { useParams, useSearchParams } from "react-router-dom";
 import { Printer } from "lucide-react";
 import { api, type PickListRow, type PublicCompany } from "@/lib/api";
 import { useBrand } from "@/hooks/useBrand";
-import { primaryScanCode } from "@/lib/scanCode";
+import { formatCustomerAddress } from "@/lib/customerAddress";
 
 const fmt = (d?: string | Date | null) => {
   if (!d) return "—";
@@ -148,9 +148,9 @@ export const PrintPickList = () => {
               <div className="text-gray-700 mt-1">
                 {pl.salesOrder?.customer?.name ?? "—"}
               </div>
-              {pl.salesOrder?.customer?.city && (
-                <div className="text-xs text-gray-500">
-                  {pl.salesOrder.customer.city}
+              {pl.salesOrder?.customer && (
+                <div className="text-xs text-gray-500 whitespace-pre-line">
+                  {formatCustomerAddress(pl.salesOrder.customer)}
                 </div>
               )}
             </div>

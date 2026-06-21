@@ -23,7 +23,7 @@ export const shareRoutes = async (app: FastifyInstance) => {
     const inv = await db.invoice.findUnique({
       where: { shareToken: token },
       include: {
-        customer: { select: { name: true, gst: true, city: true, contact: true } },
+        customer: { select: { name: true, gst: true, addressLine: true, city: true, state: true, pincode: true, contact: true } },
         salesOrder: { select: { soNo: true } },
         packingSlip: { select: { packingSlipNo: true } },
         items: {
@@ -99,7 +99,7 @@ export const shareRoutes = async (app: FastifyInstance) => {
     const so = await db.salesOrder.findUnique({
       where: { shareToken: token },
       include: {
-        customer: { select: { name: true, gst: true, city: true, contact: true } },
+        customer: { select: { name: true, gst: true, addressLine: true, city: true, state: true, pincode: true, contact: true } },
         quote: { select: { quoteNo: true } },
         items: {
           include: {
@@ -178,7 +178,7 @@ export const shareRoutes = async (app: FastifyInstance) => {
           select: {
             soNo: true,
             customer: {
-              select: { name: true, gst: true, city: true, contact: true },
+              select: { name: true, gst: true, addressLine: true, city: true, state: true, pincode: true, contact: true },
             },
           },
         },

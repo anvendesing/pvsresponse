@@ -389,7 +389,7 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
 
       // Sale ledger rows are NOT posted here. The storefront doesn't
       // know which bin/warehouse will fulfil the order — that is
-      // decided at pick/pack time (often WH-FG). Ledger posts happen
+      // decided at pick/pack time (often STR). Ledger posts happen
       // in POST /packing-slips/:id/pack from the pick bin's warehouse.
 
       // qtyInvoiced is intentionally left at 0 on the SO lines even

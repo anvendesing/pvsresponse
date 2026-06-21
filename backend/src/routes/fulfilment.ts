@@ -52,7 +52,7 @@ const fullPickInclude = {
       soNo: true,
       status: true,
       customerId: true,
-      customer: { select: { id: true, name: true, code: true, city: true } },
+      customer: { select: { id: true, name: true, code: true, addressLine: true, city: true, state: true, pincode: true } },
     },
   },
   assignedTo: { select: { id: true, name: true, username: true } },
@@ -105,7 +105,7 @@ const fullPackInclude = {
       transportTax: true,
       dispatchOptionId: true,
       dispatchOption: { select: { id: true, name: true, code: true } },
-      customer: { select: { id: true, name: true, code: true, city: true } },
+      customer: { select: { id: true, name: true, code: true, addressLine: true, city: true, state: true, pincode: true } },
     },
   },
   assignedTo: { select: { id: true, name: true, username: true } },
@@ -1197,7 +1197,7 @@ export const fulfilmentRoutes = async (app: FastifyInstance) => {
 
       // Invoice exists for ecommerce at order time; B2B gets one at SO
       // confirm. We need the invoiceNo here so Sale ledger rows can
-      // reference the actual pick bin's warehouse (WH-FG etc.) instead
+      // reference the actual pick bin's warehouse (STR etc.) instead
       // of blindly pinning to warehouse.findFirst() (WH-MAIN).
       const invoiceToAttach = await db.invoice.findFirst({
         where: { salesOrderId: ps.salesOrderId },
@@ -1256,7 +1256,7 @@ export const fulfilmentRoutes = async (app: FastifyInstance) => {
         // Sale ledger: always post at pack-complete from the pick bin's
         // warehouse. Ecommerce used to post at order time against
         // warehouse.findFirst() (WH-MAIN) even though picking happened
-        // in WH-FG — that mismatch is what the Inventory Ledger showed.
+        // in STR — that mismatch is what the Inventory Ledger showed.
         if (invoiceToAttach) {
           await createSaleLedgerFromPickBin({
             productId: p.productId,
@@ -3006,7 +3006,7 @@ export const fulfilmentRoutes = async (app: FastifyInstance) => {
       const slip = await db.packingSlip.findUnique({
         where: { packingSlipNo: parsed.packingSlipNo },
         include: {
-          salesOrder: { select: { id: true, soNo: true, customer: { select: { id: true, name: true, city: true } } } },
+          salesOrder: { select: { id: true, soNo: true, customer: { select: { id: true, name: true, addressLine: true, city: true, state: true, pincode: true } } } },
           invoice: {
             select: {
               id: true,
