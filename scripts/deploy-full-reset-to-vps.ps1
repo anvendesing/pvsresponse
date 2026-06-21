@@ -3,34 +3,24 @@
     Push code, upload local DB snapshot, and full-reset deploy on the VPS.
 
 .DESCRIPTION
-    1. Creates a consistent SQLite snapshot from backend/prisma/dev.db.
-    2. Optionally git push origin main.
-    3. SCPs the snapshot to the VPS.
-    4. Runs vps-deploy.sh --reset-data --replace-db (wipes old DB/uploads, deploys code, loads snapshot).
+    ORDER OF OPERATIONS:
+      1. Commit all changes on Windows (git add / git commit)
+      2. Run THIS script — it pushes to GitHub, uploads dev.db.snapshot, rebuilds VPS
 
-.PARAMETER VpsHost
-    Default 217.216.78.119
-
-.PARAMETER VpsUser
-    Default root
-
-.PARAMETER SshKey
-    SSH private key path. Leave empty for password auth (scp/ssh will prompt).
-
-.PARAMETER SkipGitPush
-    Skip git push (use when code is already on origin/main).
+    AUTH — no SSH key: omit -SshKey; enter VPS password when prompted.
 
 .EXAMPLE
-    .\scripts\deploy-full-reset-to-vps.ps1
+    .\scripts\deploy-full-reset-to-vps.ps1 -VpsUser root
 
 .EXAMPLE
-    .\scripts\deploy-full-reset-to-vps.ps1 -SshKey "$env:USERPROFILE\.ssh\pvs_vps_key"
+    .\scripts\deploy-full-reset-to-vps.ps1 -VpsUser root -SkipGitPush
 #>
 
 param(
     [string]$VpsHost = "217.216.78.119",
     [string]$VpsUser = "root",
     [string]$SshKey = "",
+    [switch]$PasswordAuth,
     [string]$RepoPath = "",
     [switch]$SkipGitPush,
     [switch]$UseGhcr,
@@ -41,21 +31,12 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+. "$PSScriptRoot\lib\vps-connect.ps1"
+
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $RepoRoot
 
-$sshOpts = @("-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=20")
-$scpOpts = @("-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=20")
-if ($SshKey) {
-    if (-not (Test-Path $SshKey)) { throw "SSH key not found: $SshKey" }
-    $sshOpts += @("-i", $SshKey)
-    $scpOpts += @("-i", $SshKey)
-}
-
-function Invoke-Ssh([string]$Command) {
-    & ssh @sshOpts "${VpsUser}@${VpsHost}" $Command
-    if ($LASTEXITCODE -ne 0) { throw "SSH failed (exit $LASTEXITCODE)" }
-}
+$conn = Initialize-VpsConnection -VpsHost $VpsHost -VpsUser $VpsUser -SshKey $SshKey -PasswordAuth:$PasswordAuth
 
 Write-Host "=== Step 1: Sync warehouse layout (prune + seed) ===" -ForegroundColor Cyan
 Push-Location (Join-Path $RepoRoot "backend")
@@ -92,23 +73,12 @@ if (-not $SkipGitPush) {
     Write-Host "=== Step 3: Skipped git push (-SkipGitPush) ===" -ForegroundColor Yellow
 }
 
-if (-not $RepoPath) {
-    foreach ($candidate in @("~/pvsresponse", "~/novaerp", "/root/pvsresponse", "/root/novaerp")) {
-        $probe = "test -d $candidate/.git && echo $candidate"
-        $found = & ssh @sshOpts "${VpsUser}@${VpsHost}" $probe 2>$null
-        if ($LASTEXITCODE -eq 0 -and $found) {
-            $RepoPath = $found.Trim()
-            break
-        }
-    }
-    if (-not $RepoPath) { $RepoPath = "~/pvsresponse" }
-}
+$RepoPath = Resolve-VpsRepoPath -SshOpts $conn.SshOpts -Target $conn.Target -RepoPath $RepoPath
 
 Write-Host ""
 Write-Host "=== Step 4: Upload DB snapshot to VPS ===" -ForegroundColor Cyan
 $RemoteDb = "/tmp/dev.db.snapshot"
-& scp @scpOpts $SnapshotLocal "${VpsUser}@${VpsHost}:${RemoteDb}"
-if ($LASTEXITCODE -ne 0) { throw "scp failed" }
+Invoke-VpsScp -ScpOpts $conn.ScpOpts -Source $SnapshotLocal -TargetPath "$($conn.Target):$RemoteDb"
 
 Write-Host ""
 Write-Host "=== Step 5: Full reset deploy on VPS ===" -ForegroundColor Cyan
@@ -122,13 +92,13 @@ if ($UseGhcr) {
 
 $remoteCmd = "${envExports}cd $RepoPath && bash scripts/vps-deploy.sh $($remoteFlags -join ' ')"
 Write-Host "  Remote: $remoteCmd"
-Invoke-Ssh $remoteCmd
+Invoke-VpsSsh -SshOpts $conn.SshOpts -Target $conn.Target -Command $remoteCmd
 
 Write-Host ""
 Write-Host "=== Step 6: Upload product images (optional) ===" -ForegroundColor Cyan
 $imgScript = Join-Path $RepoRoot "scripts\upload-images-to-vps.ps1"
 if (Test-Path $imgScript) {
-    $imgArgs = @{ VpsHost = $VpsHost; VpsUser = $VpsUser }
+    $imgArgs = @{ VpsHost = $VpsHost; VpsUser = $VpsUser; PasswordAuth = $PasswordAuth }
     if ($SshKey) { $imgArgs.SshKey = $SshKey }
     try {
         & $imgScript @imgArgs

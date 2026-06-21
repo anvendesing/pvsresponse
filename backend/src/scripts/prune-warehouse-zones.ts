@@ -12,12 +12,14 @@
  */
 
 import { PrismaClient } from "@prisma/client";
-import { farmShopBinRows } from "./config/farm-shop-layout.js";
+import {
+  farmShopBinRows,
+  FARM_SHOP_WAREHOUSE_CODE,
+} from "../lib/farm-shop-layout.js";
 import {
   STOCK_ROOM_WAREHOUSE_CODE,
   stockRoomBinRows,
-} from "../src/lib/stock-room-layout.js";
-import { FARM_SHOP_WAREHOUSE_CODE } from "./config/farm-shop-layout.js";
+} from "../lib/stock-room-layout.js";
 
 const dryRun = process.argv.includes("--dry-run");
 const db = new PrismaClient();

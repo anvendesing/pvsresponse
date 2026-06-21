@@ -21,7 +21,7 @@ import {
   FARM_SHOP_WAREHOUSE_CODE,
   FARM_SHOP_ZONE_A_BIN_COUNT,
   farmShopBinRows,
-} from "./config/farm-shop-layout.js";
+} from "../src/lib/farm-shop-layout.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = path.join(__dirname, "..", "output");

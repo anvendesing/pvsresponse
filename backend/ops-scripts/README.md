@@ -96,10 +96,23 @@ npm run ops:site-setup
 npm run ops:site-setup -- --dry-run
 ```
 
-VPS:
+VPS (inside running backend container):
 
 ```bash
-docker compose exec backend npx tsx ops-scripts/run-all.ts
+docker compose exec backend npm run ops:site-setup:dist
+docker compose exec backend npm run ops:warehouse-layout:dist   # Farm Shop + Stock Room bins
+```
+
+VPS host (git pull + rebuild — like ops but for code):
+
+```bash
+cd ~/pvsresponse
+bash scripts/vps-update.sh              # full: git pull + build + stock sync
+bash scripts/vps-update.sh pull         # step 1: git pull only
+bash scripts/vps-update.sh build        # step 2: docker compose up --build
+bash scripts/vps-update.sh sync         # step 3: db:sync-stock
+bash scripts/vps-update.sh site-setup   # ops:site-setup:dist
+bash scripts/vps-update.sh warehouse-layout
 ```
 
 ## If Stock Room code is not STR

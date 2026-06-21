@@ -9,7 +9,7 @@
  */
 
 import { PrismaClient } from "@prisma/client";
-import { binCodeFromRow } from "../src/lib/codes.js";
+import { binCodeFromRow } from "../lib/codes.js";
 import {
   FARM_SHOP_BIN_COUNT,
   FARM_SHOP_NAME,
@@ -17,7 +17,7 @@ import {
   FARM_SHOP_WAREHOUSE_CODE,
   FARM_SHOP_ZONE_A_BIN_COUNT,
   farmShopBinRows,
-} from "./config/farm-shop-layout.js";
+} from "../lib/farm-shop-layout.js";
 
 const dryRun = process.argv.includes("--dry-run");
 const db = new PrismaClient();

@@ -132,18 +132,75 @@ the seeded users (printed in the backend startup logs).
 
 ### Full deploy (recommended)
 
-On the VPS after `git pull`, run the bundled deploy script. It restarts the
-stack and reconciles `Product.stockOnHand` from bin quantities:
+On the VPS, use **`vps-update.sh`** — the git-pull counterpart to `ops:site-setup:dist`:
 
 ```bash
 cd ~/pvsresponse   # or ~/novaerp
+
+# Full update (git pull + rebuild + stock sync):
+bash scripts/vps-update.sh
+
+# Or step by step:
+bash scripts/vps-update.sh pull
+bash scripts/vps-update.sh build
+bash scripts/vps-update.sh sync
+bash scripts/vps-update.sh site-setup          # warehouses + production lines + putaway
+bash scripts/vps-update.sh warehouse-layout    # Farm Shop zone A + Stock Room A–D bins
+```
+
+Same as the older script:
+
+```bash
 bash scripts/vps-deploy.sh --build
 ```
 
-From your Windows dev machine (SSH key required):
+### Deploy from Windows (password or SSH key)
+
+**Order:** commit locally → push to GitHub → update VPS. The VPS does not commit;
+it only `git pull`s what you pushed.
 
 ```powershell
-.\scripts\deploy-to-vps.ps1 -SshKey "C:\Users\You\.ssh\your_vps_key"
+# 1. Commit (once, when you have changes)
+git add -A
+git commit -m "describe your changes"
+
+# 2. Deploy — no SSH key needed; enter VPS password when prompted
+cd d:\coding\pvsresponse
+.\scripts\deploy-to-vps.ps1 -VpsUser root
+```
+
+Replace `root` with your VPS username if different. If password login fails because
+OpenSSH tries keys first, add `-PasswordAuth`:
+
+```powershell
+.\scripts\deploy-to-vps.ps1 -VpsUser root -PasswordAuth
+```
+
+**Code + copy local database to VPS:**
+
+```powershell
+.\scripts\deploy-full-reset-to-vps.ps1 -VpsUser root
+```
+
+**Optional SSH key instead of password:**
+
+```powershell
+.\scripts\deploy-to-vps.ps1 -VpsUser root -SshKey "C:\Users\You\.ssh\your_vps_key"
+```
+
+### Deploy manually on the VPS (no Windows SSH)
+
+If you prefer to log into the VPS with password in PuTTY or `ssh root@217.216.78.119`:
+
+```powershell
+# On Windows — only push to GitHub:
+git push origin main
+```
+
+```bash
+# On the VPS — pull and rebuild:
+cd ~/pvsresponse
+bash scripts/vps-update.sh
 ```
 
 GHCR prebuilt images (CI on `main`):
@@ -463,6 +520,7 @@ are enabled.
 | `pvsecommerce/nginx.conf` | Same proxy pattern as ERP; serves the shop on `$SHOP_PORT`. |
 | `pvsecommerce/.dockerignore` | Shop build context exclusions. |
 | `.github/workflows/build-images.yml` | CI: matrix build of backend + web + shop → push to ghcr.io with `latest`, `sha-<short>`, semver tags. |
+| `scripts/vps-update.sh` | **On VPS:** git pull + rebuild + stock sync (step-by-step subcommands). |
 | `scripts/vps-deploy.sh` | Full VPS deploy: `git pull`, compose up, `db:sync-stock`, optional image copy. |
 | `scripts/deploy-to-vps.ps1` | From Windows: optional `git push`, SSH remote `vps-deploy.sh`. |
 
