@@ -41,6 +41,8 @@ RUN apk add --no-cache openssl tini su-exec wget sqlite
 COPY package.json package-lock.json* ./
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
+COPY --from=build /app/openapi.json ./openapi.json
+COPY --from=build /app/dist/openapi.json ./dist/openapi.json
 COPY --from=build /app/prisma ./prisma
 COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
 # Drop dev deps to slim the image (re-install with --omit=dev). This

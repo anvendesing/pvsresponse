@@ -7,6 +7,7 @@ import sensible from "@fastify/sensible";
 import { ZodError } from "zod";
 import { config } from "./config.js";
 import { registerAuth } from "./auth/plugin.js";
+import { registerOpenApi } from "./openapi.js";
 import { authRoutes } from "./routes/auth.js";
 import { catalogRoutes } from "./routes/catalog.js";
 import { categoriesRoutes } from "./routes/categories.js";
@@ -62,6 +63,7 @@ await app.register(fastifyStatic, {
   decorateReply: false,
 });
 await registerAuth(app);
+await registerOpenApi(app);
 
 app.setErrorHandler((err, _req, reply) => {
   if (err instanceof ZodError) {
@@ -85,8 +87,10 @@ app.get("/", async (req, reply) => {
     name: "NovaERP API",
     version: "1.0.0",
     api: "/v1",
+    swagger: "/docs",
+    openApi: "/docs/json",
     health: "/health",
-    docs: {
+    endpoints: {
       auth: "/v1/auth/login (POST)",
       catalog: "/v1/products, /v1/customers, /v1/suppliers",
       sales: "/v1/quotes, /v1/sales-orders, /v1/invoices",
@@ -115,6 +119,8 @@ app.get("/", async (req, reply) => {
   <div class="sub">All endpoints are mounted under <code>/v1</code>. Open the React portal at <a href="http://localhost:5173">http://localhost:5173</a>.</div>
   <div class="card">
     <div class="row"><span><strong>Health probe</strong></span><a href="/health">/health</a></div>
+    <div class="row"><span><strong>Swagger UI</strong></span><a href="/docs">/docs</a></div>
+    <div class="row"><span><strong>OpenAPI JSON</strong></span><a href="/docs/json">/docs/json</a></div>
     <div class="row"><span><strong>API base</strong></span><a href="/v1/products">/v1</a></div>
     <div class="row"><span><strong>Auth</strong></span><code>POST /v1/auth/login</code></div>
   </div>
