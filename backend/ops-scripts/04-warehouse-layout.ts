@@ -1,7 +1,7 @@
 #!/usr/bin/env tsx
 /**
- * Ensure Farm Shop (WH-FARM zone A) and Stock Room (STR zones A–D) match
- * the canonical layout files. Prunes legacy zones, then re-seeds bins.
+ * Ensure Farm Shop (WH-FARM zone A), Stock Room (STR zones A–D), and godown
+ * shelf layouts (Date Room, Big Godown, etc.) match the canonical layout files.
  *
  *   npm run ops:warehouse-layout            (dev — tsx source)
  *   npm run ops:warehouse-layout:dist       (container — compiled JS)

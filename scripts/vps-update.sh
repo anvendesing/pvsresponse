@@ -86,7 +86,7 @@ case "$cmd" in
     ;;
 
   warehouse-layout)
-    echo "=== Warehouse layout (Farm Shop zone A + Stock Room zones A–D) ==="
+    echo "=== Warehouse layout (Farm Shop, Stock Room, godown shelves) ==="
     "${COMPOSE[@]}" exec -T backend npm run ops:warehouse-layout:dist
     ;;
 

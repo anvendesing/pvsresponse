@@ -168,7 +168,11 @@ if [ -n "$REPLACE_DB" ]; then
 fi
 
 echo ""
-echo "=== Step 5: Reconcile product stock from bins (db:sync-stock) ==="
+echo "=== Step 5b: Seed godown shelf bins (db:seed-godowns) ==="
+"${COMPOSE[@]}" exec -T "$BACKEND_SVC" npm run db:seed-godowns
+
+echo ""
+echo "=== Step 6: Reconcile product stock from bins (db:sync-stock) ==="
 if [ "$SKIP_SYNC" -eq 1 ]; then
   echo "Skipped (--no-sync)."
 else
@@ -176,7 +180,7 @@ else
 fi
 
 echo ""
-echo "=== Step 6: Product images (optional belt-and-suspenders) ==="
+echo "=== Step 7: Product images (optional belt-and-suspenders) ==="
 IMG_SRC="$REPO_DIR/backend/uploads/products"
 if [ -d "$IMG_SRC" ] && [ "$(find "$IMG_SRC" -maxdepth 1 -type f 2>/dev/null | wc -l)" -gt 0 ]; then
   CONTAINER=$("${COMPOSE[@]}" ps -q backend | head -1)
