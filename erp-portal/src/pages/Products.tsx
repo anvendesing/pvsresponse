@@ -25,6 +25,7 @@ import { Input } from "@/components/common/Input";
 import { Toolbar } from "@/components/common/Toolbar";
 import { EmptyState } from "@/components/common/EmptyState";
 import { ProductEditor } from "@/components/products/ProductEditor";
+import { ProductVariantsTable, countVariantRows, filterVariantRows } from "@/components/products/ProductVariantsTable";
 import { NormalizeUomsModal } from "@/components/products/NormalizeUomsModal";
 import { effectiveUom, type Product, type ProductType } from "@/data/types";
 import { inr, num } from "@/lib/format";
@@ -43,6 +44,7 @@ const typeChip = (t: ProductType) => {
 };
 
 export const Products = () => {
+  const [viewTab, setViewTab] = useState<"products" | "variants">("products");
   const [q, setQ] = useState("");
   const [type, setType] = useState<ProductType | "all">("all");
   const [selected, setSelected] = useState<Product | null>(null);
@@ -76,6 +78,11 @@ export const Products = () => {
 
   const live = useApi(() => api.products({ limit: 500 }), []);
   const products = live.data ?? [];
+  const variantCount = useMemo(() => countVariantRows(products), [products]);
+  const filteredVariants = useMemo(
+    () => filterVariantRows(products, q, type),
+    [products, q, type]
+  );
 
   const filtered = useMemo(() => {
     return products.filter((p) => {
@@ -239,8 +246,35 @@ export const Products = () => {
         left={
           <>
             <h2 className="text-h3 font-bold mr-2">Products</h2>
+            <div className="flex items-center gap-1 ml-1 mr-2">
+              {(
+                [
+                  { id: "products" as const, label: "Products", icon: Package },
+                  { id: "variants" as const, label: "Variants", icon: Layers },
+                ] as const
+              ).map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => {
+                    setViewTab(t.id);
+                    if (t.id === "variants") setSelected(null);
+                  }}
+                  className={`h-7 px-3 rounded-md text-caption font-semibold transition-colors inline-flex items-center gap-1 ${
+                    viewTab === t.id
+                      ? "bg-primary text-white"
+                      : "bg-canvas text-ink-muted hover:text-primary"
+                  }`}
+                >
+                  <t.icon size={12} />
+                  {t.label}
+                </button>
+              ))}
+            </div>
             <Chip tone="neutral">
-              {filtered.length} of {products.length}
+              {viewTab === "products"
+                ? `${filtered.length} of ${products.length}`
+                : `${filteredVariants.length} of ${variantCount} variant${variantCount === 1 ? "" : "s"}`}
             </Chip>
           </>
         }
@@ -290,13 +324,19 @@ export const Products = () => {
       )}
       <div className="flex-1 flex min-h-0">
         <div
-          className={`flex-1 flex flex-col min-w-0 ${selected ? "border-r border-border" : ""}`}
+          className={`flex-1 flex flex-col min-w-0 ${
+            viewTab === "products" && selected ? "border-r border-border" : ""
+          }`}
         >
           <div className="px-4 py-3 bg-surface border-b border-border flex items-center gap-3 flex-wrap">
             <Input
               size="sm"
               iconLeft={<Search size={14} />}
-              placeholder="Search SKU, name, barcode, variant…"
+              placeholder={
+                viewTab === "variants"
+                  ? "Search variant SKU, attributes, parent product…"
+                  : "Search SKU, name, barcode, variant…"
+              }
               value={q}
               onChange={(e) => setQ(e.target.value)}
               className="!h-8"
@@ -321,31 +361,46 @@ export const Products = () => {
             </Button>
           </div>
           <div className="flex-1 min-h-0 overflow-auto bg-surface">
-            {live.loading || live.error || filtered.length === 0 ? (
-              <EmptyState
+            {viewTab === "products" ? (
+              live.loading || live.error || filtered.length === 0 ? (
+                <EmptyState
+                  loading={live.loading}
+                  error={live.error}
+                  empty={!live.loading && !live.error && filtered.length === 0}
+                  emptyTitle={products.length === 0 ? "No products yet" : "No products match"}
+                  emptyDescription={
+                    products.length === 0
+                      ? "Click 'New Product' to add your first item."
+                      : "Try a different search or clear the type filter."
+                  }
+                  onRetry={live.refetch}
+                />
+              ) : (
+                <DataTable
+                  rows={filtered}
+                  columns={columns}
+                  rowKey={(r) => r.id}
+                  onRowClick={(r) => setSelected(r)}
+                  selectedKey={selected?.id}
+                />
+              )
+            ) : (
+              <ProductVariantsTable
+                products={products}
+                q={q}
+                type={type}
                 loading={live.loading}
                 error={live.error}
-                empty={!live.loading && !live.error && filtered.length === 0}
-                emptyTitle={products.length === 0 ? "No products yet" : "No products match"}
-                emptyDescription={
-                  products.length === 0
-                    ? "Click 'New Product' to add your first item."
-                    : "Try a different search or clear the type filter."
-                }
                 onRetry={live.refetch}
-              />
-            ) : (
-              <DataTable
-                rows={filtered}
-                columns={columns}
-                rowKey={(r) => r.id}
-                onRowClick={(r) => setSelected(r)}
-                selectedKey={selected?.id}
+                onRowClick={({ product }) => {
+                  setSelected(product);
+                  setEditorMode("edit");
+                }}
               />
             )}
           </div>
         </div>
-        {selected && (
+        {viewTab === "products" && selected && (
           <aside className="w-[420px] bg-surface flex flex-col">
             <div className="px-4 py-3 border-b border-border flex items-center justify-between">
               <div className="min-w-0">
@@ -422,6 +477,8 @@ export const Products = () => {
                   <Row k="Type" v={typeChip(selected.type).label} />
                   <Row k="Barcode" v={selected.barcode} mono />
                   <Row k="Batch tracked" v={selected.batchTracked ? "Yes" : "No"} />
+                  <Row k="E-commerce" v={selected.ecommerceEnabled !== false ? "Listed" : "Hidden"} />
+                  <Row k="Price lists" v={selected.priceListEnabled !== false ? "Listed" : "Hidden"} />
                   <Row k="State" v={selected.state} />
                 </div>
               </Card>

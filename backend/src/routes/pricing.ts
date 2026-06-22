@@ -395,7 +395,7 @@ export const pricingRoutes = async (app: FastifyInstance) => {
       if (!pl) return reply.code(404).send({ error: { code: "not_found" } });
 
       const products = await db.product.findMany({
-        where: { state: "active" },
+        where: { state: "active", priceListEnabled: true },
         select: { id: true, sellingPrice: true, costPrice: true },
       });
       let written = 0;

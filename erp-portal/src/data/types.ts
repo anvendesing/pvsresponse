@@ -62,6 +62,8 @@ export interface ProductVariant {
   weightKg?: number | null;
   stockOnHand: number;
   active: boolean;
+  ecommerceEnabled?: boolean;
+  priceListEnabled?: boolean;
   imageUrl?: string | null;
 }
 
@@ -87,9 +89,11 @@ export interface Product {
   weightKg?: number | null;
   batchTracked: boolean;
   imageUrl?: string | null;
-  // Free-form storefront / catalogue description. Optional — older rows
-  // and items created through the basic ERP form may not have one.
   description?: string | null;
+  /** Listed on storefront / ecommerce when true. */
+  ecommerceEnabled?: boolean;
+  /** Listed in price lists and bulk-order export when true. */
+  priceListEnabled?: boolean;
   variants?: ProductVariant[];
 }
 

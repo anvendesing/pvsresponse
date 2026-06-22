@@ -137,6 +137,7 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
             productId: true,
             sellingPriceOverride: true,
             active: true,
+            ecommerceEnabled: true,
             gstRate: true,
           },
         })
@@ -151,6 +152,7 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
         stockOnHand: true,
         sellingPrice: true,
         gstRate: true,
+        ecommerceEnabled: true,
       },
     });
     const vMap = new Map(variants.map((v) => [v.id, v]));
@@ -176,6 +178,14 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
           },
         });
       }
+      if (!p.ecommerceEnabled) {
+        return reply.code(409).send({
+          error: {
+            code: "product_not_in_ecommerce",
+            message: `${p.sku} is not listed for e-commerce.`,
+          },
+        });
+      }
       if (it.variantId) {
         const v = vMap.get(it.variantId);
         if (!v || v.productId !== it.productId) {
@@ -191,6 +201,14 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
             error: {
               code: "variant_inactive",
               message: `Variant ${v.sku} is no longer on sale.`,
+            },
+          });
+        }
+        if (!v.ecommerceEnabled) {
+          return reply.code(409).send({
+            error: {
+              code: "variant_not_in_ecommerce",
+              message: `Variant ${v.sku} is not listed for e-commerce.`,
             },
           });
         }
@@ -544,7 +562,7 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
   // place orders that will immediately fail the oversell check.
   app.get("/storefront-mock/catalog", async () => {
     const products = await db.product.findMany({
-      where: { state: "active", category: { active: true } },
+      where: { state: "active", ecommerceEnabled: true, category: { active: true } },
       orderBy: { sku: "asc" },
       include: {
         category: { select: { id: true, slug: true, name: true } },
@@ -560,6 +578,7 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
             stockOnHand: true,
             sellingPriceOverride: true,
             active: true,
+            ecommerceEnabled: true,
             gstRate: true,
           },
         },
@@ -584,7 +603,7 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
         imageUrl: p.imageUrl ?? null,
         tags: p.tags ? p.tags.split(",").map((t) => t.trim()).filter(Boolean) : [],
         variants: p.variants
-          .filter((v) => v.active && (v.stockOnHand ?? 0) > 0)
+          .filter((v) => v.active && v.ecommerceEnabled && (v.stockOnHand ?? 0) > 0)
           .map((v) => ({
             id: v.id,
             sku: v.sku,
@@ -606,7 +625,7 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
   app.get("/storefront-mock/products/:id", async (req, reply) => {
     const id = (req.params as { id: string }).id;
     const p = await db.product.findFirst({
-      where: { OR: [{ id }, { sku: id }], state: "active" },
+      where: { OR: [{ id }, { sku: id }], state: "active", ecommerceEnabled: true },
       include: {
         category: { select: { id: true, slug: true, name: true } },
         variants: {
@@ -621,6 +640,7 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
             stockOnHand: true,
             sellingPriceOverride: true,
             active: true,
+            ecommerceEnabled: true,
             gstRate: true,
           },
         },
@@ -645,7 +665,7 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
       imageUrl: p.imageUrl ?? null,
       tags: p.tags ? p.tags.split(",").map((t) => t.trim()).filter(Boolean) : [],
       variants: p.variants
-        .filter((v) => v.active)
+        .filter((v) => v.active && v.ecommerceEnabled)
         .map((v) => ({
           id: v.id,
           sku: v.sku,

@@ -63,6 +63,8 @@ const variantInput = z.object({
   weightKg: z.number().min(0).max(5000).nullable().optional(),
   stockOnHand: z.number().int().nonnegative().default(0),
   active: z.boolean().default(true),
+  ecommerceEnabled: z.boolean().default(true),
+  priceListEnabled: z.boolean().default(true),
 });
 
 // Builds the persistence shape for a variant, normalising uom and packSize.
@@ -86,6 +88,8 @@ const variantPersist = (v: z.infer<typeof variantInput> & { sku: string; barcode
     weightKg: v.weightKg ?? null,
     stockOnHand: v.stockOnHand,
     active: v.active,
+    ecommerceEnabled: v.ecommerceEnabled,
+    priceListEnabled: v.priceListEnabled,
   };
 };
 
@@ -109,6 +113,8 @@ const productCreate = z.object({
   // when set.
   weightKg: z.number().min(0).max(5000).nullable().optional(),
   batchTracked: z.boolean().default(false),
+  ecommerceEnabled: z.boolean().default(true),
+  priceListEnabled: z.boolean().default(true),
   // Free-form catalogue description. Empty / null clears the column.
   description: z.string().max(5000).nullish(),
   variants: z.array(variantInput).default([]),

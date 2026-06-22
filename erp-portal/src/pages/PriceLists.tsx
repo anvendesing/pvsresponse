@@ -238,8 +238,10 @@ const PriceListEditor = ({ priceListId, products, onChanged, onDeleted }: Editor
     }
 
     const rows: BookRow[] = [];
-    for (const p of products.filter((p) => p.state === "active")) {
-      const activeVariants = (p.variants ?? []).filter((v) => v.active);
+    for (const p of products.filter((p) => p.state === "active" && p.priceListEnabled !== false)) {
+      const activeVariants = (p.variants ?? []).filter(
+        (v) => v.active && v.priceListEnabled !== false
+      );
       if (activeVariants.length > 0) {
         // Header row — not editable
         rows.push({

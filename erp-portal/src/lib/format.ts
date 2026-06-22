@@ -21,6 +21,16 @@ export const num = (n: number, digits = 0) =>
     minimumFractionDigits: digits,
   }).format(n);
 
+/** Variant packSize in parent UoM — keeps decimals for sub-unit packs (0.1 kg = 100 g). */
+export const formatPackSize = (n: number): string => {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return "—";
+  if (Math.abs(v - Math.round(v)) < 1e-9) return num(v, 0);
+  if (v >= 1) return num(v, 3);
+  const decimals = Math.min(6, Math.max(1, Math.ceil(-Math.log10(Math.abs(v))) + 1));
+  return num(v, decimals);
+};
+
 export const pct = (n: number) => `${(n * 100).toFixed(1)}%`;
 
 export const dt = (d: string | Date) => {

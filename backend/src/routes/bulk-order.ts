@@ -435,12 +435,12 @@ export const bulkOrderRoutes = async (app: FastifyInstance) => {
 
       // Load all active products with their active variants
       const products = await db.product.findMany({
-        where: { state: "active" },
+        where: { state: "active", priceListEnabled: true },
         orderBy: [{ category: { name: "asc" } }, { name: "asc" }],
         include: {
           category: { select: { name: true } },
           variants: {
-            where: { active: true },
+            where: { active: true, priceListEnabled: true },
             orderBy: [{ size: "asc" }, { grade: "asc" }],
             select: {
               id: true,

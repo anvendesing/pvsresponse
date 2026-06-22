@@ -88,8 +88,8 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
     });
     const products =
       needle.length > 0
-        ? allProducts.filter((p) => productMatchesQuery(p, needle)).slice(0, 100)
-        : allProducts.slice(0, 100);
+        ? allProducts.filter((p) => productMatchesQuery(p, needle))
+        : allProducts;
 
     const productIds = products.map((p) => p.id);
     const allBins =

@@ -231,6 +231,10 @@ model Product {
   tags               String? // comma-separated search/filter tags
   imageHint          String? // e.g. "oils" | "millets" | "soap" for PackagingArt
   imageUrl           String? // optional product photo path (relative to API origin) e.g. /uploads/products/abc.jpg
+  // When false, hidden from storefront / ecommerce catalog UIs.
+  ecommerceEnabled   Boolean              @default(true)
+  // When false, hidden from price list editor and bulk-order Excel export.
+  priceListEnabled   Boolean              @default(true)
   createdAt          DateTime             @default(now())
   updatedAt          DateTime             @updatedAt
   bins               Bin[]
@@ -290,6 +294,9 @@ model ProductVariant {
   sellingPriceOverride Float?
   stockOnHand          Int                  @default(0)
   active               Boolean              @default(true)
+  // Channel visibility — independent of `active` (operational) flag.
+  ecommerceEnabled     Boolean              @default(true)
+  priceListEnabled     Boolean              @default(true)
   // Optional per-variant image (falls back to parent Product.imageUrl at read time).
   imageUrl             String? // relative path e.g. /uploads/products/variants/<id>.jpg
   createdAt            DateTime             @default(now())

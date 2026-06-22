@@ -40,6 +40,8 @@ const emptyForm = (): Product => ({
   hsn: "",
   gstRate: 18,
   batchTracked: false,
+  ecommerceEnabled: true,
+  priceListEnabled: true,
   imageUrl: null,
   description: "",
   variants: [],
@@ -61,6 +63,8 @@ const emptyVariant = (_parent: { sku: string; barcode: string }): ProductVariant
   sellingPriceOverride: null,
   stockOnHand: 0,
   active: true,
+  ecommerceEnabled: true,
+  priceListEnabled: true,
   imageUrl: null,
 });
 
@@ -226,6 +230,8 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
             ? null
             : Number(form.weightKg),
         batchTracked: !!form.batchTracked,
+        ecommerceEnabled: form.ecommerceEnabled !== false,
+        priceListEnabled: form.priceListEnabled !== false,
         // Send null when the user cleared the field so the backend
         // explicitly drops the previous value.
         description: form.description?.trim() ? form.description.trim() : null,
@@ -259,6 +265,8 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
               : Number(v.weightKg),
           stockOnHand: Number(v.stockOnHand) || 0,
           active: v.active !== false,
+          ecommerceEnabled: v.ecommerceEnabled !== false,
+          priceListEnabled: v.priceListEnabled !== false,
         })),
       };
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -544,6 +552,30 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
                 </span>
               </label>
             </Field>
+            <Field label="Sales channels" full>
+              <div className="flex flex-wrap gap-4 h-9 items-center">
+                <label className="flex items-center gap-2 text-body-sm text-ink-muted">
+                  <input
+                    type="checkbox"
+                    checked={form.ecommerceEnabled !== false}
+                    onChange={(e) => update("ecommerceEnabled", e.target.checked)}
+                  />
+                  E-commerce / storefront
+                </label>
+                <label className="flex items-center gap-2 text-body-sm text-ink-muted">
+                  <input
+                    type="checkbox"
+                    checked={form.priceListEnabled !== false}
+                    onChange={(e) => update("priceListEnabled", e.target.checked)}
+                  />
+                  Price lists
+                </label>
+              </div>
+              <p className="text-caption text-ink-muted mt-1">
+                Applies to this product when it has no variants, or as the default bulk-parent row.
+                Per-variant toggles are below.
+              </p>
+            </Field>
             <Field label="Description" full>
               <textarea
                 className="w-full bg-surface border border-border rounded-md px-3 py-2 text-body-sm text-ink placeholder:text-ink-muted/70 min-h-[88px] resize-y outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
@@ -795,7 +827,7 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
                           placeholder="auto"
                         />
                       </div>
-                      <div className="col-span-2 flex items-center gap-2 pb-1.5">
+                      <div className="col-span-4 flex flex-wrap items-center gap-3 pb-1.5">
                         <label className="flex items-center gap-1 text-caption text-ink-muted">
                           <input
                             type="checkbox"
@@ -803,6 +835,26 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
                             onChange={(e) => updateVariant(i, { active: e.target.checked })}
                           />
                           active
+                        </label>
+                        <label className="flex items-center gap-1 text-caption text-ink-muted">
+                          <input
+                            type="checkbox"
+                            checked={v.ecommerceEnabled !== false}
+                            onChange={(e) =>
+                              updateVariant(i, { ecommerceEnabled: e.target.checked })
+                            }
+                          />
+                          e-commerce
+                        </label>
+                        <label className="flex items-center gap-1 text-caption text-ink-muted">
+                          <input
+                            type="checkbox"
+                            checked={v.priceListEnabled !== false}
+                            onChange={(e) =>
+                              updateVariant(i, { priceListEnabled: e.target.checked })
+                            }
+                          />
+                          price list
                         </label>
                       </div>
                       {/* Variant image — only available when editing a saved variant */}
