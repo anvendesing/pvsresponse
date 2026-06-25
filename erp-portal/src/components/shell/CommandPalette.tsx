@@ -25,6 +25,7 @@ import { useWorkspace } from "@/hooks/useWorkspace";
 import { useBrand } from "@/hooks/useBrand";
 import { cn } from "@/lib/cn";
 import { api } from "@/lib/api";
+import { moPrimaryLabel, moSearchText } from "@/lib/mo-display";
 import type { Invoice, Product, ProductionOrder, Vendor, Worker } from "@/data/types";
 
 interface CmdItem {
@@ -257,11 +258,11 @@ export const CommandPalette = ({ open, onClose }: Props) => {
       }
     }
     for (const po of productionOrders) {
-      if (po.orderNo.toLowerCase().includes(q) || po.product.toLowerCase().includes(q)) {
+      if (moSearchText(po).includes(q)) {
         out.push({
           id: `mo-${po.id}`,
           group: "Production Orders",
-          title: `${po.orderNo} — ${po.product}`,
+          title: `${po.orderNo} — ${moPrimaryLabel(po)}`,
           icon: <Factory size={16} />,
           action: () => {
             openTab({ id: "manufacturing", title: "Manufacturing", path: "/manufacturing" });

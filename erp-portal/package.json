@@ -7,6 +7,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "build:mobile": "tsc -b && vite build --mode mobile && node scripts/sync-mobile.mjs",
+    "build:mfg": "tsc -b && vite build --mode mfg && node scripts/sync-mfg.mjs",
     "preview": "vite preview",
     "lint": "tsc -b --noEmit"
   },

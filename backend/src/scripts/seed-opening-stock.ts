@@ -1,195 +1,216 @@
 /**
- * Seed opening stock for active variants / products that currently have
- * zero (or missing) stock in bins.
+ * Seed opening stock (qty 1234) and putaway rules from floor-walk bin map.
  *
- * Safe to run on a live server — does NOT clear customers, orders, or any
- * other transactional data. Only creates bins and stock-ledger entries for
- * items that have no quantity yet.
- *
- * Usage:
- *   Local dev:
- *     npm run db:seed-stock
- *     npm run db:seed-stock -- --qty=500
- *     npm run db:seed-stock -- --dry-run
- *
- *   VPS (inside the container):
- *     docker compose exec backend node dist/scripts/seed-opening-stock.js
- *     docker compose exec backend node dist/scripts/seed-opening-stock.js --qty=500
- *     docker compose exec backend node dist/scripts/seed-opening-stock.js --dry-run
+ *   npm run db:seed-opening-stock:dev
+ *   npm run db:seed-opening-stock:dev -- --dry-run
+ *   npm run db:seed-opening-stock:dev -- --putaway-only   # rules only, no stock touch
+ *   npm run db:seed-opening-stock:dev -- --keep-putaway-rules  # skip clearing STR/WH-FARM rules first
  */
-
 import { PrismaClient } from "@prisma/client";
-import { binCodeFromRow } from "../lib/codes.js";
-import { resolvePutawayDestination } from "../lib/putaway.js";
+import { applyBinReassign } from "../lib/bin-stock-update.js";
+import {
+  binCandidates,
+  OPENING_STOCK_QTY,
+  parseOpeningStockAssignments,
+  shelfCandidates,
+} from "../lib/opening-stock-assignments.js";
+import { FARM_SHOP_WAREHOUSE_CODE } from "../lib/farm-shop-layout.js";
+import { STOCK_ROOM_WAREHOUSE_CODE } from "../lib/stock-room-layout.js";
 
 const db = new PrismaClient();
-
-const DEFAULT_QTY = 999;
-
-const parseQty = (): number => {
-  const arg = process.argv.find((a) => a.startsWith("--qty="));
-  if (!arg) return DEFAULT_QTY;
-  const n = parseInt(arg.slice("--qty=".length), 10);
-  if (!Number.isFinite(n) || n < 0) throw new Error(`Invalid --qty= value: ${arg}`);
-  return n;
-};
-
 const dryRun = process.argv.includes("--dry-run");
+const putawayOnly = process.argv.includes("--putaway-only");
+const keepPutawayRules = process.argv.includes("--keep-putaway-rules");
 
-const sanitizeBinLabel = (sku: string): string => {
-  const base = sku.replace(/[^A-Za-z0-9]/g, "").toUpperCase().slice(0, 12);
-  return base || "SKU";
-};
+const PUTAWAY_WAREHOUSE_CODES = [STOCK_ROOM_WAREHOUSE_CODE, FARM_SHOP_WAREHOUSE_CODE];
 
-/**
- * Find or create the bin for a product/variant using putaway rules.
- * Falls back to a TEST/AUTO/<sku> slot when no rule exists.
- */
-async function ensureBin(
-  productId: string,
-  variantId: string | null,
-  sku: string,
-  fallbackWhId: string
-): Promise<{ binId: string; warehouseId: string } | null> {
-  const dest = await resolvePutawayDestination(productId, variantId, fallbackWhId);
-  if (!dest) return null;
+async function systemUserId(): Promise<string> {
+  const user =
+    (await db.user.findFirst({ where: { username: "admin" }, select: { id: true } })) ??
+    (await db.user.findFirst({ select: { id: true } }));
+  if (!user) throw new Error("No user found for bin count audit trail.");
+  return user.id;
+}
 
-  if (dest.binId) {
-    const b = await db.bin.findUnique({ where: { id: dest.binId } });
-    if (b) return { binId: b.id, warehouseId: dest.warehouseId };
+async function findBin(
+  warehouseId: string,
+  zone: string,
+  shelf: string,
+  bin: string
+) {
+  for (const s of shelfCandidates(shelf)) {
+    for (const b of binCandidates(bin)) {
+      const row = await db.bin.findUnique({
+        where: {
+          warehouseId_zone_shelf_bin: { warehouseId, zone, shelf: s, bin: b },
+        },
+      });
+      if (row) return row;
+    }
   }
+  return null;
+}
 
-  const wh = await db.warehouse.findUnique({
-    where: { id: dest.warehouseId },
+async function clearStrAndFarmPutawayRules(): Promise<number> {
+  const warehouses = await db.warehouse.findMany({
+    where: { code: { in: PUTAWAY_WAREHOUSE_CODES } },
     select: { id: true, code: true },
   });
-  if (!wh) return null;
+  const ids = warehouses.map((w) => w.id);
+  if (ids.length === 0) return 0;
 
-  const zone = "STOCK";
-  const shelf = variantId ? "VAR" : "PRD";
-  const binLabel = sanitizeBinLabel(sku);
-  const code = binCodeFromRow({ zone, shelf, bin: binLabel }, wh.code);
+  if (dryRun) {
+    const count = await db.putawayRule.count({
+      where: { toWarehouseId: { in: ids } },
+    });
+    console.log(
+      `[dry] Would delete ${count} putaway rule(s) for ${warehouses.map((w) => w.code).join(", ")}`
+    );
+    return count;
+  }
 
-  const existing = await db.bin.findUnique({
-    where: { warehouseId_zone_shelf_bin: { warehouseId: wh.id, zone, shelf, bin: binLabel } },
+  const deleted = await db.putawayRule.deleteMany({
+    where: { toWarehouseId: { in: ids } },
   });
-  if (existing) return { binId: existing.id, warehouseId: wh.id };
+  console.log(
+    `Cleared ${deleted.count} putaway rule(s) for ${warehouses.map((w) => w.code).join(", ")}.`
+  );
+  return deleted.count;
+}
 
-  if (dryRun) return { binId: "(new)", warehouseId: wh.id };
-
-  const created = await db.bin.create({
-    data: { warehouseId: wh.id, zone, shelf, bin: binLabel, code, productId, qty: 0, reservedQty: 0 },
+async function createPutawayRule(opts: {
+  productId: string;
+  variantId: string;
+  warehouseId: string;
+  binId: string;
+  notes: string;
+}) {
+  await db.putawayRule.create({
+    data: {
+      productId: opts.productId,
+      variantId: opts.variantId,
+      toWarehouseId: opts.warehouseId,
+      toBinId: opts.binId,
+      priority: 10,
+      active: true,
+      notes: opts.notes,
+    },
   });
-  return { binId: created.id, warehouseId: wh.id };
 }
 
 async function main() {
-  const qty = parseQty();
+  const rows = parseOpeningStockAssignments();
   console.log(
     dryRun
-      ? `DRY RUN — seed opening stock (qty=${qty}, no writes)`
-      : `Seeding opening stock (qty=${qty}) for zero-stock items…`
+      ? `DRY RUN — ${rows.length} opening-stock row(s) @ qty ${OPENING_STOCK_QTY}${putawayOnly ? " (putaway only)" : ""}`
+      : `${putawayOnly ? "Putaway rules" : "Seeding"} for ${rows.length} opening-stock row(s) @ qty ${OPENING_STOCK_QTY}…\n`
   );
 
-  // Prefer any storage warehouse as fallback; else first active warehouse.
-  const fallbackWh =
-    (await db.warehouse.findFirst({ where: { kind: "storage", active: true }, orderBy: { code: "asc" }, select: { id: true } })) ??
-    (await db.warehouse.findFirst({ where: { active: true }, orderBy: { code: "asc" }, select: { id: true } }));
-
-  if (!fallbackWh) {
-    console.error("No warehouses found. Run ops:site-setup first.");
-    process.exit(1);
+  if (!keepPutawayRules) {
+    await clearStrAndFarmPutawayRules();
+  } else {
+    console.log("Keeping existing STR / WH-FARM putaway rules (--keep-putaway-rules).\n");
   }
 
-  const year = new Date().getUTCFullYear();
-  let seeded = 0;
+  const whByCode = new Map<string, string>();
+  const userId = dryRun ? "dry-run" : await systemUserId();
+  const putawayDone = new Set<string>();
+
+  let stockOk = 0;
+  let putawayOk = 0;
   let skipped = 0;
-  let noBin = 0;
 
-  // ── Variants ──────────────────────────────────────────────────────────────
-  const variants = await db.productVariant.findMany({
-    where: { active: true, product: { state: "active" } },
-    select: { id: true, sku: true, productId: true, stockOnHand: true },
-    orderBy: { sku: "asc" },
-  });
-
-  for (const v of variants) {
-    if (v.stockOnHand > 0) {
-      console.log(`  skip  ${v.sku}  (already has ${v.stockOnHand})`);
-      skipped++;
-      continue;
+  for (const row of rows) {
+    let warehouseId = whByCode.get(row.warehouseCode);
+    if (!warehouseId) {
+      const wh = await db.warehouse.findUnique({
+        where: { code: row.warehouseCode },
+        select: { id: true },
+      });
+      if (!wh) {
+        console.warn(`  ⚠ Warehouse ${row.warehouseCode} not found — skipped ${row.variantSku}`);
+        skipped++;
+        continue;
+      }
+      warehouseId = wh.id;
+      whByCode.set(row.warehouseCode, warehouseId);
     }
 
-    const slot = await ensureBin(v.productId, v.id, v.sku, fallbackWh.id);
-    if (!slot) {
-      console.warn(`  no-bin  ${v.sku}  (no putaway rule — add one in Settings)`);
-      noBin++;
-      continue;
-    }
-
-    console.log(`  seed  ${v.sku}  → bin ${slot.binId}  qty=${qty}${dryRun ? " [dry]" : ""}`);
-    if (!dryRun) {
-      const ref = `OPEN-${year}-${v.sku}`;
-      await db.$transaction([
-        db.bin.update({ where: { id: slot.binId }, data: { productId: v.productId, qty, reservedQty: 0 } }),
-        db.productVariant.update({ where: { id: v.id }, data: { stockOnHand: qty } }),
-        db.stockLedger.create({ data: { productId: v.productId, warehouseId: slot.warehouseId, txnType: "Adjust", ref, qty, balance: qty } }),
-      ]);
-    }
-    seeded++;
-  }
-
-  // ── Products without variants ──────────────────────────────────────────────
-  const products = await db.product.findMany({
-    where: { state: "active", variants: { none: {} } },
-    select: { id: true, sku: true, stockOnHand: true },
-    orderBy: { sku: "asc" },
-  });
-
-  for (const p of products) {
-    if (p.stockOnHand > 0) {
-      console.log(`  skip  ${p.sku}  (already has ${p.stockOnHand})`);
-      skipped++;
-      continue;
-    }
-
-    const slot = await ensureBin(p.id, null, p.sku, fallbackWh.id);
-    if (!slot) {
-      console.warn(`  no-bin  ${p.sku}  (no putaway rule)`);
-      noBin++;
-      continue;
-    }
-
-    console.log(`  seed  ${p.sku}  → bin ${slot.binId}  qty=${qty}${dryRun ? " [dry]" : ""}`);
-    if (!dryRun) {
-      const ref = `OPEN-${year}-${p.sku}`;
-      await db.$transaction([
-        db.bin.update({ where: { id: slot.binId }, data: { productId: p.id, qty, reservedQty: 0 } }),
-        db.product.update({ where: { id: p.id }, data: { stockOnHand: qty } }),
-        db.stockLedger.create({ data: { productId: p.id, warehouseId: slot.warehouseId, txnType: "Adjust", ref, qty, balance: qty } }),
-      ]);
-    }
-    seeded++;
-  }
-
-  // ── Update parent counters for variant products ────────────────────────────
-  if (!dryRun) {
-    const parents = await db.product.findMany({
-      where: { variants: { some: { active: true } } },
-      select: { id: true, variants: { where: { active: true }, select: { stockOnHand: true } } },
+    const variant = await db.productVariant.findUnique({
+      where: { sku: row.variantSku },
+      select: { id: true, productId: true, sku: true },
     });
-    for (const p of parents) {
-      const sum = p.variants.reduce((s, v) => s + v.stockOnHand, 0);
-      await db.product.update({ where: { id: p.id }, data: { stockOnHand: sum } });
+    if (!variant) {
+      console.warn(`  ⚠ Variant ${row.variantSku} not in catalog — skipped`);
+      skipped++;
+      continue;
+    }
+
+    const bin = await findBin(warehouseId, row.zone, row.shelf, row.bin);
+    if (!bin) {
+      console.warn(
+        `  ⚠ Bin missing ${row.warehouseCode} ${row.zone}/${row.shelf}/${row.bin} — skipped ${row.variantSku}`
+      );
+      skipped++;
+      continue;
+    }
+
+    const loc = `${row.zone}/${bin.shelf}/${bin.bin}`;
+    const putawayKey = `${variant.id}::${warehouseId}`;
+
+    if (dryRun) {
+      console.log(
+        `  [dry] ${row.variantSku} → ${row.warehouseCode} ${loc}${putawayOnly ? "" : ` ×${row.qty}`}`
+      );
+      if (!putawayOnly) stockOk++;
+      if (!putawayDone.has(putawayKey)) {
+        putawayDone.add(putawayKey);
+        putawayOk++;
+      }
+      continue;
+    }
+
+    if (!putawayOnly) {
+      await applyBinReassign(bin, {
+        productId: variant.productId,
+        variantId: variant.id,
+        qty: row.qty,
+        reasonCode: "physical_match",
+        remarks: `Opening stock floor walk (${row.variantSku})`,
+        userId,
+      });
+      stockOk++;
+      console.log(`  ✓ stock ${row.variantSku} → ${row.warehouseCode} ${loc} ×${row.qty}`);
+    }
+
+    if (!putawayDone.has(putawayKey)) {
+      await createPutawayRule({
+        productId: variant.productId,
+        variantId: variant.id,
+        warehouseId,
+        binId: bin.id,
+        notes: `Opening stock putaway → ${row.warehouseCode} ${loc}`,
+      });
+      putawayDone.add(putawayKey);
+      putawayOk++;
+      if (putawayOnly) {
+        console.log(`  ✓ putaway ${row.variantSku} → ${row.warehouseCode} ${loc}`);
+      }
     }
   }
 
-  console.log(`\nDone.  seeded=${seeded}  already-had-stock=${skipped}  no-putaway-bin=${noBin}`);
-  if (noBin > 0) {
-    console.log(`  → Run "ops:site-setup:dist" first to create putaway rules, then re-run this script.`);
+  console.log(
+    `\nDone. stock=${stockOk} putawayRules=${putawayOk} skipped=${skipped}` +
+      (dryRun ? " (dry run)" : "")
+  );
+  if (!dryRun && !putawayOnly && stockOk > 0) {
+    console.log("Tip: npm run db:sync-stock:dev to refresh product counters.");
   }
 }
 
 main()
-  .catch((e) => { console.error(e); process.exit(1); })
+  .catch((e) => {
+    console.error(e);
+    process.exit(1);
+  })
   .finally(() => db.$disconnect());

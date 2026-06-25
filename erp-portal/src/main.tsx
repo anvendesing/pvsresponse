@@ -23,6 +23,7 @@ import { BrandProvider } from "./hooks/useBrand";
 // appear.
 
 const MOBILE_BUILD = import.meta.env.MODE === "mobile";
+const MFG_BUILD = import.meta.env.MODE === "mfg";
 
 const mount = (children: React.ReactElement) => {
   ReactDOM.createRoot(document.getElementById("root")!).render(
@@ -39,6 +40,12 @@ if (MOBILE_BUILD) {
   // prompt watcher (the APK is the install) and DO NOT statically
   // import pwa/install.ts so it's tree-shaken from the mobile bundle.
   import("./MobileApp").then(({ MobileApp }) => mount(<MobileApp />));
+} else if (MFG_BUILD) {
+  // Manufacturing shop-floor APK: only /mfg/* screens. Same tree-shake
+  // strategy as the warehouse APK above.
+  import("./manufacturing-mobile/MfgApp").then(({ MfgApp }) =>
+    mount(<MfgApp />)
+  );
 } else {
   // Full ERP portal (web). Register the warehouse PWA shell for the
   // /m/* routes served from the browser, and watch for the install

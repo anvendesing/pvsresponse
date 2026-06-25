@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api, auth, type TransferOrderItem, type TransferOrderRow } from "../../lib/api";
+import { formatLocationPath } from "../../lib/locationDisplay";
 
 // =====================================================================
 // /m/transfers/:id
@@ -93,13 +94,15 @@ export const MobileTransfer = () => {
   };
 
   const getBin = (item: TransferOrderItem, step: Step) => {
+    const whName =
+      step === "pick" ? to.fromWarehouse.name : to.toWarehouse.name;
     if (step === "pick") {
       return item.fromBin
-        ? `${item.fromBin.zone}/${item.fromBin.shelf}/${item.fromBin.bin}`
+        ? formatLocationPath(item.fromBin, whName)
         : null;
     }
     return item.tobin
-      ? `${item.tobin.zone}/${item.tobin.shelf}/${item.tobin.bin}`
+      ? formatLocationPath(item.tobin, whName)
       : null;
   };
 
@@ -134,10 +137,9 @@ export const MobileTransfer = () => {
     setBusy(true);
     setError(null);
     try {
-      // Send every picked line. The server auto-assigns a bin in the
-      // destination warehouse when toBinId is null (consolidates onto an
-      // existing product bin, otherwise picks an empty one). It returns
-      // a clear 409 message if the destination warehouse has no bins.
+      // Send every picked line. The server auto-assigns a slot in the
+      // destination warehouse when toBinId is null (existing bin, empty
+      // layout bin, or auto-created warehouse-level bulk slot).
       const lines = to.items
         .filter((item) => item.qtyPicked > 0)
         .map((item) => ({
@@ -173,6 +175,52 @@ export const MobileTransfer = () => {
       setBusy(false);
     }
   };
+
+  const refreshSourceBins = async () => {
+    if (!to) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await api.resolveTransferOrderSourceBins(to.id);
+      setTo(res.transferOrder);
+      if (res.resolved.length === 0 && res.stillMissing.length === 0) {
+        setError("All source bins are already assigned.");
+      } else if (res.stillMissing.length > 0) {
+        const lines = res.stillMissing
+          .map((m) => `${m.sku} (need ${m.needed})`)
+          .join(", ");
+        const ok = res.resolved.length;
+        setError(
+          ok > 0
+            ? `Resolved ${ok} line(s). Still missing stock for: ${lines}.`
+            : `No stock found in source warehouse for: ${lines}.`
+        );
+      }
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const releaseTO = async () => {
+    if (!to) return;
+    if (!confirm("Release this transfer order so another worker can claim it?")) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.releaseTransferOrder(to.id);
+      nav("/m/tasks");
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const me = auth.user();
+  const isAssignee = !!(me && to.assignedToId && to.assignedToId === me.id);
+  const anyMissingSource = to.items.some((i) => !i.fromBinId && !i.fromBin);
 
   return (
     <div className="px-4 pt-4 pb-24 space-y-4">
@@ -268,7 +316,7 @@ export const MobileTransfer = () => {
                   {!binLabel && (
                     <div className="text-xs text-amber-600">
                       {step === "pick"
-                        ? "No source bin assigned - supervisor must assign."
+                        ? "No source bin yet — tap “Refresh source bins” after stock is in, or release this TO."
                         : `No dest. bin set - system will auto-pick a bin in ${to.toWarehouse.code} on drop.`}
                     </div>
                   )}
@@ -307,6 +355,26 @@ export const MobileTransfer = () => {
           >
             {busy ? "Confirming pick…" : "Confirm pick"}
           </button>
+          {anyMissingSource && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={refreshSourceBins}
+              className="w-full rounded-2xl border border-blue-300 py-3 text-sm font-semibold text-[#003087] bg-blue-50 disabled:opacity-50"
+            >
+              {busy ? "Re-checking bins…" : "Refresh source bins"}
+            </button>
+          )}
+          {isAssignee && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={releaseTO}
+              className="w-full rounded-2xl border border-amber-300 py-3 text-sm font-semibold text-amber-700 bg-amber-50 disabled:opacity-50"
+            >
+              Release for another worker
+            </button>
+          )}
           <button
             type="button"
             disabled={busy}

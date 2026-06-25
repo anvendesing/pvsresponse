@@ -1,17 +1,23 @@
-// Supervisor action: assign a manufacturing order to a production line.
-// Optionally also assigns individual work orders to machines within that line.
+// Supervisor action: assign each work order to a production line and machine.
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { GitBranch, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { useApi } from "@/hooks/useApi";
 import { api } from "@/lib/api";
 import type { ProductionOrder } from "@/data/types";
+import {
+  WoLineMachineFields,
+  type MachineOption,
+  type ProductionLineOption,
+} from "./WoLineMachineFields";
 
 interface WorkOrderSummary {
   id: string;
   workOrderNo: string;
   status: string;
+  lineId?: string | null;
+  machineId?: string | null;
 }
 
 interface Props {
@@ -22,66 +28,88 @@ interface Props {
 
 export const AssignLineModal = ({ mo, onClose, onAssigned }: Props) => {
   const facilityId = mo.facilityId ?? "";
-  const [selectedLineId, setSelectedLineId] = useState<string>(mo.lineId ?? "");
-  const [workOrderAssignments, setWorkOrderAssignments] = useState<
-    Record<string, string>
-  >({}); // workOrderId -> machineId
+  const [assignments, setAssignments] = useState<
+    Record<string, { lineId: string; machineId: string }>
+  >({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const linesResp = useApi(
-    () => api.productionLines({ facilityId: facilityId || undefined, active: true }),
+    () =>
+      facilityId
+        ? api.productionLines({ facilityId, active: true })
+        : Promise.resolve([]),
     [facilityId]
   );
   const machinesResp = useApi(
     () =>
-      selectedLineId
-        ? api.machines({ productionLineId: selectedLineId, active: true })
+      facilityId
+        ? api.machines({ facilityId, active: true })
         : Promise.resolve([]),
-    [selectedLineId]
+    [facilityId]
   );
 
-  const lines =
-    (linesResp.data as Array<{
+  const lines = (linesResp.data as ProductionLineOption[] | null) ?? [];
+  const machines = useMemo(() => {
+    const raw = (machinesResp.data as Array<{
       id: string;
       code: string;
       name: string;
+      productionLineId: string;
     }> | null) ?? [];
+    return raw.map((m) => ({
+      id: m.id,
+      code: m.code,
+      name: m.name,
+      productionLineId: m.productionLineId,
+    })) satisfies MachineOption[];
+  }, [machinesResp.data]);
 
-  const machines =
-    (machinesResp.data as Array<{
-      id: string;
-      code: string;
-      name: string;
-    }> | null) ?? [];
-
-  // Fetch open work orders for this MO via the MO detail endpoint
   const [workOrders, setWorkOrders] = useState<WorkOrderSummary[]>([]);
   useEffect(() => {
     if (!mo.id) return;
-    void (api.productionOrder(mo.id) as Promise<{
-      workOrders?: WorkOrderSummary[];
-    }>)
+    void (api.productionOrder(mo.id) as Promise<{ workOrders?: WorkOrderSummary[] }>)
       .then((detail) => {
         const open = (detail.workOrders ?? []).filter(
-          (w) => w.status !== "completed"
+          (w) => w.status !== "complete" && w.status !== "running"
         );
         setWorkOrders(open);
+        const init: Record<string, { lineId: string; machineId: string }> = {};
+        for (const w of open) {
+          init[w.id] = {
+            lineId: w.lineId ?? mo.lineId ?? "",
+            machineId: w.machineId ?? "",
+          };
+        }
+        setAssignments(init);
       })
       .catch(() => {});
-  }, [mo.id]);
+  }, [mo.id, mo.lineId]);
 
   const submit = async () => {
-    if (!selectedLineId) return setError("Pick a production line.");
+    if (workOrders.length === 0) {
+      setError("No open work orders on this MO.");
+      return;
+    }
+    const missing = workOrders.filter((w) => !assignments[w.id]?.lineId);
+    if (missing.length) {
+      return setError(`Pick a line for ${missing.map((w) => w.workOrderNo).join(", ")}.`);
+    }
+
     setBusy(true);
     setError(null);
     try {
-      await api.assignMoToLine(mo.id, {
-        lineId: selectedLineId,
-        workOrderAssignments: Object.entries(workOrderAssignments)
-          .filter(([, machineId]) => machineId)
-          .map(([workOrderId, machineId]) => ({ workOrderId, machineId })),
-      });
+      for (const wo of workOrders) {
+        const a = assignments[wo.id]!;
+        await api.assignMoWorkOrder(mo.id, wo.id, {
+          lineId: a.lineId,
+          machineId: a.machineId || null,
+        });
+      }
+      const firstLineId = assignments[workOrders[0]!.id]?.lineId;
+      if (firstLineId && !mo.lineId) {
+        await api.assignMoToLine(mo.id, { lineId: firstLineId });
+      }
       onAssigned();
     } catch (e) {
       setError((e as Error).message);
@@ -95,17 +123,17 @@ export const AssignLineModal = ({ mo, onClose, onAssigned }: Props) => {
       onClick={onClose}
     >
       <div
-        className="bg-surface w-[540px] max-w-[95vw] rounded-lg elevation-3 overflow-hidden flex flex-col"
+        className="bg-surface w-[580px] max-w-[95vw] max-h-[90vh] rounded-lg elevation-3 overflow-hidden flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="px-5 py-3 border-b border-border flex items-center justify-between">
+        <div className="px-5 py-3 border-b border-border flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2">
             <div className="h-9 w-9 grid place-items-center bg-primary-50 text-primary rounded-md">
               <GitBranch size={16} />
             </div>
             <div>
               <div className="text-caption text-ink-muted uppercase font-semibold">
-                Assign to production line
+                Assign lines &amp; machines
               </div>
               <div className="text-body-sm font-medium">{mo.orderNo}</div>
             </div>
@@ -119,12 +147,12 @@ export const AssignLineModal = ({ mo, onClose, onAssigned }: Props) => {
         </div>
 
         {error && (
-          <div className="px-4 py-2 bg-danger-soft border-b border-danger text-danger text-body-sm">
+          <div className="px-4 py-2 bg-danger-soft border-b border-danger text-danger text-body-sm shrink-0">
             {error}
           </div>
         )}
 
-        <div className="p-5 space-y-4">
+        <div className="p-5 space-y-4 overflow-y-auto flex-1">
           <div>
             <div className="text-caption text-ink-muted uppercase font-semibold mb-1">
               Facility
@@ -134,72 +162,55 @@ export const AssignLineModal = ({ mo, onClose, onAssigned }: Props) => {
             </div>
           </div>
 
-          <div>
-            <div className="text-caption text-ink-muted uppercase font-semibold mb-1">
-              Production line
+          {workOrders.length === 0 ? (
+            <div className="text-body-sm text-ink-muted text-center py-4">
+              No open work orders to assign.
             </div>
-            <select
-              value={selectedLineId}
-              onChange={(e) => {
-                setSelectedLineId(e.target.value);
-                setWorkOrderAssignments({});
-              }}
-              className="h-10 w-full bg-white border border-border rounded-md px-3 text-body outline-none focus:border-primary"
-            >
-              <option value="">— Select a line —</option>
-              {lines.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.code} · {l.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {workOrders.length > 0 && selectedLineId && (
-            <div>
-              <div className="text-caption text-ink-muted uppercase font-semibold mb-2">
-                Machine assignment (optional)
-              </div>
-              <div className="space-y-2">
-                {workOrders.map((wo) => (
-                  <div key={wo.id} className="flex items-center gap-3">
-                    <span className="text-body-sm font-mono text-primary w-28 shrink-0">
-                      {wo.workOrderNo}
-                    </span>
-                    <select
-                      value={workOrderAssignments[wo.id] ?? ""}
-                      onChange={(e) =>
-                        setWorkOrderAssignments({
-                          ...workOrderAssignments,
-                          [wo.id]: e.target.value,
-                        })
-                      }
-                      className="h-8 flex-1 bg-white border border-border rounded text-body-sm px-2 outline-none focus:border-primary"
-                    >
-                      <option value="">— Any machine —</option>
-                      {machines.map((m) => (
-                        <option key={m.id} value={m.id}>
-                          {m.code} · {m.name}
-                        </option>
-                      ))}
-                    </select>
+          ) : (
+            <div className="space-y-4">
+              {workOrders.map((wo) => (
+                <div key={wo.id} className="rounded-md border border-border p-3 bg-canvas/30">
+                  <div className="font-mono text-caption text-primary mb-2">
+                    {wo.workOrderNo}
                   </div>
-                ))}
-              </div>
+                  <WoLineMachineFields
+                    compact
+                    lines={lines}
+                    machines={machines}
+                    lineId={assignments[wo.id]?.lineId ?? ""}
+                    machineId={assignments[wo.id]?.machineId ?? ""}
+                    onLineChange={(lineId) =>
+                      setAssignments((prev) => ({
+                        ...prev,
+                        [wo.id]: { lineId, machineId: "" },
+                      }))
+                    }
+                    onMachineChange={(machineId) =>
+                      setAssignments((prev) => ({
+                        ...prev,
+                        [wo.id]: {
+                          lineId: prev[wo.id]?.lineId ?? "",
+                          machineId,
+                        },
+                      }))
+                    }
+                  />
+                </div>
+              ))}
             </div>
           )}
         </div>
 
-        <div className="px-5 py-3 border-t border-border flex justify-end gap-2">
+        <div className="px-5 py-3 border-t border-border flex justify-end gap-2 shrink-0">
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
           <Button
             onClick={submit}
-            disabled={busy || !selectedLineId}
+            disabled={busy || workOrders.length === 0}
             icon={<GitBranch size={14} />}
           >
-            {busy ? "Assigning…" : "Assign line"}
+            {busy ? "Saving…" : "Save assignments"}
           </Button>
         </div>
       </div>

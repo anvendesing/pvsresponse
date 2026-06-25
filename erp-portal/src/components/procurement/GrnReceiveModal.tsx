@@ -8,7 +8,6 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
-  CheckCircle2,
   PackageCheck,
   Truck,
   X,
@@ -18,6 +17,11 @@ import { Chip } from "@/components/common/Chip";
 import { Input } from "@/components/common/Input";
 import { api } from "@/lib/api";
 import { num } from "@/lib/format";
+import {
+  GrnLineAllocation,
+  type GrnAllocationDraft,
+} from "@/components/procurement/GrnLineAllocation";
+import type { GrnReceiveHint } from "@/lib/api";
 
 interface PoDetail {
   id: string;
@@ -33,7 +37,7 @@ interface PoDetail {
     qty: number;
     rate: number;
     received: number;
-    product: { id: string; sku: string; name: string; uom: string };
+    product: { id: string; sku: string; name: string; uom: string; type?: string; batchTracked?: boolean };
   }>;
 }
 
@@ -42,6 +46,8 @@ interface ReceiveLineDraft {
   receivedQty: number;
   rejectedQty: number;
   remarks: string;
+  batchNo: string;
+  expiryDate: string;
 }
 
 interface Props {
@@ -68,8 +74,48 @@ export const GrnReceiveModal = ({ po, onClose, onReceived }: Props) => {
       receivedQty: Math.max(0, i.qty - i.received),
       rejectedQty: 0,
       remarks: "",
+      batchNo: "",
+      expiryDate: "",
     }))
   );
+  const [hints, setHints] = useState<Record<string, GrnReceiveHint>>({});
+  const [allocations, setAllocations] = useState<
+    Record<string, GrnAllocationDraft[]>
+  >({});
+
+  useEffect(() => {
+    const productIds = po.items.map((i) => i.productId);
+    void api.grnReceiveHints(productIds).then((r) => setHints(r.hints));
+  }, [po.id, po.items]);
+
+  useEffect(() => {
+    setAllocations((prev) => {
+      const next = { ...prev };
+      for (const poi of po.items) {
+        const line = lines.find((l) => l.poItemId === poi.id);
+        const accepted = line
+          ? Math.max(0, line.receivedQty - line.rejectedQty)
+          : 0;
+        if (accepted <= 0) {
+          delete next[poi.id];
+          continue;
+        }
+        const hint = hints[poi.productId];
+        if (!next[poi.id]?.length && hint?.defaultBinId) {
+          next[poi.id] = [
+            {
+              binId: hint.defaultBinId,
+              qty: accepted,
+              binLabel: hint.defaultBinLabel ?? hint.defaultBinCode ?? undefined,
+            },
+          ];
+        } else if (next[poi.id]?.length === 1) {
+          next[poi.id] = [{ ...next[poi.id]![0]!, qty: accepted }];
+        }
+      }
+      return next;
+    });
+  }, [hints, lines, po.items]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -113,6 +159,16 @@ export const GrnReceiveModal = ({ po, onClose, onReceived }: Props) => {
           3
         )}.`;
       }
+      const rows = allocations[l.poItemId] ?? [];
+      if (accepted > 0 && rows.length > 0) {
+        const sum = rows.reduce((s, a) => s + a.qty, 0);
+        if (Math.abs(sum - accepted) > 0.001) {
+          return `${poItem.product.sku}: bin allocations (${num(sum, 3)}) must equal accepted qty (${num(accepted, 3)}).`;
+        }
+        if (rows.some((a) => !a.binId)) {
+          return `${poItem.product.sku}: pick a bin for every allocation row.`;
+        }
+      }
     }
     return null;
   };
@@ -133,12 +189,21 @@ export const GrnReceiveModal = ({ po, onClose, onReceived }: Props) => {
           // Drop zero-everything lines so the GRN row is compact;
           // the backend doesn't require every PO line.
           .filter((l) => l.receivedQty > 0 || l.rejectedQty > 0)
-          .map((l) => ({
-            poItemId: l.poItemId,
-            receivedQty: l.receivedQty,
-            rejectedQty: l.rejectedQty,
-            remarks: l.remarks.trim() || null,
-          })),
+          .map((l) => {
+            const rows = allocations[l.poItemId] ?? [];
+            return {
+              poItemId: l.poItemId,
+              receivedQty: l.receivedQty,
+              rejectedQty: l.rejectedQty,
+              remarks: l.remarks.trim() || null,
+              batchNo: l.batchNo.trim() || null,
+              expiryDate: l.expiryDate.trim() || null,
+              allocations:
+                rows.length > 0
+                  ? rows.map((a) => ({ binId: a.binId, qty: a.qty }))
+                  : undefined,
+            };
+          }),
       })) as { grn: { grnNo: string }; postedToInventory: boolean };
       const verb = r.postedToInventory
         ? "posted to stock"
@@ -251,26 +316,26 @@ export const GrnReceiveModal = ({ po, onClose, onReceived }: Props) => {
         <div className="flex-1 min-h-0 overflow-y-auto">
           <div className="grid grid-cols-12 grid-header-cell text-caption sticky top-0 bg-surface z-10 border-b border-border">
             <div className="col-span-2 px-3 py-2">SKU</div>
-            <div className="col-span-3 px-3 py-2">Product</div>
+            <div className="col-span-2 px-3 py-2">Product</div>
             <div className="col-span-1 px-3 py-2 text-right">Ordered</div>
             <div className="col-span-1 px-3 py-2 text-right">Pending</div>
             <div className="col-span-2 px-3 py-2 text-right">Received now</div>
-            <div className="col-span-2 px-3 py-2 text-right">Rejected</div>
-            <div className="col-span-1 px-3 py-2"></div>
+            <div className="col-span-1 px-3 py-2 text-right">Rejected</div>
+            <div className="col-span-2 px-3 py-2">Batch / lot</div>
+            <div className="col-span-1 px-3 py-2">Expiry</div>
           </div>
           {po.items.map((poi) => {
             const line = lines.find((l) => l.poItemId === poi.id)!;
             const remaining = remainingPerLine[poi.id];
             const fullyReceived = remaining <= 0.0001;
+            const accepted = Math.max(0, line.receivedQty - line.rejectedQty);
             return (
-              <div
-                key={poi.id}
-                className="grid grid-cols-12 items-center border-b border-border hover:bg-canvas/40"
-              >
+              <div key={poi.id} className="border-b border-border">
+                <div className="grid grid-cols-12 items-center hover:bg-canvas/40">
                 <div className="col-span-2 px-3 py-2 font-mono text-caption font-semibold">
                   {poi.product.sku}
                 </div>
-                <div className="col-span-3 px-3 py-2 truncate">
+                <div className="col-span-2 px-3 py-2 truncate">
                   {poi.product.name}
                 </div>
                 <div className="col-span-1 px-3 py-2 text-right tnum">
@@ -295,7 +360,7 @@ export const GrnReceiveModal = ({ po, onClose, onReceived }: Props) => {
                     className="text-right"
                   />
                 </div>
-                <div className="col-span-2 px-3 py-2">
+                <div className="col-span-1 px-3 py-2">
                   <Input
                     type="number"
                     min={0}
@@ -311,9 +376,40 @@ export const GrnReceiveModal = ({ po, onClose, onReceived }: Props) => {
                     className="text-right"
                   />
                 </div>
-                <div className="col-span-1 px-3 py-2 text-right">
-                  {fullyReceived && <Chip size="sm" tone="success">done</Chip>}
+                <div className="col-span-2 px-3 py-2">
+                  <Input
+                    value={line.batchNo}
+                    disabled={fullyReceived || line.receivedQty <= 0}
+                    onChange={(e) => setLine(poi.id, { batchNo: e.target.value })}
+                    placeholder={
+                      poi.product.type === "raw" || poi.product.batchTracked
+                        ? "Auto if blank"
+                        : "Optional"
+                    }
+                    className="font-mono text-caption"
+                  />
                 </div>
+                <div className="col-span-1 px-3 py-2">
+                  <Input
+                    type="date"
+                    value={line.expiryDate}
+                    disabled={fullyReceived || line.receivedQty <= 0}
+                    onChange={(e) => setLine(poi.id, { expiryDate: e.target.value })}
+                    className="text-caption"
+                  />
+                </div>
+                </div>
+                <GrnLineAllocation
+                  productId={poi.productId}
+                  sku={poi.product.sku}
+                  uom={poi.product.uom}
+                  acceptedQty={accepted}
+                  hint={hints[poi.productId]}
+                  allocations={allocations[poi.id] ?? []}
+                  onChange={(next) =>
+                    setAllocations((prev) => ({ ...prev, [poi.id]: next }))
+                  }
+                />
               </div>
             );
           })}

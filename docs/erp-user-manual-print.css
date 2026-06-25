@@ -1,0 +1,250 @@
+/* PVS ERP User Manual — print / PDF styles (A4) */
+
+:root {
+  --primary: #003087;
+  --primary-light: #eef4ff;
+  --ink: #0f172a;
+  --ink-muted: #475569;
+  --border: #cbd5e1;
+  --code-bg: #f1f5f9;
+}
+
+@page {
+  size: A4;
+  margin: 18mm 16mm 20mm 16mm;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 10.5pt;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: "Segoe UI", Inter, -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--ink);
+  line-height: 1.55;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+/* Cover (first page only) */
+.cover-page {
+  page-break-after: always;
+  min-height: 257mm;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  background: linear-gradient(160deg, var(--primary) 0%, #001a4d 100%);
+  color: #fff;
+  padding: 8mm 4mm;
+  margin: -18mm -16mm 0 -16mm;
+  width: calc(100% + 32mm);
+}
+
+.cover-page .cover-top {
+  padding-top: 12mm;
+}
+
+.cover-page .logo-line {
+  font-size: 11pt;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  opacity: 0.85;
+  margin-bottom: 8mm;
+}
+
+.cover-page h1 {
+  font-size: 32pt;
+  font-weight: 800;
+  line-height: 1.1;
+  margin: 0 0 6mm;
+  letter-spacing: -0.02em;
+}
+
+.cover-page .subtitle {
+  font-size: 14pt;
+  font-weight: 400;
+  opacity: 0.92;
+  max-width: 140mm;
+  line-height: 1.45;
+}
+
+.cover-page .cover-meta {
+  font-size: 10pt;
+  opacity: 0.8;
+  border-top: 1px solid rgba(255, 255, 255, 0.25);
+  padding-top: 6mm;
+}
+
+.cover-page .cover-meta p {
+  margin: 0 0 2mm;
+}
+
+/* Main content */
+.manual {
+  max-width: 100%;
+}
+
+.manual > h1:first-of-type {
+  display: none; /* title already on cover */
+}
+
+.manual h1 {
+  font-size: 20pt;
+  font-weight: 800;
+  color: var(--primary);
+  margin: 10mm 0 4mm;
+  padding-bottom: 2mm;
+  border-bottom: 2px solid var(--primary);
+  page-break-after: avoid;
+}
+
+.manual h2 {
+  font-size: 14pt;
+  font-weight: 700;
+  color: var(--ink);
+  margin: 7mm 0 3mm;
+  page-break-after: avoid;
+}
+
+.manual h3 {
+  font-size: 11.5pt;
+  font-weight: 700;
+  margin: 5mm 0 2mm;
+  page-break-after: avoid;
+}
+
+.manual h4 {
+  font-size: 10.5pt;
+  font-weight: 700;
+  margin: 4mm 0 2mm;
+}
+
+.manual p {
+  margin: 0 0 3mm;
+  orphans: 3;
+  widows: 3;
+}
+
+.manual ul,
+.manual ol {
+  margin: 0 0 4mm;
+  padding-left: 6mm;
+}
+
+.manual li {
+  margin-bottom: 1.5mm;
+}
+
+.manual li > ul,
+.manual li > ol {
+  margin-top: 1mm;
+  margin-bottom: 1mm;
+}
+
+.manual hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 6mm 0;
+}
+
+.manual a {
+  color: var(--primary);
+  text-decoration: none;
+}
+
+.manual a[href^="#"] {
+  color: var(--ink-muted);
+}
+
+.manual strong {
+  font-weight: 700;
+}
+
+.manual blockquote {
+  margin: 4mm 0;
+  padding: 3mm 4mm;
+  border-left: 3px solid var(--primary);
+  background: var(--primary-light);
+  color: var(--ink-muted);
+}
+
+.manual code {
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 9pt;
+  background: var(--code-bg);
+  padding: 0.1em 0.35em;
+  border-radius: 3px;
+}
+
+.manual pre {
+  background: #1e293b;
+  color: #e2e8f0;
+  padding: 4mm;
+  border-radius: 4px;
+  overflow-x: auto;
+  font-size: 8.5pt;
+  line-height: 1.45;
+  margin: 3mm 0 5mm;
+  page-break-inside: avoid;
+}
+
+.manual pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+}
+
+.manual table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 3mm 0 5mm;
+  font-size: 9.5pt;
+  page-break-inside: avoid;
+}
+
+.manual thead {
+  background: var(--primary);
+  color: #fff;
+}
+
+.manual th {
+  text-align: left;
+  padding: 2.5mm 3mm;
+  font-weight: 600;
+}
+
+.manual td {
+  padding: 2.5mm 3mm;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.manual tbody tr:nth-child(even) {
+  background: #f8fafc;
+}
+
+.manual img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Section breaks — major h2 sections start new page after TOC area */
+.manual h2 {
+  page-break-before: auto;
+}
+
+@media print {
+  .manual h1 {
+    page-break-before: always;
+  }
+
+  .manual h1:first-of-type {
+    page-break-before: avoid;
+  }
+}

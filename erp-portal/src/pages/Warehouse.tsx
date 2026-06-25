@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronRight,
   ClipboardList,
+  Download,
   Map as MapIcon,
   Pencil,
   Plus,
@@ -25,6 +26,7 @@ import { api } from "@/lib/api";
 import { useApi } from "@/hooks/useApi";
 import type { Bin } from "@/data/types";
 import { num } from "@/lib/format";
+import { csvStamp, downloadCsv } from "@/lib/csv-export";
 import { cn } from "@/lib/cn";
 import { BinLayoutModal } from "@/components/warehouse/BinLayoutModal";
 import { BulkZoneStockPanel } from "@/components/warehouse/BulkZoneStockPanel";
@@ -42,43 +44,154 @@ interface TreeNode {
 type ZoneCtx = { warehouseCode: string; zone: string };
 type ShelfCtx = { warehouseCode: string; zone: string; shelf: string };
 
+// Placeholder values that mean "stock is held at the parent level":
+//   - zone "_" / "WH"  → stock at warehouse level (no zone assigned)
+//   - shelf "00"       → stock at zone level (no shelf assigned)
+//   - bin "00"         → stock at shelf level (no bin assigned)
+// We keep these in the DB for compactness, but the tree should
+// present stock at its real level instead of leaking the placeholder
+// labels as fake child nodes (e.g. "Zone WH", shelf "00", bin "00").
+const PLACEHOLDER_ZONES = new Set(["_", "WH"]);
+const PLACEHOLDER_SHELF = "00";
+const PLACEHOLDER_BIN = "00";
+
+const isPlaceholderZone = (z: string) => PLACEHOLDER_ZONES.has(z);
+const isPlaceholderShelf = (s: string) => s === PLACEHOLDER_SHELF;
+const isPlaceholderBin = (b: string) => b === PLACEHOLDER_BIN;
+
+// Display label for a leaf row. When the bin code is the placeholder
+// "00" we show the SHELF label (the real address of the stock).
+const leafLabel = (b: Bin): string => {
+  if (!isPlaceholderBin(b.bin)) return b.bin;
+  if (!isPlaceholderShelf(b.shelf)) return b.shelf;
+  if (!isPlaceholderZone(b.zone)) return b.zone;
+  return b.warehouseCode ?? "warehouse";
+};
+
 const buildTree = (allBins: Bin[]): TreeNode[] => {
+  // warehouseCode -> zoneLabel -> shelfLabel -> Bin[]
+  // We collapse placeholder zones into a single virtual "Warehouse
+  // level" bucket so all the WH-bulk rows land in one folder instead
+  // of polluting the tree with "Zone WH" and "Zone _" siblings.
   const wMap = new Map<string, Map<string, Map<string, Bin[]>>>();
-  // Track friendly name per warehouse code so the tree shows
-  // "Main Warehouse · WH-MAIN" instead of a raw cuid.
   const whNames = new Map<string, string>();
+
   for (const b of allBins) {
-    if (b.warehouseName) whNames.set(b.warehouse, b.warehouseName);
+    if (b.warehouseName) whNames.set(b.warehouse, b.warehouse + "");
     const w = wMap.get(b.warehouse) ?? new Map();
-    const z = w.get(b.zone) ?? new Map();
-    const list = z.get(b.shelf) ?? [];
+
+    // Resolve the zone bucket for this row:
+    //   - placeholder zone → "" (warehouse-level bucket)
+    //   - real zone        → the zone label
+    const zoneKey = isPlaceholderZone(b.zone) ? "" : b.zone;
+
+    // Resolve the shelf bucket:
+    //   - placeholder shelf → "" (zone-level / warehouse-level bucket)
+    //   - real shelf        → the shelf label
+    const shelfKey = isPlaceholderShelf(b.shelf) ? "" : b.shelf;
+
+    const z = w.get(zoneKey) ?? new Map();
+    const list = z.get(shelfKey) ?? [];
     list.push(b);
-    z.set(b.shelf, list);
-    w.set(b.zone, z);
+    z.set(shelfKey, list);
+    w.set(zoneKey, z);
     wMap.set(b.warehouse, w);
   }
+
   const tree: TreeNode[] = [];
   for (const [wh, zones] of wMap) {
     const friendly = whNames.get(wh);
     const label = friendly ? `${friendly} · ${wh}` : wh;
     const wNode: TreeNode = { id: wh, label, count: 0, children: [] };
-    for (const [z, shelves] of zones) {
-      const zNode: TreeNode = { id: `${wh}-${z}`, label: `Zone ${z}`, count: 0, children: [] };
-      for (const [s, ls] of shelves) {
+
+    // Sort: real zones alphabetical, placeholder bucket last.
+    const zoneEntries = Array.from(zones.entries()).sort(([a], [b]) => {
+      if (a === "") return 1;
+      if (b === "") return -1;
+      return a.localeCompare(b);
+    });
+
+    for (const [zoneKey, shelves] of zoneEntries) {
+      const zoneLabel = zoneKey === "" ? "Warehouse level" : `Zone ${zoneKey}`;
+      const zNode: TreeNode = {
+        id: `${wh}-${zoneKey || "_WH"}`,
+        label: zoneLabel,
+        count: 0,
+        children: [],
+      };
+
+      const shelfEntries = Array.from(shelves.entries()).sort(([a], [b]) => {
+        if (a === "") return 1;
+        if (b === "") return -1;
+        return a.localeCompare(b);
+      });
+
+      for (const [shelfKey, ls] of shelfEntries) {
+        if (shelfKey === "") {
+          // No real shelf - these bins live at the zone level (or
+          // warehouse level if the zone is also placeholder). Render
+          // them as leaves directly under the zone node.
+          for (const b of ls) {
+            zNode.children!.push({
+              id: b.id,
+              label: leafLabel(b),
+              count: b.qty ?? 0,
+              bin: b,
+            });
+            zNode.count += 1;
+          }
+          continue;
+        }
+
+        // Real shelf. Two cases:
+        //  - shelf has bins (one or more rows with bin != "00")
+        //  - shelf has a single placeholder bin "00" (shelf-level stock)
+        const realBins = ls.filter((b) => !isPlaceholderBin(b.bin));
+        const placeholderBins = ls.filter((b) => isPlaceholderBin(b.bin));
+
+        if (realBins.length === 0 && placeholderBins.length > 0) {
+          // Shelf-level stock only - render the shelf as a leaf (no
+          // sub-bin node) so the user sees the shelf row clickable
+          // with its qty directly.
+          for (const b of placeholderBins) {
+            zNode.children!.push({
+              id: b.id,
+              label: shelfKey,
+              count: b.qty ?? 0,
+              bin: b,
+            });
+            zNode.count += 1;
+          }
+          continue;
+        }
+
+        // Shelf with one or more real bins. Show as a shelf folder
+        // with the bins inside. Any leftover placeholder-bin rows
+        // (with qty > 0) appear inside the shelf as "shelf-level"
+        // entries so nothing gets dropped silently.
         const sNode: TreeNode = {
-          id: `${wh}-${z}-${s}`,
-          label: s,
-          count: ls.length,
-          children: ls.map((b) => ({
-            id: b.id,
-            label: b.bin,
-            count: b.qty ?? 0,
-            bin: b,
-          })),
+          id: `${wh}-${zoneKey || "_WH"}-${shelfKey}`,
+          label: shelfKey,
+          count: realBins.length + placeholderBins.length,
+          children: [
+            ...realBins.map((b) => ({
+              id: b.id,
+              label: b.bin,
+              count: b.qty ?? 0,
+              bin: b,
+            })),
+            ...placeholderBins.map((b) => ({
+              id: b.id,
+              label: "shelf-level",
+              count: b.qty ?? 0,
+              bin: b,
+            })),
+          ],
         };
         zNode.children!.push(sNode);
-        zNode.count += ls.length;
+        zNode.count += sNode.count;
       }
+
       wNode.children!.push(zNode);
       wNode.count += zNode.count;
     }
@@ -140,7 +253,10 @@ const NodeRow = ({
   // id format: "WH-MAIN" | "WH-MAIN-A" | "WH-MAIN-A-S1"
   const parts = node.id.split("-");
   // Zones have depth=1 (one child level under warehouse), shelves depth=2.
-  const isZoneNode = depth === 1;
+  // Virtual "Warehouse level" bucket is also depth=1 but isn't a real
+  // zone - we hide rename/delete on it since there's nothing to rename.
+  const isRealZoneNode = depth === 1 && node.label.startsWith("Zone ");
+  const isZoneNode = isRealZoneNode;
   const isShelfNode = depth === 2;
 
   return (
@@ -380,6 +496,54 @@ export const Warehouse = () => {
   const totalBins = bins.length;
   const occupiedBins = bins.filter((b) => b.qty).length;
 
+  const exportBins = () => {
+    const q = filter.trim().toLowerCase();
+    const rows = (q
+      ? bins.filter(
+          (b) =>
+            b.warehouse.toLowerCase().includes(q) ||
+            b.zone.toLowerCase().includes(q) ||
+            b.shelf.toLowerCase().includes(q) ||
+            b.bin.toLowerCase().includes(q) ||
+            (b.productSku?.toLowerCase().includes(q) ?? false) ||
+            (b.productName?.toLowerCase().includes(q) ?? false) ||
+            (b.variantSku?.toLowerCase().includes(q) ?? false)
+        )
+      : bins
+    ).map((b) => [
+      b.warehouse,
+      b.zone,
+      b.shelf,
+      b.bin,
+      b.productSku ?? "",
+      b.productName ?? "",
+      b.variantSku ?? "",
+      b.variantSize ?? "",
+      b.qty ?? 0,
+      b.batch ?? "",
+      b.capacity,
+      b.occupied,
+    ]);
+    downloadCsv(
+      `warehouse-bins-${csvStamp()}.csv`,
+      [
+        "Warehouse",
+        "Zone",
+        "Shelf",
+        "Bin",
+        "Product SKU",
+        "Product",
+        "Variant SKU",
+        "Variant Size",
+        "Qty",
+        "Batch",
+        "Capacity",
+        "Occupied",
+      ],
+      rows
+    );
+  };
+
   if (bulkStockMode) {
     return (
       <BulkZoneStockPanel
@@ -405,6 +569,15 @@ export const Warehouse = () => {
         }
         right={
           <>
+            <Button
+              variant="outline"
+              size="sm"
+              icon={<Download size={14} />}
+              onClick={exportBins}
+              title="Export bin stock as CSV"
+            >
+              Export
+            </Button>
             <Button
               variant="outline"
               size="sm"

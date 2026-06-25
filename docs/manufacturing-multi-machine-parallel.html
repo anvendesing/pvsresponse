@@ -1,0 +1,920 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PVS ERP — Multi-machine &amp; parallel manufacturing</title>
+  <style>/* PVS ERP User Manual — print / PDF styles (A4) */
+
+:root {
+  --primary: #003087;
+  --primary-light: #eef4ff;
+  --ink: #0f172a;
+  --ink-muted: #475569;
+  --border: #cbd5e1;
+  --code-bg: #f1f5f9;
+}
+
+@page {
+  size: A4;
+  margin: 18mm 16mm 20mm 16mm;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 10.5pt;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: "Segoe UI", Inter, -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--ink);
+  line-height: 1.55;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+/* Cover (first page only) */
+.cover-page {
+  page-break-after: always;
+  min-height: 257mm;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  background: linear-gradient(160deg, var(--primary) 0%, #001a4d 100%);
+  color: #fff;
+  padding: 8mm 4mm;
+  margin: -18mm -16mm 0 -16mm;
+  width: calc(100% + 32mm);
+}
+
+.cover-page .cover-top {
+  padding-top: 12mm;
+}
+
+.cover-page .logo-line {
+  font-size: 11pt;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  opacity: 0.85;
+  margin-bottom: 8mm;
+}
+
+.cover-page h1 {
+  font-size: 32pt;
+  font-weight: 800;
+  line-height: 1.1;
+  margin: 0 0 6mm;
+  letter-spacing: -0.02em;
+}
+
+.cover-page .subtitle {
+  font-size: 14pt;
+  font-weight: 400;
+  opacity: 0.92;
+  max-width: 140mm;
+  line-height: 1.45;
+}
+
+.cover-page .cover-meta {
+  font-size: 10pt;
+  opacity: 0.8;
+  border-top: 1px solid rgba(255, 255, 255, 0.25);
+  padding-top: 6mm;
+}
+
+.cover-page .cover-meta p {
+  margin: 0 0 2mm;
+}
+
+/* Main content */
+.manual {
+  max-width: 100%;
+}
+
+.manual > h1:first-of-type {
+  display: none; /* title already on cover */
+}
+
+.manual h1 {
+  font-size: 20pt;
+  font-weight: 800;
+  color: var(--primary);
+  margin: 10mm 0 4mm;
+  padding-bottom: 2mm;
+  border-bottom: 2px solid var(--primary);
+  page-break-after: avoid;
+}
+
+.manual h2 {
+  font-size: 14pt;
+  font-weight: 700;
+  color: var(--ink);
+  margin: 7mm 0 3mm;
+  page-break-after: avoid;
+}
+
+.manual h3 {
+  font-size: 11.5pt;
+  font-weight: 700;
+  margin: 5mm 0 2mm;
+  page-break-after: avoid;
+}
+
+.manual h4 {
+  font-size: 10.5pt;
+  font-weight: 700;
+  margin: 4mm 0 2mm;
+}
+
+.manual p {
+  margin: 0 0 3mm;
+  orphans: 3;
+  widows: 3;
+}
+
+.manual ul,
+.manual ol {
+  margin: 0 0 4mm;
+  padding-left: 6mm;
+}
+
+.manual li {
+  margin-bottom: 1.5mm;
+}
+
+.manual li > ul,
+.manual li > ol {
+  margin-top: 1mm;
+  margin-bottom: 1mm;
+}
+
+.manual hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 6mm 0;
+}
+
+.manual a {
+  color: var(--primary);
+  text-decoration: none;
+}
+
+.manual a[href^="#"] {
+  color: var(--ink-muted);
+}
+
+.manual strong {
+  font-weight: 700;
+}
+
+.manual blockquote {
+  margin: 4mm 0;
+  padding: 3mm 4mm;
+  border-left: 3px solid var(--primary);
+  background: var(--primary-light);
+  color: var(--ink-muted);
+}
+
+.manual code {
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 9pt;
+  background: var(--code-bg);
+  padding: 0.1em 0.35em;
+  border-radius: 3px;
+}
+
+.manual pre {
+  background: #1e293b;
+  color: #e2e8f0;
+  padding: 4mm;
+  border-radius: 4px;
+  overflow-x: auto;
+  font-size: 8.5pt;
+  line-height: 1.45;
+  margin: 3mm 0 5mm;
+  page-break-inside: avoid;
+}
+
+.manual pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+}
+
+.manual table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 3mm 0 5mm;
+  font-size: 9.5pt;
+  page-break-inside: avoid;
+}
+
+.manual thead {
+  background: var(--primary);
+  color: #fff;
+}
+
+.manual th {
+  text-align: left;
+  padding: 2.5mm 3mm;
+  font-weight: 600;
+}
+
+.manual td {
+  padding: 2.5mm 3mm;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.manual tbody tr:nth-child(even) {
+  background: #f8fafc;
+}
+
+.manual img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Section breaks — major h2 sections start new page after TOC area */
+.manual h2 {
+  page-break-before: auto;
+}
+
+@media print {
+  .manual h1 {
+    page-break-before: always;
+  }
+
+  .manual h1:first-of-type {
+    page-break-before: avoid;
+  }
+}
+</style>
+</head>
+<body>
+  <section class="cover-page">
+    <div class="cover-top">
+      <div class="logo-line">PVS · Kothavaripalle, AP</div>
+      <h1>Multi-machine &amp;<br />parallel manufacturing</h1>
+      <p class="subtitle">
+        How MOs, work orders, production lines, and machines work together —
+        including split operations for parallel extraction and filtering.
+      </p>
+    </div>
+    <div class="cover-meta">
+      <p><strong>Version</strong> 1.0</p>
+      <p><strong>Generated</strong> 2026-06-24</p>
+      <p><strong>Source</strong> docs/manufacturing-multi-machine-parallel.md</p>
+    </div>
+  </section>
+  <article class="manual"><h1>Multi-machine &amp; parallel manufacturing</h1>
+<p><strong>PVS ERP · Manufacturing module</strong></p>
+<p>This document explains how production lines and machines are assigned to manufacturing orders (MOs) and work orders (WOs), and how the same MO can run <strong>in parallel on multiple machines</strong> without picking “multiple machines” on a single work order.</p>
+<p><strong>Related docs:</strong> <a href="manufacturing-multi-step-bom.md"><code>manufacturing-multi-step-bom.md</code></a> · <a href="soap-manufacturing-process.md"><code>soap-manufacturing-process.md</code></a> · <a href="erp-user-manual.md"><code>erp-user-manual.md</code></a></p>
+<hr>
+<h2>1. Design decision (read this first)</h2>
+<table>
+<thead>
+<tr>
+<th>Question</th>
+<th>Answer in PVS ERP</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Can one work order run on several machines at once?</td>
+<td><strong>No.</strong> Each WO has exactly <strong>one</strong> <code>lineId</code> and <strong>one</strong> <code>machineId</code>.</td>
+</tr>
+<tr>
+<td>Can one MO run on several machines at once?</td>
+<td><strong>Yes</strong>, by creating <strong>several work orders</strong> for the same routing step, each on a different line/machine with its own quantity.</td>
+</tr>
+<tr>
+<td>How do I split qty across machines?</td>
+<td>Use <strong>Split operation</strong> on the MO (UI) or <code>POST …/split-operation</code> (API).</td>
+</tr>
+<tr>
+<td>Should we add “select multiple machines” on the MO?</td>
+<td><strong>Not recommended.</strong> Tracking status, output, QA, and machine idle/busy state requires <strong>one machine per WO</strong>.</td>
+</tr>
+</tbody></table>
+<p>This follows Odoo MRP: parallel capacity is modeled as <strong>multiple work orders per operation</strong>, not one WO bound to many machines.</p>
+<hr>
+<h2>2. Concept map</h2>
+<pre><code class="language-mermaid">flowchart TB
+  subgraph facility [Production facility e.g. WC-OIL]
+    L1[Line WC-OIL-EXT-01]
+    L2[Line WC-OIL-EXT-03]
+    L3[Line WC-OIL-FLT-01]
+  end
+  L1 --&gt; M1[Machine MCH-OIL-EXT-01]
+  L2 --&gt; M2[Machine MCH-OIL-EXT-03]
+  MO[Manufacturing order MO-2026-0042&lt;br/&gt;plannedQty 600 L]
+  MO --&gt; WO1[WO MO-…/1a · Extract · 360 L&lt;br/&gt;EXT-01 · MCH-01]
+  MO --&gt; WO2[WO MO-…/1b · Extract · 240 L&lt;br/&gt;EXT-03 · MCH-03]
+  MO --&gt; WO3[WO MO-…/2 · Filter · 600 L&lt;br/&gt;waiting until 1a+1b done]
+  WO1 --&gt; M1
+  WO2 --&gt; M2
+  WO3 --&gt; L3
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Entity</th>
+<th>Role</th>
+<th>Parallel relevance</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Production facility</strong></td>
+<td>Plant / work center group (e.g. Oil Extraction <code>WC-OIL</code>)</td>
+<td>MO is created for one facility</td>
+</tr>
+<tr>
+<td><strong>Production line</strong></td>
+<td>Logical work center (e.g. <code>WC-OIL-EXT-01</code>)</td>
+<td>Each parallel WO picks <strong>one</strong> line</td>
+</tr>
+<tr>
+<td><strong>Machine</strong></td>
+<td>Physical asset on a line (e.g. <code>MCH-OIL-EXT-01</code>)</td>
+<td>Each parallel WO picks <strong>one</strong> machine</td>
+</tr>
+<tr>
+<td><strong>BOM operation</strong></td>
+<td>Routing step on the BOM (Extract, Filter, Fill)</td>
+<td>Split applies <strong>per operation</strong></td>
+</tr>
+<tr>
+<td><strong>Manufacturing order (MO)</strong></td>
+<td>Batch header: product, planned qty, dates</td>
+<td>One MO number; qty split across WOs</td>
+</tr>
+<tr>
+<td><strong>Work order (WO)</strong></td>
+<td>Executable step on the shop floor</td>
+<td><strong>Unit of parallel execution</strong></td>
+</tr>
+</tbody></table>
+<hr>
+<h2>3. Data model</h2>
+<h3>3.1 Key tables</h3>
+<p><strong><code>ProductionOrder</code> (MO)</strong></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>plannedQty</code></td>
+<td>Total batch quantity</td>
+</tr>
+<tr>
+<td><code>facilityId</code></td>
+<td>Where this MO runs</td>
+</tr>
+<tr>
+<td><code>lineId</code></td>
+<td>Optional MO-level default line (legacy/summary); <strong>per-WO line is authoritative for execution</strong></td>
+</tr>
+</tbody></table>
+<p><strong><code>WorkOrder</code> (WO)</strong></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>workOrderNo</code></td>
+<td>e.g. <code>MO-2026-0042/1a</code> — suffix <code>a</code>, <code>b</code>, … when split</td>
+</tr>
+<tr>
+<td><code>bomOperationId</code></td>
+<td>Which routing step this WO belongs to</td>
+</tr>
+<tr>
+<td><code>target</code></td>
+<td>Qty this WO must produce</td>
+</tr>
+<tr>
+<td><code>plannedSplitQty</code></td>
+<td>Same as target when created via split</td>
+</tr>
+<tr>
+<td><code>splitSeq</code></td>
+<td>0 = unsplit default; 1, 2, … = parallel siblings</td>
+</tr>
+<tr>
+<td><code>lineId</code></td>
+<td>Assigned production line</td>
+</tr>
+<tr>
+<td><code>machineId</code></td>
+<td>Assigned machine (optional until start)</td>
+</tr>
+<tr>
+<td><code>status</code></td>
+<td><code>waiting</code> → <code>ready</code> → <code>running</code> → <code>complete</code> (+ QA)</td>
+</tr>
+</tbody></table>
+<p><strong><code>BomOperation</code></strong></p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>seq</code></td>
+<td>Step order (1, 2, 3…)</td>
+</tr>
+<tr>
+<td><code>blockedByOperationId</code></td>
+<td>Predecessor operation (Filter blocked by Extract)</td>
+</tr>
+<tr>
+<td><code>lineId</code> / <code>machineId</code></td>
+<td>Default line/machine when MO spawns WOs</td>
+</tr>
+<tr>
+<td><code>requiresQa</code></td>
+<td>If true, WO stays QA-pending until supervisor approves</td>
+</tr>
+</tbody></table>
+<p><strong><code>BomOperationLine</code></strong> (eligible lines)</p>
+<p>Lists which production lines <strong>may</strong> run an operation (e.g. Extract allowed on <code>EXT-01</code> … <code>EXT-06</code>). Used in BOM editor; split UI shows all active lines in the facility.</p>
+<p><strong><code>Machine</code></strong></p>
+<p>Belongs to exactly one <code>productionLineId</code>. A WO’s machine must belong to its chosen line.</p>
+<h3>3.2 Work order numbering after split</h3>
+<p>For operation seq <code>1</code> with three parallel splits:</p>
+<table>
+<thead>
+<tr>
+<th>workOrderNo</th>
+<th>splitSeq</th>
+<th>Qty</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>MO-xxx/1a</code></td>
+<td>0</td>
+<td>200</td>
+</tr>
+<tr>
+<td><code>MO-xxx/1b</code></td>
+<td>1</td>
+<td>200</td>
+</tr>
+<tr>
+<td><code>MO-xxx/1c</code></td>
+<td>2</td>
+<td>200</td>
+</tr>
+</tbody></table>
+<p>Suffix letters are assigned in split order (<code>a</code> … <code>z</code>).</p>
+<hr>
+<h2>4. Two ways to run in parallel</h2>
+<h3>4.1 Option A — Split operation (one MO, multiple WOs)</h3>
+<p><strong>Best when:</strong> One batch number, one material issue, downstream step waits for <strong>all</strong> parallel extract WOs.</p>
+<p><strong>Flow:</strong></p>
+<ol>
+<li><p>Create MO (e.g. 600 L groundnut extract).</p>
+</li>
+<li><p>Release MO and issue materials.</p>
+</li>
+<li><p>Open MO → <strong>Work orders</strong> tab.</p>
+</li>
+<li><p>Click <strong>Split Extract</strong> (or the operation name).</p>
+</li>
+<li><p>In the modal, add rows:</p>
+<table>
+<thead>
+<tr>
+<th>Line</th>
+<th>Machine</th>
+<th>Qty</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>WC-OIL-EXT-01</td>
+<td>MCH-OIL-EXT-01</td>
+<td>360</td>
+</tr>
+<tr>
+<td>WC-OIL-EXT-03</td>
+<td>MCH-OIL-EXT-03</td>
+<td>240</td>
+</tr>
+</tbody></table>
+</li>
+<li><p><strong>Apply split</strong> — backend replaces the single Extract WO with two WOs (<code>/1a</code>, <code>/1b</code>).</p>
+</li>
+<li><p><strong>Start</strong> each WO independently when ready.</p>
+</li>
+<li><p><strong>Filter</strong> WO remains <code>waiting</code> until <strong>both</strong> extract WOs are <code>complete</code> and QA passed (if required).</p>
+</li>
+</ol>
+<p><strong>Rule:</strong> Split quantities <strong>must sum exactly</strong> to <code>MO.plannedQty</code>.</p>
+<h3>4.2 Option B — Multiple MOs (seed-press oil today)</h3>
+<p><strong>Best when:</strong> Each stage is already a <strong>separate BOM/MO</strong> (Extract MO → Filter MO → Pack MO).</p>
+<p>Example for 600 L unfiltered target:</p>
+<table>
+<thead>
+<tr>
+<th>MO</th>
+<th>BOM</th>
+<th>Line</th>
+<th>Qty</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>MO-A</td>
+<td>Rev-Oil-Extract-1.0</td>
+<td>WC-OIL-EXT-01</td>
+<td>360 L</td>
+</tr>
+<tr>
+<td>MO-B</td>
+<td>Rev-Oil-Extract-1.0</td>
+<td>WC-OIL-EXT-03</td>
+<td>240 L</td>
+</tr>
+</tbody></table>
+<p>Filter MO consumes <strong>pooled</strong> semi-finished stock from both extract MOs. No split modal needed — parallelism is at <strong>MO level</strong>.</p>
+<p>Both options are valid; choose based on whether you want one MO number or separate extract batches.</p>
+<hr>
+<h2>5. Single machine assignment (no split)</h2>
+<p>When only <strong>one</strong> line/machine runs a step, use inline dropdowns on the Work orders tab (or <strong>Assign line / machine</strong> in the MO header).</p>
+<p><strong>Per work order:</strong></p>
+<ol>
+<li><strong>Production line</strong> — required before <strong>Start</strong></li>
+<li><strong>Machine</strong> — optional but recommended when multiple machines exist on the line</li>
+</ol>
+<p>Saves via:</p>
+<pre><code class="language-http">PATCH /v1/production-orders/{moId}/work-orders/{woId}/assign
+Content-Type: application/json
+
+{
+  &quot;lineId&quot;: &quot;&lt;production-line-id&gt;&quot;,
+  &quot;machineId&quot;: &quot;&lt;machine-id-or-null&gt;&quot;
+}
+</code></pre>
+<p><strong>Bulk assign</strong> (same line for all open WOs, with optional per-WO overrides):</p>
+<pre><code class="language-http">PATCH /v1/production-orders/{moId}/assign-line
+Content-Type: application/json
+
+{
+  &quot;lineId&quot;: &quot;&lt;production-line-id&gt;&quot;,
+  &quot;workOrderAssignments&quot;: [
+    { &quot;workOrderId&quot;: &quot;…&quot;, &quot;lineId&quot;: &quot;…&quot;, &quot;machineId&quot;: &quot;…&quot; }
+  ]
+}
+</code></pre>
+<p><strong>Constraints:</strong></p>
+<ul>
+<li>Cannot reassign line/machine while WO is <code>running</code> or <code>complete</code>.</li>
+<li>Machine must belong to the selected line.</li>
+<li>Line must belong to the MO’s facility.</li>
+</ul>
+<hr>
+<h2>6. Split operation — backend behaviour</h2>
+<p><strong>Endpoint:</strong></p>
+<pre><code class="language-http">POST /v1/production-orders/{moId}/split-operation
+Content-Type: application/json
+
+{
+  &quot;bomOperationId&quot;: &quot;&lt;operation-id&gt;&quot;,
+  &quot;splits&quot;: [
+    { &quot;lineId&quot;: &quot;…&quot;, &quot;machineId&quot;: &quot;…&quot;, &quot;qty&quot;: 360 },
+    { &quot;lineId&quot;: &quot;…&quot;, &quot;machineId&quot;: &quot;…&quot;, &quot;qty&quot;: 240 }
+  ]
+}
+</code></pre>
+<p><strong>Algorithm</strong> (<code>backend/src/lib/mo-work-orders.ts</code> → <code>splitOperationWorkOrders</code>):</p>
+<ol>
+<li>Validate operation exists.</li>
+<li>Validate <code>sum(splits.qty) === MO.plannedQty</code>.</li>
+<li><strong>Delete</strong> all existing WOs for that <code>bomOperationId</code> on this MO.</li>
+<li><strong>Create</strong> one WO per split row with <code>lineId</code>, <code>machineId</code>, <code>target</code>, <code>plannedSplitQty</code>, <code>splitSeq</code>.</li>
+<li>Set initial status to <code>waiting</code> if the operation has a blocked-by predecessor, else <code>ready</code>.</li>
+<li>Call <code>refreshWaitingReady</code> to unblock downstream steps when predecessors finish.</li>
+</ol>
+<p><strong>Important:</strong> Splitting <strong>replaces</strong> WOs for that operation only. Other operations (Filter, Fill) are untouched. Do not split after WOs are already running or complete.</p>
+<hr>
+<h2>7. Dependencies &amp; QA with parallel WOs</h2>
+<h3>7.1 Operation dependencies</h3>
+<p>If operation <strong>Filter</strong> is blocked by <strong>Extract</strong>:</p>
+<ul>
+<li>All WOs with <code>bomOperationId = Extract</code> must reach <code>complete</code> (+ QA pass if <code>requiresQa</code>).</li>
+<li>Only then does the Filter WO move from <code>waiting</code> → <code>ready</code>.</li>
+</ul>
+<p>With splits <code>1a</code> and <code>1b</code>:</p>
+<pre><code class="language-text">Extract 1a (running) ──┐
+Extract 1b (ready)   ──┼──► both complete + QA ──► Filter (ready)
+</code></pre>
+<h3>7.2 QA failure</h3>
+<p>If QA fails on a WO:</p>
+<ol>
+<li>Failed WO → <code>rework</code>, <code>qaStatus = fail</code>.</li>
+<li><strong>Predecessor operation</strong> WOs reopened to <code>ready</code> (all parallel extract WOs if filter failed downstream).</li>
+<li>Later operations set back to <code>waiting</code>.</li>
+</ol>
+<p>Parallel splits share the same dependency rules as a single WO — <strong>all</strong> predecessor WOs for that operation must be done.</p>
+<hr>
+<h2>8. Work order lifecycle</h2>
+<pre><code class="language-mermaid">stateDiagram-v2
+  [*] --&gt; waiting: predecessor incomplete
+  waiting --&gt; ready: all predecessor WOs done + QA pass
+  ready --&gt; running: operator Start
+  running --&gt; complete: operator Done
+  complete --&gt; pending_qa: requiresQa
+  pending_qa --&gt; pass: QA approve
+  pending_qa --&gt; rework: QA fail
+  rework --&gt; ready: predecessor reopened
+  pass --&gt; [*]
+</code></pre>
+<p><strong>Start requirements:</strong></p>
+<ul>
+<li>Status must be <code>ready</code> (or legacy <code>queued</code>).</li>
+<li><code>lineId</code> must be set (UI disables Start until line is chosen).</li>
+</ul>
+<p>Each parallel WO is started and completed <strong>independently</strong>.</p>
+<hr>
+<h2>9. UI reference</h2>
+<h3>9.1 Manufacturing → MO detail → Work orders</h3>
+<table>
+<thead>
+<tr>
+<th>Control</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Production line</strong> / <strong>Machine</strong> dropdowns</td>
+<td>Assign one line + machine to this WO</td>
+</tr>
+<tr>
+<td><strong>Start</strong></td>
+<td>Begin this WO on its machine</td>
+</tr>
+<tr>
+<td><strong>Done</strong></td>
+<td>Mark step complete</td>
+</tr>
+<tr>
+<td><strong>QA</strong></td>
+<td>Approve/reject when operation requires QA</td>
+</tr>
+<tr>
+<td><strong>Split {operation}</strong></td>
+<td>Open split modal for parallel lines</td>
+</tr>
+</tbody></table>
+<h3>9.2 Split operation modal</h3>
+<ul>
+<li>One row per parallel line.</li>
+<li>Fields: <strong>Line</strong>, <strong>Qty</strong>, <strong>Machine (optional)</strong>.</li>
+<li><strong>Add line</strong> for 3+ parallel runs (e.g. six extractors).</li>
+<li><strong>Total</strong> must match MO planned qty.</li>
+</ul>
+<h3>9.3 Assign line / machine (header button)</h3>
+<p>Shown when any open WO lacks a line. Opens modal to assign line + machine for multiple WOs at once.</p>
+<hr>
+<h2>10. Oil extraction example (WC-OIL)</h2>
+<p>Configured by <code>npm run db:configure-oil-extraction:dev</code>:</p>
+<table>
+<thead>
+<tr>
+<th>Line code</th>
+<th>Role</th>
+<th>Typical machine</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>WC-OIL-EXT-01 … EXT-06</td>
+<td>Parallel extraction</td>
+<td>MCH-OIL-EXT-01 … 06</td>
+</tr>
+<tr>
+<td>WC-OIL-FLT-01 … FLT-03</td>
+<td>Filtering</td>
+<td>MCH-OIL-FLT-01 … 03</td>
+</tr>
+<tr>
+<td>WC-OIL-FILL</td>
+<td>Bottling / pouches</td>
+<td>MCH-OIL-FILL</td>
+</tr>
+</tbody></table>
+<p><strong>Scenario:</strong> MO for 600 L extract, run on two presses in parallel.</p>
+<p><strong>Using split (multi-op BOM on one MO):</strong></p>
+<ol>
+<li>MO planned qty = 600.</li>
+<li>Split Extract → 360 on EXT-01, 240 on EXT-03.</li>
+<li>Start both WOs same day.</li>
+<li>When both done (+ QA), Filter WO becomes ready for full 600 L.</li>
+</ol>
+<p><strong>Using separate MOs (current seed-press BOM layout):</strong></p>
+<ol>
+<li>MO-1: 360 L on EXT-01.</li>
+<li>MO-2: 240 L on EXT-03.</li>
+<li>Create Filter MO when enough unfiltered stock is available.</li>
+</ol>
+<hr>
+<h2>11. API summary</h2>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Path</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>POST</code></td>
+<td><code>/production-orders</code></td>
+<td>Create MO; spawns one WO per BOM operation</td>
+</tr>
+<tr>
+<td><code>PATCH</code></td>
+<td><code>/production-orders/:id/assign-line</code></td>
+<td>MO-level + bulk WO line/machine assign</td>
+</tr>
+<tr>
+<td><code>PATCH</code></td>
+<td><code>/production-orders/:id/work-orders/:woId/assign</code></td>
+<td>Single WO line/machine assign</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/production-orders/:id/split-operation</code></td>
+<td>Parallel qty split for one operation</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/production-orders/:id/work-orders/:woId/start</code></td>
+<td>Start WO</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/production-orders/:id/work-orders/:woId/done</code></td>
+<td>Complete WO</td>
+</tr>
+<tr>
+<td><code>POST</code></td>
+<td><code>/production-orders/:id/work-orders/:woId/qa</code></td>
+<td>QA pass/fail</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/production-lines?facilityId=</code></td>
+<td>Lines for dropdowns</td>
+</tr>
+<tr>
+<td><code>GET</code></td>
+<td><code>/machines?facilityId=</code></td>
+<td>Machines for dropdowns</td>
+</tr>
+</tbody></table>
+<hr>
+<h2>12. Code locations</h2>
+<table>
+<thead>
+<tr>
+<th>Area</th>
+<th>Path</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>WO create / split / assign / QA</td>
+<td><code>backend/src/lib/mo-work-orders.ts</code></td>
+</tr>
+<tr>
+<td>HTTP routes</td>
+<td><code>backend/src/routes/manufacturing.ts</code></td>
+</tr>
+<tr>
+<td>Prisma models</td>
+<td><code>backend/prisma/schema.prisma</code> (<code>WorkOrder</code>, <code>BomOperation</code>, <code>BomOperationLine</code>, <code>Machine</code>)</td>
+</tr>
+<tr>
+<td>Work orders UI</td>
+<td><code>erp-portal/src/components/manufacturing/MoWorkOrdersPanel.tsx</code></td>
+</tr>
+<tr>
+<td>Split modal</td>
+<td><code>erp-portal/src/components/manufacturing/SplitOperationModal.tsx</code></td>
+</tr>
+<tr>
+<td>Line/machine fields</td>
+<td><code>erp-portal/src/components/manufacturing/WoLineMachineFields.tsx</code></td>
+</tr>
+<tr>
+<td>Bulk assign modal</td>
+<td><code>erp-portal/src/components/manufacturing/AssignLineModal.tsx</code></td>
+</tr>
+<tr>
+<td>Oil lines + machines seed</td>
+<td><code>backend/ops-scripts/06-configure-oil-extraction.ts</code></td>
+</tr>
+<tr>
+<td>Site layout constants</td>
+<td><code>backend/ops-scripts/config/site-layout.ts</code></td>
+</tr>
+</tbody></table>
+<hr>
+<h2>13. Limitations &amp; future work</h2>
+<table>
+<thead>
+<tr>
+<th>Topic</th>
+<th>Current behaviour</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Multi-machine on one WO</td>
+<td>Not supported by design</td>
+</tr>
+<tr>
+<td>Split after start</td>
+<td>Not allowed (WOs deleted/recreated on split)</td>
+</tr>
+<tr>
+<td>Per-step material issue</td>
+<td>All BOM components issued at MO release; per-operation issue is planned (see multi-step BOM doc)</td>
+</tr>
+<tr>
+<td>Machine busy/idle</td>
+<td>Updated on WO start/complete when <code>machineId</code> is set</td>
+</tr>
+<tr>
+<td>Legacy BOMs (no operations)</td>
+<td>Single WO <code>/1</code>; split requires at least one <code>BomOperation</code></td>
+</tr>
+<tr>
+<td>Eligible lines enforcement</td>
+<td>BOM stores eligible lines; split UI currently lists all active facility lines</td>
+</tr>
+</tbody></table>
+<hr>
+<h2>14. Quick decision guide</h2>
+<pre><code class="language-text">Need parallel machines on the SAME batch (one MO number)?
+  └─► Use Split operation → multiple WOs, one machine each
+
+Need parallel extract but separate batch tracking?
+  └─► Create multiple extract MOs on different lines
+
+Need one machine on one step only?
+  └─► Use Work orders dropdowns (no split)
+
+Wondering about &quot;pick 3 machines on the MO&quot;?
+  └─► Don&#39;t — use Split operation with 3 rows instead
+</code></pre>
+<hr>
+<h2>15. Glossary</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>MO</strong></td>
+<td>Manufacturing order — batch header</td>
+</tr>
+<tr>
+<td><strong>WO</strong></td>
+<td>Work order — shop-floor executable unit</td>
+</tr>
+<tr>
+<td><strong>Split</strong></td>
+<td>Replace one operation’s WO(s) with several parallel WOs</td>
+</tr>
+<tr>
+<td><strong>Operation</strong></td>
+<td>BOM routing step (Extract, Filter, …)</td>
+</tr>
+<tr>
+<td><strong>Line</strong></td>
+<td>Production line / work center</td>
+</tr>
+<tr>
+<td><strong>Blocked by</strong></td>
+<td>Operation or WO that must finish before the next starts</td>
+</tr>
+</tbody></table>
+<hr>
+<p><em>Document version 1.0 · Source: <code>docs/manufacturing-multi-machine-parallel.md</code></em></p>
+</article>
+</body>
+</html>

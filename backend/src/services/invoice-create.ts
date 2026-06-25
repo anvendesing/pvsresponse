@@ -29,7 +29,10 @@
 
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { mintShareToken } from "../lib/share.js";
-import { nextFulfilmentDocNo } from "../lib/pick-list-helpers.js";
+import {
+  nextFulfilmentDocNo,
+  nextImportedInvoiceNo,
+} from "../lib/pick-list-helpers.js";
 import { computeTax, computeGrandTotal } from "../lib/tax.js";
 import { applyAdvancesToInvoice } from "../routes/customer-payments.js";
 import { recomputeInvoiceWeight } from "../lib/document-weight.js";
@@ -83,7 +86,13 @@ export const ensureInvoiceForSalesOrder = async (
     );
   }
 
-  const invoiceNo = await nextFulfilmentDocNo("INV", 2026, 5500);
+  // External-channel orders (DTDC etc.) get their own invoice number
+  // series so finance / GST audits can separate them from back-office
+  // sales. See SalesOrder.source comment for the full taxonomy.
+  const invoiceNo =
+    so.source === "imported"
+      ? await nextImportedInvoiceNo(2026)
+      : await nextFulfilmentDocNo("INV", 2026, 5500);
   const invoice = await client.invoice.create({
     data: {
       invoiceNo,

@@ -32,6 +32,84 @@ export function resolveUploadUrl(url: string | null | undefined): string | undef
 const TOKEN_KEY = "nova.token";
 const USER_KEY = "nova.user";
 
+export interface MoWoLogRow {
+  moId: string;
+  orderNo: string;
+  moStatus: string;
+  moStartDate: string;
+  moDueDate: string;
+  moCreatedAt: string;
+  moUpdatedAt: string;
+  plannedQty: number;
+  actualQty: number;
+  scrapQty: number;
+  efficiency: number;
+  productSku: string;
+  productName: string;
+  variantSize: string | null;
+  facilityCode: string | null;
+  facilityName: string | null;
+  woId: string;
+  workOrderNo: string;
+  woStatus: string;
+  woStartTime: string | null;
+  woEndTime: string | null;
+  durationMin: number | null;
+  output: number;
+  target: number;
+  splitSeq: number;
+  qaStatus: string | null;
+  lineCode: string | null;
+  lineName: string | null;
+  lineCapacityPerHour: number | null;
+  machineCode: string | null;
+  machineName: string | null;
+  machineStatus: string | null;
+  operationSeq: number | null;
+  operationName: string | null;
+  plannedMinutes: number | null;
+  workers: string[];
+  targetVsActualPct: number | null;
+  timeVsPlanPct: number | null;
+  utilizationPct: number | null;
+  materialsConsumed: number;
+}
+
+export interface MoWoLogResponse {
+  rangeDays: number;
+  since: string;
+  totals: { woCount: number; moCount: number; totalOutput: number; totalRunMin: number };
+  rows: MoWoLogRow[];
+}
+
+export interface MachineUtilizationRow {
+  machineId: string;
+  machineCode: string;
+  machineName: string;
+  machineStatus: string;
+  lineCode: string | null;
+  lineName: string | null;
+  facilityCode: string | null;
+  facilityName: string | null;
+  capacityPerHour: number | null;
+  woCount: number;
+  completedCount: number;
+  runMin: number;
+  availableMin: number;
+  utilizationPct: number;
+  output: number;
+  throughputPerHour: number;
+  capacityUtilizationPct: number | null;
+}
+
+export interface MachineUtilizationResponse {
+  rangeDays: number;
+  hoursPerDay: number;
+  since: string;
+  totals: { machines: number; woCount: number; runMin: number; output: number; avgUtilizationPct: number };
+  rows: MachineUtilizationRow[];
+}
+
 export interface ApiUser {
   id: string;
   username: string;
@@ -192,6 +270,7 @@ const publicFetcher = async <T>(path: string): Promise<T> => {
 import type {
   Bin,
   Bom,
+  BomOperation,
   DispatchOrder,
   Enquiry,
   EnquiryInput,
@@ -206,6 +285,8 @@ import type {
   Uom,
   UomCategory,
   Vendor,
+  VendorPerformance,
+  VendorProduct,
   WorkOrder,
   Worker,
 } from "@/data/types";
@@ -428,14 +509,15 @@ export interface PutawayRuleRow {
   productId: string;
   variantId: string | null;
   toWarehouseId: string;
+  toZone: string | null;
   toBinId: string | null;
   priority: number;
   active: boolean;
   notes: string | null;
   createdAt: string;
   updatedAt: string;
-  product: { id: string; sku: string; name: string; uom: string };
-  variant: { id: string; sku: string; size: string | null } | null;
+  product: { id: string; sku: string; name: string; uom: string; barcode: string };
+  variant: { id: string; sku: string; size: string | null; barcode: string | null } | null;
   toWarehouse: { id: string; code: string; name: string; kind: string };
   tobin: { id: string; code: string | null; zone: string; shelf: string; bin: string } | null;
 }
@@ -448,9 +530,12 @@ export interface StockRuleRow {
   id: string;
   productId: string;
   variantId: string | null;
-  monitorBinId: string;
+  monitorBinId: string | null;
   minQty: number;
-  triggerType: "mo" | "transfer";
+  maxQty: number | null;
+  orderMultiple: number | null;
+  triggerType: "mo" | "transfer" | "po";
+  vendorId: string | null;
   bomId: string | null;
   sourceBinId: string | null;
   toWarehouseId: string | null;
@@ -460,8 +545,14 @@ export interface StockRuleRow {
   notes: string | null;
   createdAt: string;
   updatedAt: string;
-  product: { id: string; sku: string; name: string };
-  variant: { id: string; sku: string; size: string | null; color: string | null } | null;
+  product: { id: string; sku: string; name: string; barcode: string | null };
+  variant: {
+    id: string;
+    sku: string;
+    size: string | null;
+    color: string | null;
+    barcode: string | null;
+  } | null;
   monitorBin: {
     id: string;
     zone: string;
@@ -469,7 +560,7 @@ export interface StockRuleRow {
     bin: string;
     qty: number;
     warehouse: { id: string; code: string };
-  };
+  } | null;
   bom: { id: string; revision: string; outputQty: number } | null;
   sourceBin: {
     id: string;
@@ -486,6 +577,13 @@ export interface StockRuleRow {
     warehouse: { code: string };
   } | null;
   toWarehouse: { id: string; code: string; name: string } | null;
+  vendor: { id: string; code: string; name: string } | null;
+  effectiveStock?: {
+    onHand: number;
+    poPipeline: number;
+    moPipeline: number;
+    effective: number;
+  };
 }
 
 // =====================================================================
@@ -659,6 +757,59 @@ const adaptVendor = (r: Raw): Vendor => ({
   totalSpend: (r.totalSpend as number) ?? 0,
 });
 
+/** Default bins for GRN receive (from putaway rules). */
+export type GrnReceiveHint = {
+  productId: string;
+  warehouseId: string;
+  warehouseCode: string;
+  warehouseName: string;
+  defaultBinId: string | null;
+  defaultBinCode: string | null;
+  defaultBinLabel: string | null;
+  bins: Array<{
+    id: string;
+    code: string | null;
+    zone: string;
+    shelf: string;
+    bin: string;
+    label: string;
+    qty: number;
+    productId: string | null;
+  }>;
+};
+
+/** Raw PO shape for mobile GRN — list endpoint includes line items. */
+export type GrnPurchaseOrder = {
+  id: string;
+  poNo: string;
+  status: string;
+  vendorName: string;
+  items: Array<{
+    id: string;
+    productId: string;
+    qty: number;
+    received: number;
+    product: { sku: string; name: string; uom: string };
+  }>;
+};
+
+const mapGrnPurchaseOrder = (r: Raw): GrnPurchaseOrder => {
+  const v = r.vendor as Raw | null;
+  return {
+    id: r.id as string,
+    poNo: r.poNo as string,
+    status: r.status as string,
+    vendorName: (v?.name as string) ?? "—",
+    items: ((r.items as Raw[]) ?? []).map((i) => ({
+      id: i.id as string,
+      productId: i.productId as string,
+      qty: i.qty as number,
+      received: (i.received as number) ?? 0,
+      product: i.product as { sku: string; name: string; uom: string },
+    })),
+  };
+};
+
 const adaptPo = (r: Raw): PurchaseOrder => {
   const v = r.vendor as Raw | null;
   return {
@@ -681,12 +832,17 @@ const adaptPo = (r: Raw): PurchaseOrder => {
 const adaptProductionOrder = (r: Raw): ProductionOrder => {
   const bom = r.bom as Raw | null;
   const product = (bom?.product as Raw | null) ?? null;
+  const variant = (bom?.variant as Raw | null) ?? null;
   return {
     id: r.id as string,
     orderNo: r.orderNo as string,
     bomId: (r.bomId as string) ?? (bom?.id as string) ?? undefined,
     product: (product?.name as string) ?? "—",
     sku: (product?.sku as string) ?? "",
+    variantId: (variant?.id as string | null) ?? (bom?.variantId as string | null) ?? null,
+    variantSku: (variant?.sku as string | null) ?? null,
+    variantSize: (variant?.size as string | null) ?? null,
+    variantColor: (variant?.color as string | null) ?? null,
     plannedQty: r.plannedQty as number,
     actualQty: r.actualQty as number,
     scrapQty: r.scrapQty as number,
@@ -703,19 +859,82 @@ const adaptProductionOrder = (r: Raw): ProductionOrder => {
   };
 };
 
-const adaptWorkOrder = (r: Raw): WorkOrder => ({
-  id: r.id as string,
-  workOrderNo: r.workOrderNo as string,
-  productionOrderId: r.productionOrderId as string,
-  station: r.station as string,
-  workers: typeof r.workers === "string" ? (r.workers as string).split(",").map((w) => w.trim()) : [],
-  machine: r.machine as string,
-  startTime: (r.startTime as string) ?? "",
-  endTime: (r.endTime as string) ?? undefined,
-  output: r.output as number,
-  target: r.target as number,
-  status: r.status as WorkOrder["status"],
-});
+const adaptWorkOrder = (r: Raw): WorkOrder => {
+  const bomOp = r.bomOperation as Raw | null | undefined;
+  const line = (r.line as Raw | null) ?? null;
+  const machineRef = (r.machineRef as Raw | null) ?? null;
+  return {
+    id: r.id as string,
+    workOrderNo: r.workOrderNo as string,
+    productionOrderId: r.productionOrderId as string,
+    station: r.station as string,
+    workers:
+      typeof r.workers === "string"
+        ? (r.workers as string).split(",").map((w) => w.trim())
+        : [],
+    machine: (machineRef?.name as string) ?? (r.machine as string),
+    startTime: (r.startTime as string) ?? "",
+    endTime: (r.endTime as string) ?? undefined,
+    output: r.output as number,
+    target: r.target as number,
+    status: r.status as WorkOrder["status"],
+    bomOperationId: (r.bomOperationId as string | null) ?? null,
+    bomOperation: bomOp
+      ? {
+          id: bomOp.id as string,
+          seq: bomOp.seq as number,
+          name: bomOp.name as string,
+          requiresQa: bomOp.requiresQa as boolean | undefined,
+        }
+      : null,
+    splitSeq: (r.splitSeq as number) ?? 0,
+    plannedSplitQty: (r.plannedSplitQty as number | null) ?? null,
+    qaStatus: (r.qaStatus as WorkOrder["qaStatus"]) ?? null,
+    qaNotes: (r.qaNotes as string | null) ?? null,
+    line: line
+      ? { id: line.id as string, code: line.code as string, name: line.name as string }
+      : null,
+    machineRef: machineRef
+      ? {
+          id: machineRef.id as string,
+          code: machineRef.code as string,
+          name: machineRef.name as string,
+        }
+      : null,
+    lineId: (r.lineId as string | null) ?? null,
+    machineId: (r.machineId as string | null) ?? null,
+    runs: Array.isArray(r.runs)
+      ? (r.runs as Raw[]).map((rr) => {
+          const m = rr.machine as Raw;
+          const ln = (rr.line as Raw | null) ?? null;
+          return {
+            id: rr.id as string,
+            workOrderId: rr.workOrderId as string,
+            machineId: rr.machineId as string,
+            lineId: (rr.lineId as string | null) ?? null,
+            plannedQty: (rr.plannedQty as number | null) ?? null,
+            inputQty: (rr.inputQty as number) ?? 0,
+            goodQty: (rr.goodQty as number) ?? 0,
+            scrapQty: (rr.scrapQty as number) ?? 0,
+            status: rr.status as "queued" | "running" | "complete" | "abandoned",
+            startTime: (rr.startTime as string | null) ?? null,
+            endTime: (rr.endTime as string | null) ?? null,
+            operator: (rr.operator as string | null) ?? null,
+            notes: (rr.notes as string | null) ?? null,
+            createdAt: (rr.createdAt as string | undefined) ?? undefined,
+            machine: {
+              id: m.id as string,
+              code: m.code as string,
+              name: m.name as string,
+            },
+            line: ln
+              ? { id: ln.id as string, code: ln.code as string, name: ln.name as string }
+              : null,
+          };
+        })
+      : [],
+  };
+};
 
 const adaptInvoice = (r: Raw): Invoice => ({
   id: r.id as string,
@@ -774,6 +993,7 @@ const adaptLedger = (r: Raw): StockLedgerEntry => ({
   qty: r.qty as number,
   warehouse: ((r.warehouse as Raw | null)?.code as string) ?? "",
   bin: (r.bin as string) ?? undefined,
+  batch: (r.batch as string) ?? undefined,
   balance: r.balance as number,
 });
 
@@ -961,6 +1181,8 @@ export interface MoRequirements {
   anyShortage: boolean;
   allFullyIssued: boolean;
   materialsIssued: boolean;
+  /** When set, onHand/free/shortage are scoped to the facility production WH. */
+  stockScope?: "production_line" | "all";
   lines: Array<{
     productId: string;
     sku: string;
@@ -994,9 +1216,12 @@ const adaptBom = (r: Raw): Bom => {
     items: ((r.items as Raw[]) ?? []).map((item) => {
       const ip = item.product as Raw | null;
       const hasSubAssembly = (ip?.type as string) === "semi";
+      const bomOp = item.bomOperation as Raw | null | undefined;
       return {
         id: item.id as string,
         productId: (item.productId as string) ?? (ip?.id as string),
+        bomOperationId: (item.bomOperationId as string | null) ?? null,
+        operationSeq: bomOp?.seq as number | undefined,
         sku: (ip?.sku as string) ?? "",
         name: (ip?.name as string) ?? "",
         qty: item.qty as number,
@@ -1005,6 +1230,35 @@ const adaptBom = (r: Raw): Bom => {
         hasSubAssembly,
       };
     }),
+    operations: (() => {
+      const opsRaw = (r.operations as Raw[]) ?? [];
+      const opIdToSeq = new Map(
+        opsRaw.map((o) => [o.id as string, o.seq as number])
+      );
+      return opsRaw.map((op) => ({
+        id: op.id as string,
+        seq: op.seq as number,
+        name: op.name as string,
+        description: (op.description as string | null) ?? null,
+        facilityId: (op.facilityId as string | null) ?? null,
+        lineId: (op.lineId as string | null) ?? null,
+        machineId: (op.machineId as string | null) ?? null,
+        durationMinutes: (op.durationMinutes as number | null) ?? null,
+        requiresQa: (op.requiresQa as boolean) ?? true,
+        blockedByOperationId: (op.blockedByOperationId as string | null) ?? null,
+        blockedBySeq: op.blockedByOperationId
+          ? opIdToSeq.get(op.blockedByOperationId as string)
+          : undefined,
+        line: (op.line as BomOperation["line"]) ?? null,
+        eligibleLines: ((op.eligibleLines as Raw[]) ?? []).map((el) => ({
+          line: el.line as { id: string; code: string; name: string },
+        })),
+        eligibleLineIds: ((op.eligibleLines as Raw[]) ?? []).map(
+          (el) => ((el.line as Raw)?.id as string) ?? (el.lineId as string)
+        ),
+      }));
+    })(),
+    operationDependencies: (r.operationDependencies as boolean) ?? false,
     byproducts: ((r.byproducts as Raw[]) ?? []).map((bp) => {
       const pp = bp.product as Raw | null;
       const pv = bp.variant as Raw | null;
@@ -1864,6 +2118,115 @@ export interface DispatchOptionRow {
   sortOrder?: number;
 }
 
+// External-channel barcode/SKU mapping (Settings → Channel mappings).
+// `resolved` is true when `internalSku` matches a Product or
+// ProductVariant the catalog actually has. `productName` is hydrated by
+// the backend so the table can show a friendly label without a second
+// round-trip.
+export interface ChannelMappingRow {
+  id: string;
+  channel: string;
+  externalCode: string;
+  internalSku: string;
+  notes?: string | null;
+  active: boolean;
+  productName: string | null;
+  resolved: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Returned by POST /v1/imported-orders/preview — what the operator
+// sees BEFORE committing. The UI may edit qty/rate/internalSku per
+// line before calling commit.
+export interface ImportedOrderPreview {
+  channel: string;
+  parsed: {
+    channelHint: string | null;
+    customer: {
+      externalCode: string | null;
+      name: string | null;
+      addressLine: string | null;
+      landmark: string | null;
+      city: string | null;
+      pincode: string | null;
+      phone: string | null;
+    };
+    shipping: {
+      awb: string | null;
+      externalOrderNo: string | null;
+      courier: string | null;
+    };
+    invoice: {
+      externalInvoiceNo: string | null;
+      invoiceDate: string | null;
+    };
+    totals: {
+      totalUnits: number | null;
+      grandTotal: number | null;
+    };
+    rawText: string;
+    unparsedItemLines: string[];
+  };
+  items: {
+    externalCode: string;
+    description: string;
+    qty: number;
+    rate: number;
+    internalSku: string | null;
+    productId: string | null;
+    variantId: string | null;
+    productName: string | null;
+    status: "ok" | "no_map" | "no_sku";
+    rawLine: string;
+    note?: string;
+  }[];
+  customerMatch: {
+    id: string;
+    code: string;
+    name: string;
+    matchedBy: "phone" | "code";
+  } | null;
+  existingSo: { id: string; soNo: string; status: string } | null;
+  counts: { total: number; ok: number; noMap: number; noSku: number };
+}
+
+export interface ImportedOrderCommitBody {
+  channel: string;
+  customer: {
+    customerId?: string | null;
+    externalCode?: string | null;
+    name: string;
+    addressLine?: string | null;
+    landmark?: string | null;
+    city?: string | null;
+    state?: string | null;
+    pincode?: string | null;
+    phone?: string | null;
+    gst?: string | null;
+  };
+  shipping: {
+    awb?: string | null;
+    externalOrderNo?: string | null;
+    courier?: string | null;
+  };
+  invoice: {
+    externalInvoiceNo?: string | null;
+    invoiceDate?: string | null;
+  };
+  items: {
+    externalCode: string;
+    description?: string;
+    internalSku: string;
+    productId: string;
+    variantId?: string | null;
+    qty: number;
+    rate: number;
+  }[];
+  notes?: string | null;
+  forceReimport?: boolean;
+}
+
 export const DISPATCH_CATEGORY_LABELS: Record<string, string> = {
   door_to_door: "Door-to-Door Delivery",
   bulk_carrier: "Bulk Carriers (LTL / FTL)",
@@ -1951,6 +2314,11 @@ export const api = {
   // Catalog
   products: async (q?: { q?: string; type?: string; limit?: number }): Promise<Product[]> =>
     (await fetcher<Raw[]>("/products", { query: q })) as unknown as Product[],
+  productSupplyOutlook: (productId: string, variantId?: string | null) =>
+    fetcher<import("@/data/types").ProductSupplyOutlook>(
+      `/products/${productId}/supply-outlook`,
+      { query: variantId ? { variantId } : undefined }
+    ),
   productByBarcode: (code: string): Promise<Product> =>
     fetcher<Product>(`/products/by-barcode/${encodeURIComponent(code)}`),
   productBySku: (sku: string): Promise<Product> =>
@@ -2002,6 +2370,73 @@ export const api = {
     }),
   deleteProductCategory: (id: string) =>
     fetcher<{ deleted: true }>(`/categories/${id}`, { method: "DELETE" }),
+
+  // ---------- channel mappings (external SKU ↔ internal SKU) -----------
+  channelMappings: (params?: { channel?: string; q?: string; onlyUnresolved?: boolean }) =>
+    fetcher<ChannelMappingRow[]>("/channel-mappings", {
+      query: {
+        channel: params?.channel,
+        q: params?.q,
+        onlyUnresolved: params?.onlyUnresolved ? "true" : undefined,
+      },
+    }),
+  channelMappingChannels: () =>
+    fetcher<{ channel: string; count: number }[]>("/channel-mappings/channels"),
+  createChannelMapping: (body: {
+    channel: string;
+    externalCode: string;
+    internalSku: string;
+    notes?: string | null;
+  }) =>
+    fetcher<ChannelMappingRow>("/channel-mappings", { method: "POST", body }),
+  updateChannelMapping: (
+    id: string,
+    body: Partial<{
+      channel: string;
+      externalCode: string;
+      internalSku: string;
+      notes: string | null;
+      active: boolean;
+    }>
+  ) =>
+    fetcher<ChannelMappingRow>(`/channel-mappings/${id}`, {
+      method: "PATCH",
+      body,
+    }),
+  deleteChannelMapping: (id: string) =>
+    fetcher<{ ok: true }>(`/channel-mappings/${id}`, { method: "DELETE" }),
+  importChannelMappings: (body: {
+    channel: string;
+    replace?: boolean;
+    rows: { externalCode: string; internalSku: string; notes?: string | null }[];
+  }) =>
+    fetcher<{
+      channel: string;
+      total: number;
+      created: number;
+      updated: number;
+      skipped: number;
+      unresolved: { externalCode: string; internalSku: string }[];
+    }>("/channel-mappings/import", { method: "POST", body }),
+
+  // ---------- imported sales orders (PDF upload pipeline) ---------------
+  previewImportedOrder: async (file: File, channel = "DTDC"): Promise<ImportedOrderPreview> => {
+    const token = auth.token();
+    const form = new FormData();
+    form.append("pdf", file);
+    const res = await fetch(buildUrl("/imported-orders/preview", { channel }), {
+      method: "POST",
+      headers: token ? { authorization: `Bearer ${token}` } : {},
+      body: form,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new ApiError(res.status, body?.error?.message ?? `${res.status}`, body?.error);
+    }
+    return (await res.json()) as ImportedOrderPreview;
+  },
+  commitImportedOrder: (body: ImportedOrderCommitBody) =>
+    fetcher<Raw>("/imported-orders/commit", { method: "POST", body }),
 
   dispatchOptions: () => fetcher<DispatchOptionRow[]>("/dispatch-options"),
   settingsDispatchOptions: () =>
@@ -2109,6 +2544,7 @@ export const api = {
     qty: number;
     reason: string;
     binId?: string;
+    location?: { zone: string; shelf?: string; bin?: string };
   }): Promise<{ ledger: StockLedgerEntry; newSoh: number }> =>
     fetcher(`/inventory/adjust`, { method: "POST", body }),
   // ── Enquiries / CRM ────────────────────────────────────────────────
@@ -2290,13 +2726,47 @@ export const api = {
     limit?: number;
   }): Promise<StockLedgerEntry[]> =>
     (await fetcher<Raw[]>("/ledger", { query: q })).map(adaptLedger),
+  stockLots: (q?: {
+    productId?: string;
+    warehouseId?: string;
+    includeEmpty?: boolean;
+    limit?: number;
+  }) =>
+    fetcher<
+      Array<{
+        id: string;
+        batchNo: string;
+        qtyOnHand: number;
+        receivedAt: string;
+        expiryDate: string | null;
+        sourceType: string;
+        sourceRef: string;
+        product: { sku: string; name: string; uom: string; type: string; batchTracked: boolean };
+        warehouse: { code: string; name: string };
+        bin: { zone: string; shelf: string; bin: string; code: string | null } | null;
+      }>
+    >("/inventory/lots", { query: q as Record<string, string | undefined> }),
   valuation: () => fetcher<Raw[]>("/valuation"),
 
   // Manufacturing
-  productionOrders: async (): Promise<ProductionOrder[]> =>
-    (await fetcher<Raw[]>("/production-orders")).map(adaptProductionOrder),
-  productionOrdersWithWO: async (): Promise<{ orders: ProductionOrder[]; workOrders: WorkOrder[] }> => {
-    const raw = await fetcher<Raw[]>("/production-orders");
+  productionOrders: async (q?: {
+    facilityId?: string;
+    status?: string;
+  }): Promise<ProductionOrder[]> =>
+    (
+      await fetcher<Raw[]>("/production-orders", {
+        query: {
+          ...(q?.facilityId ? { facilityId: q.facilityId } : {}),
+          ...(q?.status ? { status: q.status } : {}),
+        },
+      })
+    ).map(adaptProductionOrder),
+  productionOrdersWithWO: async (q?: {
+    facilityId?: string;
+  }): Promise<{ orders: ProductionOrder[]; workOrders: WorkOrder[] }> => {
+    const raw = await fetcher<Raw[]>("/production-orders", {
+      query: q?.facilityId ? { facilityId: q.facilityId } : undefined,
+    });
     const orders = raw.map(adaptProductionOrder);
     const workOrders: WorkOrder[] = [];
     for (const r of raw) {
@@ -2305,6 +2775,18 @@ export const api = {
     return { orders, workOrders };
   },
   productionOrder: (id: string) => fetcher<Raw>(`/production-orders/${id}`),
+  getProductionOrder: async (
+    id: string
+  ): Promise<{
+    order: ProductionOrder;
+    workOrders: WorkOrder[];
+  }> => {
+    const raw = await fetcher<Raw>(`/production-orders/${id}`);
+    return {
+      order: adaptProductionOrder(raw),
+      workOrders: ((raw.workOrders as Raw[]) ?? []).map(adaptWorkOrder),
+    };
+  },
   boms: async (q?: {
     productId?: string;
     // variantId="<id>" filters to one variant; variantId=null only
@@ -2369,7 +2851,26 @@ export const api = {
     defaultFacilityId?: string | null;
     defaultLineId?: string | null;
     defaultMachineId?: string | null;
-    items?: Array<{ productId: string; qty: number; uom: string; scrapPct?: number }>;
+    operationDependencies?: boolean;
+    operations?: Array<{
+      seq: number;
+      name: string;
+      description?: string;
+      facilityId?: string | null;
+      lineId?: string | null;
+      machineId?: string | null;
+      durationMinutes?: number | null;
+      requiresQa?: boolean;
+      blockedBySeq?: number | null;
+      eligibleLineIds?: string[];
+    }>;
+    items?: Array<{
+      productId: string;
+      qty: number;
+      uom: string;
+      scrapPct?: number;
+      operationSeq?: number;
+    }>;
     byproducts?: Array<{
       productId: string;
       variantId?: string | null;
@@ -2387,7 +2888,26 @@ export const api = {
       defaultFacilityId?: string | null;
       defaultLineId?: string | null;
       defaultMachineId?: string | null;
-      items?: Array<{ productId: string; qty: number; uom: string; scrapPct?: number }>;
+      operationDependencies?: boolean;
+      operations?: Array<{
+        seq: number;
+        name: string;
+        description?: string;
+        facilityId?: string | null;
+        lineId?: string | null;
+        machineId?: string | null;
+        durationMinutes?: number | null;
+        requiresQa?: boolean;
+        blockedBySeq?: number | null;
+        eligibleLineIds?: string[];
+      }>;
+      items?: Array<{
+        productId: string;
+        qty: number;
+        uom: string;
+        scrapPct?: number;
+        operationSeq?: number;
+      }>;
       byproducts?: Array<{
         productId: string;
         variantId?: string | null;
@@ -2431,6 +2951,8 @@ export const api = {
     description?: string | null;
     capacityPerHour?: number | null;
     productionLineWarehouseId?: string | null;
+    productionZone?: string | null;
+    replenishWarehouseCodes?: string | null;
     autoCreateProductionWarehouse?: boolean;
     active?: boolean;
   }) => fetcher<Raw>("/production-facilities", { method: "POST", body }),
@@ -2442,6 +2964,8 @@ export const api = {
       description: string | null;
       capacityPerHour: number | null;
       productionLineWarehouseId: string | null;
+      productionZone: string | null;
+      replenishWarehouseCodes: string | null;
       autoCreateProductionWarehouse: boolean;
       active: boolean;
     }>
@@ -2549,9 +3073,121 @@ export const api = {
     moId: string,
     body: {
       lineId: string;
-      workOrderAssignments?: Array<{ workOrderId: string; machineId?: string | null }>;
+      workOrderAssignments?: Array<{
+        workOrderId: string;
+        lineId?: string;
+        machineId?: string | null;
+      }>;
     }
   ) => fetcher<Raw>(`/production-orders/${moId}/assign-line`, { method: "PATCH", body }),
+
+  assignMoWorkOrder: (
+    moId: string,
+    woId: string,
+    body: { lineId?: string; machineId?: string | null }
+  ) =>
+    fetcher<Raw>(`/production-orders/${moId}/work-orders/${woId}/assign`, {
+      method: "PATCH",
+      body,
+    }),
+
+  splitMoOperation: (
+    moId: string,
+    body: {
+      bomOperationId: string;
+      splits: Array<{ lineId: string; machineId?: string | null; qty: number }>;
+    }
+  ) =>
+    fetcher<{ workOrders: Raw[] }>(`/production-orders/${moId}/split-operation`, {
+      method: "POST",
+      body,
+    }),
+
+  startMoWorkOrder: (moId: string, woId: string) =>
+    fetcher<Raw>(`/production-orders/${moId}/work-orders/${woId}/start`, {
+      method: "POST",
+      body: {},
+    }),
+
+  completeMoWorkOrder: (moId: string, woId: string) =>
+    fetcher<{ needsQa: boolean; workOrder: Raw }>(
+      `/production-orders/${moId}/work-orders/${woId}/done`,
+      { method: "POST", body: {} }
+    ),
+
+  qaMoWorkOrder: (
+    moId: string,
+    woId: string,
+    body: { pass: boolean; notes?: string }
+  ) =>
+    fetcher<{ action: string; workOrder: Raw }>(
+      `/production-orders/${moId}/work-orders/${woId}/qa`,
+      { method: "POST", body }
+    ),
+
+  // Multi-machine parallel runs inside a WO. Each run is one machine
+  // consuming part of the raw material and producing part of the output.
+  addWorkOrderRun: (
+    moId: string,
+    woId: string,
+    body: {
+      machineId: string;
+      lineId?: string | null;
+      plannedQty?: number | null;
+      operator?: string | null;
+    }
+  ) =>
+    fetcher<Raw>(`/production-orders/${moId}/work-orders/${woId}/runs`, {
+      method: "POST",
+      body,
+    }),
+  startWorkOrderRun: (moId: string, woId: string, runId: string) =>
+    fetcher<Raw>(
+      `/production-orders/${moId}/work-orders/${woId}/runs/${runId}/start`,
+      { method: "POST", body: {} }
+    ),
+  logWorkOrderRun: (
+    moId: string,
+    woId: string,
+    runId: string,
+    body: {
+      goodQty?: number;
+      scrapQty?: number;
+      inputQty?: number;
+      notes?: string | null;
+      operator?: string | null;
+    }
+  ) =>
+    fetcher<Raw>(
+      `/production-orders/${moId}/work-orders/${woId}/runs/${runId}`,
+      { method: "PATCH", body }
+    ),
+  completeWorkOrderRun: (
+    moId: string,
+    woId: string,
+    runId: string,
+    body?: {
+      goodQty?: number;
+      scrapQty?: number;
+      inputQty?: number;
+      notes?: string | null;
+    }
+  ) =>
+    fetcher<Raw>(
+      `/production-orders/${moId}/work-orders/${woId}/runs/${runId}/complete`,
+      { method: "POST", body: body ?? {} }
+    ),
+  abandonWorkOrderRun: (moId: string, woId: string, runId: string) =>
+    fetcher<Raw>(
+      `/production-orders/${moId}/work-orders/${woId}/runs/${runId}/abandon`,
+      { method: "POST", body: {} }
+    ),
+  deleteWorkOrderRun: (moId: string, woId: string, runId: string) =>
+    fetcher<{ id: string }>(
+      `/production-orders/${moId}/work-orders/${woId}/runs/${runId}`,
+      { method: "DELETE" }
+    ),
+
   productionOrderRequirements: (id: string) =>
     fetcher<MoRequirements>(`/production-orders/${id}/requirements`),
   productionOrderInventoryTrail: (id: string) =>
@@ -2623,6 +3259,13 @@ export const api = {
       transferOrderIds: string[];
       allMet: boolean;
     }>(`/production-orders/${id}/release`, { method: "POST", body: {} }),
+  cancelMo: (id: string) =>
+    fetcher<{
+      productionOrderId: string;
+      orderNo: string;
+      transfersCancelled: number;
+      issuesReversed: number;
+    }>(`/production-orders/${id}/cancel`, { method: "POST", body: {} }),
   updateWorkOrder: (
     id: string,
     body: { status?: "queued" | "running" | "paused" | "complete"; output?: number }
@@ -2640,6 +3283,7 @@ export const api = {
     productId: string;
     variantId?: string | null;
     toWarehouseId: string;
+    toZone?: string | null;
     toBinId?: string | null;
     priority?: number;
     active?: boolean;
@@ -2649,6 +3293,7 @@ export const api = {
     id: string,
     body: Partial<{
       toWarehouseId: string;
+      toZone: string | null;
       toBinId: string | null;
       priority: number;
       active: boolean;
@@ -2670,9 +3315,12 @@ export const api = {
   createStockRule: (body: {
     productId: string;
     variantId?: string | null;
-    monitorBinId: string;
+    monitorBinId?: string | null;
     minQty: number;
-    triggerType: "mo" | "transfer";
+    maxQty?: number | null;
+    orderMultiple?: number | null;
+    triggerType: "mo" | "transfer" | "po";
+    vendorId?: string | null;
     bomId?: string | null;
     sourceBinId?: string | null;
     toWarehouseId?: string | null;
@@ -2684,9 +3332,14 @@ export const api = {
   updateStockRule: (
     id: string,
     body: Partial<{
-      monitorBinId: string;
+      productId: string;
+      variantId: string | null;
+      monitorBinId: string | null;
       minQty: number;
-      triggerType: "mo" | "transfer";
+      maxQty: number | null;
+      orderMultiple: number | null;
+      triggerType: "mo" | "transfer" | "po";
+      vendorId: string | null;
       bomId: string | null;
       sourceBinId: string | null;
       toWarehouseId: string | null;
@@ -2750,6 +3403,19 @@ export const api = {
     fetcher<TransferOrderRow>(`/transfer-orders/${id}/cancel`, { method: "POST", body: {} }),
   claimTransferOrder: (id: string) =>
     fetcher<TransferOrderRow>(`/transfer-orders/${id}/claim`, { method: "POST", body: {} }),
+  // Drop the current claim so another worker can pick this TO up.
+  // Only callable while the TO is still `ready` (pre-pick).
+  releaseTransferOrder: (id: string) =>
+    fetcher<TransferOrderRow>(`/transfer-orders/${id}/release`, { method: "POST", body: {} }),
+  // Re-run source-bin discovery for items still missing a fromBinId.
+  // Returns the refreshed TO plus a breakdown of what got resolved
+  // and what (if anything) is still missing.
+  resolveTransferOrderSourceBins: (id: string) =>
+    fetcher<{
+      transferOrder: TransferOrderRow;
+      resolved: Array<{ itemId: string; sku: string; binCode: string; qtyAvailable: number }>;
+      stillMissing: Array<{ itemId: string; sku: string; needed: number }>;
+    }>(`/transfer-orders/${id}/resolve-source-bins`, { method: "POST", body: {} }),
   pickTransferOrder: (id: string, lines: Array<{ itemId: string; qtyPicked: number; fromBinId: string }>) =>
     fetcher<TransferOrderRow>(`/transfer-orders/${id}/pick`, {
       method: "POST",
@@ -2844,6 +3510,67 @@ export const api = {
       { method: "DELETE" }
     ),
 
+  vendorProducts: (vendorId: string, q?: { active?: boolean; productId?: string }) =>
+    fetcher<VendorProduct[]>(`/vendors/${vendorId}/products`, {
+      query: {
+        ...(q?.active ? { active: "1" } : {}),
+        ...(q?.productId ? { productId: q.productId } : {}),
+      },
+    }),
+  createVendorProduct: (
+    vendorId: string,
+    body: {
+      productId: string;
+      variantId?: string | null;
+      vendorProductCode?: string | null;
+      vendorProductName?: string | null;
+      vendorUom: string;
+      packSize?: number;
+      price?: number;
+      minOrderQty?: number;
+      leadTimeDays?: number | null;
+      priority?: number;
+      active?: boolean;
+      notes?: string | null;
+    }
+  ) => fetcher<VendorProduct>(`/vendors/${vendorId}/products`, { method: "POST", body }),
+  updateVendorProduct: (
+    vendorId: string,
+    lineId: string,
+    body: Partial<{
+      productId: string;
+      variantId: string | null;
+      vendorProductCode: string | null;
+      vendorProductName: string | null;
+      vendorUom: string;
+      packSize: number;
+      price: number;
+      minOrderQty: number;
+      leadTimeDays: number | null;
+      priority: number;
+      active: boolean;
+      notes: string | null;
+    }>
+  ) =>
+    fetcher<VendorProduct>(`/vendors/${vendorId}/products/${lineId}`, {
+      method: "PATCH",
+      body,
+    }),
+  deleteVendorProduct: (vendorId: string, lineId: string) =>
+    fetcher<{ deleted?: boolean; softDeleted?: boolean; line?: VendorProduct }>(
+      `/vendors/${vendorId}/products/${lineId}`,
+      { method: "DELETE" }
+    ),
+  vendorPerformance: (vendorId: string, days = 365) =>
+    fetcher<VendorPerformance>(`/vendors/${vendorId}/performance`, {
+      query: { days: String(days) },
+    }),
+  syncVendorRating: (vendorId: string) =>
+    fetcher<VendorPerformance>(`/vendors/${vendorId}/sync-rating`, {
+      method: "POST",
+      body: {},
+    }),
+
   // Purchase orders.
   purchaseOrders: async (q?: {
     status?: PurchaseOrder["status"];
@@ -2858,6 +3585,18 @@ export const api = {
       },
     });
     return rows.map(adaptPo);
+  },
+  /** Approved + partial POs with lines — for mobile GRN list. */
+  purchaseOrdersForGrn: async (): Promise<GrnPurchaseOrder[]> => {
+    const rows = await fetcher<Raw[]>("/purchase-orders");
+    return rows
+      .filter((r) => ["approved", "partial"].includes(String(r.status)))
+      .map(mapGrnPurchaseOrder)
+      .filter((po) => po.items.some((i) => i.qty - i.received > 0.0001));
+  },
+  getPurchaseOrderForGrn: async (id: string): Promise<GrnPurchaseOrder> => {
+    const r = await fetcher<Raw>(`/purchase-orders/${id}`);
+    return mapGrnPurchaseOrder(r);
   },
   // Full PO detail - items + GRNs (with their items). Used by the PO
   // editor + GRN receive flow.
@@ -2881,6 +3620,17 @@ export const api = {
         rate: number;
         amount: number;
         received: number;
+        vendorProductId?: string | null;
+        vendorQty?: number | null;
+        vendorUom?: string | null;
+        vendorRate?: number | null;
+        vendorProduct?: {
+          id: string;
+          vendorProductCode: string | null;
+          vendorProductName: string | null;
+          vendorUom: string;
+          packSize: number;
+        } | null;
       }>;
       grns: Array<{
         id: string;
@@ -2908,14 +3658,28 @@ export const api = {
     vendorId: string;
     expectedDate: string;
     notes?: string | null;
-    items: Array<{ productId: string; qty: number; rate: number }>;
+    items: Array<{
+      productId: string;
+      qty?: number;
+      rate?: number;
+      vendorProductId?: string;
+      vendorQty?: number;
+      vendorRate?: number;
+    }>;
   }) => fetcher<Raw>("/purchase-orders", { method: "POST", body }),
   updatePurchaseOrder: (
     id: string,
     body: {
       expectedDate?: string;
       notes?: string | null;
-      items?: Array<{ productId: string; qty: number; rate: number }>;
+      items?: Array<{
+        productId: string;
+        qty?: number;
+        rate?: number;
+        vendorProductId?: string;
+        vendorQty?: number;
+        vendorRate?: number;
+      }>;
     }
   ) => fetcher<Raw>(`/purchase-orders/${id}`, { method: "PATCH", body }),
   approvePurchaseOrder: (id: string) =>
@@ -2924,6 +3688,10 @@ export const api = {
     fetcher<Raw>(`/purchase-orders/${id}/cancel`, { method: "POST", body: {} }),
   closePurchaseOrder: (id: string) =>
     fetcher<Raw>(`/purchase-orders/${id}/close`, { method: "POST", body: {} }),
+  purchaseOrderClosePreview: (id: string) =>
+    fetcher<import("@/data/types").PoClosePreview>(
+      `/purchase-orders/${id}/close-preview`
+    ),
   // Mints (or rotates) a public share token so the vendor can open a
   // sanitized read-only view at /share/purchase-order/<token>.
   rotatePurchaseOrderShareToken: (id: string) =>
@@ -2970,6 +3738,11 @@ export const api = {
         }>;
       }>
     >("/grns", { query: q as Record<string, string | undefined> | undefined }),
+  grnReceiveHints: (productIds: string[]) =>
+    fetcher<{ hints: Record<string, GrnReceiveHint> }>("/grns/receive-hints", {
+      method: "POST",
+      body: { productIds },
+    }),
   createGrn: (body: {
     poId: string;
     qcStatus?: "pending" | "pass" | "rework" | "reject";
@@ -2981,6 +3754,9 @@ export const api = {
       receivedQty: number;
       rejectedQty?: number;
       remarks?: string | null;
+      batchNo?: string | null;
+      expiryDate?: string | null;
+      allocations?: Array<{ binId: string; qty: number }>;
     }>;
   }) => fetcher<Raw>("/grns", { method: "POST", body }),
   updateGrnQc: (
@@ -3183,19 +3959,31 @@ export const api = {
     ),
   workersSummary: () =>
     fetcher<{ total: number; in: number; out: number }>("/reports/workers-summary"),
-  productionLinesReport: () =>
-    fetcher<{
+  productionLinesReport: async () => {
+    const raw = await fetcher<{
       lines: Array<{
         id: string;
         code: string;
         name: string;
         capacityPerHour: number | null;
-        machines: Array<{
+        machines?: Array<{
           id: string;
           code: string;
           name: string;
           status: "running" | "idle" | "maintenance" | "broken";
           busy: boolean;
+        }>;
+        lines?: Array<{
+          id: string;
+          code: string;
+          name: string;
+          machines?: Array<{
+            id: string;
+            code: string;
+            name: string;
+            status: "running" | "idle" | "maintenance" | "broken";
+            busy: boolean;
+          }>;
         }>;
         activeOrders: number;
         orders: Array<{
@@ -3212,12 +4000,46 @@ export const api = {
         utilisationPct: number | null;
       }>;
       totals: { activeOrders: number; outputToday: number };
-    }>("/reports/production-lines"),
+    }>("/reports/production-lines");
+    return {
+      ...raw,
+      lines: raw.lines.map((fac) => ({
+        ...fac,
+        machines:
+          fac.machines ??
+          (fac.lines ?? []).flatMap((l) => l.machines ?? []),
+      })),
+    };
+  },
   attendanceHeatmap: (days = 28) =>
     fetcher<Array<{ date: string; weekday: string; presentCount: number }>>(
       "/reports/attendance-heatmap",
       { query: { days } }
     ),
+
+  // Production log: one row per WorkOrder with parent MO + line/machine context,
+  // duration, materials consumed, and per-WO utilization.
+  moWoLog: (q?: { days?: number; facilityId?: string; lineId?: string; machineId?: string; status?: string }) =>
+    fetcher<MoWoLogResponse>("/reports/mo-wo-log", {
+      query: {
+        ...(q?.days ? { days: q.days } : {}),
+        ...(q?.facilityId ? { facilityId: q.facilityId } : {}),
+        ...(q?.lineId ? { lineId: q.lineId } : {}),
+        ...(q?.machineId ? { machineId: q.machineId } : {}),
+        ...(q?.status ? { status: q.status } : {}),
+      },
+    }),
+
+  // Per-machine aggregated utilization over the window.
+  machineUtilization: (q?: { days?: number; hoursPerDay?: number; facilityId?: string; lineId?: string }) =>
+    fetcher<MachineUtilizationResponse>("/reports/machine-utilization", {
+      query: {
+        ...(q?.days ? { days: q.days } : {}),
+        ...(q?.hoursPerDay ? { hoursPerDay: q.hoursPerDay } : {}),
+        ...(q?.facilityId ? { facilityId: q.facilityId } : {}),
+        ...(q?.lineId ? { lineId: q.lineId } : {}),
+      },
+    }),
   attendanceDay: (date: string) =>
     fetcher<{
       date: string;
@@ -4107,6 +4929,36 @@ export const api = {
       clientOpId?: string;
     }
   ) => fetcher<Raw>(`/bins/${binId}/reassign`, { method: "POST", body }),
+  // -----------------------------------------------------------------
+  // Zone PR bulk capture (mobile warehouse PWA)
+  // -----------------------------------------------------------------
+  // Returns the variant list that should land in Stock Room (STR)
+  // Zone PR plus each variant's current capture state. The mobile
+  // bulk-capture screen renders Pending / Captured tabs from this
+  // single payload; the "Save" action calls api.reassignBin on the
+  // scanned bin, and "Clear & redo" calls api.recountBin(qtyAfter=0).
+  zonePrVariants: () =>
+    fetcher<{
+      warehouse: { id: string; code: string; name: string } | null;
+      counts: { total: number; captured: number; pending: number };
+      variants: Array<{
+        productId: string;
+        productSku: string;
+        productName: string;
+        productType: string;
+        variantId: string;
+        variantSku: string;
+        variantBarcode: string | null;
+        variantSize: string | null;
+        variantUom: string | null;
+        stockOnHand: number;
+        status: "pending" | "captured";
+        binId: string | null;
+        binCode: string | null;
+        binQty: number;
+      }>;
+    }>("/zone-pr-variants"),
+
   bulkZoneStock: (
     warehouseId: string,
     zone: string,

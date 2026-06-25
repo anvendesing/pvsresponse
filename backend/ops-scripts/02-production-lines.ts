@@ -20,8 +20,9 @@ const opsTag = (fac: FacilityDef) => {
   const parts = [
     `fg=${fac.putawayDestinationWhCode}`,
     `staging=${fac.productionWhCode}`,
+    fac.productionZone ? `zone=${fac.productionZone}` : null,
     `replenish=${fac.replenishFromStorageCodes.join(",")}`,
-  ];
+  ].filter(Boolean);
   return `[ops] ${parts.join(" ")}`;
 };
 
@@ -52,11 +53,14 @@ async function seedFacility(fac: FacilityDef) {
       `Production warehouse ${fac.productionWhCode} missing — run 01-warehouses first.`
     );
   }
-  if (wh.kind !== "production") {
-    throw new Error(`${fac.productionWhCode} must be kind=production`);
+  if (wh.kind !== "production" && wh.code !== EXISTING_FINISHED_GOODS_WH_CODE) {
+    throw new Error(
+      `${fac.productionWhCode} must be kind=production (or Stock Room ${EXISTING_FINISHED_GOODS_WH_CODE} for in-situ lines).`
+    );
   }
 
   const description = `${fac.description}\n${opsTag(fac)}`;
+  const replenishWarehouseCodes = fac.replenishFromStorageCodes.join(",");
 
   if (dryRun) {
     log(`  [dry] Facility ${fac.facilityCode} → ${fac.productionWhCode}`);
@@ -73,12 +77,16 @@ async function seedFacility(fac: FacilityDef) {
       description,
       active: true,
       productionLineWarehouseId: wh.id,
+      productionZone: fac.productionZone ?? null,
+      replenishWarehouseCodes,
     },
     update: {
       name: fac.facilityName,
       description,
       active: true,
       productionLineWarehouseId: wh.id,
+      productionZone: fac.productionZone ?? null,
+      replenishWarehouseCodes,
     },
   });
 
@@ -101,11 +109,13 @@ async function seedFacility(fac: FacilityDef) {
       create: {
         code: lineDef.code,
         name: lineDef.name,
+        description: lineDef.role ? `[role=${lineDef.role}]` : null,
         facilityId: facility.id,
         active: true,
       },
       update: {
         name: lineDef.name,
+        description: lineDef.role ? `[role=${lineDef.role}]` : null,
         facilityId: facility.id,
         active: true,
       },

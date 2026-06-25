@@ -17,16 +17,61 @@
 //   planned -> in-progress  (first material issued or first WO started)
 //   in-progress -> qc       (operator marks ready for QC, optional)
 //   in-progress|qc -> completed (POST /complete; FG posted to stock)
+//   * -> cancelled            (POST /cancel; issues reversed, TOs cancelled)
 //   * -> delayed            (system flag; not blocking)
 
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { db } from "../db.js";
 import { recordChange } from "../sync/log.js";
-import { bomTree, explodeBom, whereUsed } from "../lib/bom.js";
+import { bomTree, explodeMoBom, whereUsed } from "../lib/bom.js";
 import { convertUom, normalizeUomCode, UOMS } from "../lib/uom.js";
 import { pickBestBin, resolvePutawayDestination } from "../lib/putaway.js";
 import { checkStockRules } from "../lib/stock-rules.js";
+import { scheduleStockRulesCheck } from "../lib/stock-rules-runner.js";
+import { issueMaterialFifo } from "../lib/stock-lots.js";
+import {
+  completeWorkOrder,
+  createWorkOrdersFromBom,
+  recordWorkOrderQa,
+  splitOperationWorkOrders,
+  startWorkOrder,
+  assignWorkOrderLineMachine,
+  addWorkOrderRun,
+  startWorkOrderRun,
+  logWorkOrderRun,
+  completeWorkOrderRun,
+  abandonWorkOrderRun,
+  deleteWorkOrderRun,
+} from "../lib/mo-work-orders.js";
+import { facilityReplenishCodes, findReplenishmentSourceBin } from "../lib/facility-ops.js";
+import { generatePackBomsForProduct } from "../lib/generate-pack-boms.js";
+import { resolveComponentVariantIdForMoIssue } from "../lib/soap-semi.js";
+import {
+  cancelProductionOrder,
+  MoCancelError,
+} from "../lib/mo-cancel.js";
+
+/** UoMs that can only be issued in whole units (pieces, dozen, pack...). */
+const UNIT_UOM_CODES = new Set(
+  UOMS.filter((u) => u.categoryCode === "unit").map((u) => u.code)
+);
+const isUnitUom = (uom: string | null | undefined): boolean => {
+  if (!uom) return false;
+  const normalized = normalizeUomCode(uom) ?? uom;
+  return UNIT_UOM_CODES.has(normalized);
+};
+/**
+ * Round a BOM-component qty to a sensible precision. Pieces/dozen/pack
+ * can't be issued fractionally so we ceil them; mass / volume / length
+ * round to 3 decimals so a 50 g (0.05 kg) requirement stays 0.05 kg
+ * rather than getting ceiled to 1 kg.
+ */
+const roundComponentQty = (qty: number, uom: string | null | undefined): number => {
+  if (isUnitUom(uom)) return Math.ceil(qty);
+  return Math.round(qty * 1000) / 1000;
+};
+const round3 = (qty: number) => Math.round(qty * 1000) / 1000;
 
 /** Sum qty already issued to this MO from stock ledger (negative Issue rows). */
 const issuedQtyByProduct = async (
@@ -44,7 +89,7 @@ const issuedQtyByProduct = async (
     _sum: { qty: true },
   });
   return new Map(
-    rows.map((r) => [r.productId, Math.abs(Math.round(r._sum.qty ?? 0))])
+    rows.map((r) => [r.productId, round3(Math.abs(r._sum.qty ?? 0))])
   );
 };
 
@@ -209,6 +254,17 @@ const bomDetailInclude = {
   defaultFacility: { select: { id: true, code: true, name: true } },
   defaultLine: { select: { id: true, code: true, name: true } },
   defaultMachine: { select: { id: true, code: true, name: true } },
+  operations: {
+    orderBy: { seq: "asc" as const },
+    include: {
+      line: { select: { id: true, code: true, name: true } },
+      machine: { select: { id: true, code: true, name: true } },
+      facility: { select: { id: true, code: true, name: true } },
+      eligibleLines: {
+        include: { line: { select: { id: true, code: true, name: true } } },
+      },
+    },
+  },
   items: {
     include: {
       product: {
@@ -226,6 +282,26 @@ const bomDetailInclude = {
   },
 } as const;
 
+const woInclude = {
+  orderBy: { workOrderNo: "asc" as const },
+  include: {
+    bomOperation: { select: { id: true, seq: true, name: true, requiresQa: true } },
+    line: { select: { id: true, code: true, name: true } },
+    machineRef: { select: { id: true, code: true, name: true } },
+    // Multi-machine parallel runs on a single WO. Empty array means
+    // the WO is in legacy single-machine mode (output is the scalar
+    // on WorkOrder). When non-empty, WorkOrder.output is the rollup
+    // of sum(runs.goodQty).
+    runs: {
+      orderBy: { createdAt: "asc" as const },
+      include: {
+        machine: { select: { id: true, code: true, name: true } },
+        line: { select: { id: true, code: true, name: true } },
+      },
+    },
+  },
+};
+
 // ----------------------------------------------------------------
 // Schemas
 
@@ -234,6 +310,21 @@ const bomItemInput = z.object({
   qty: z.number().positive(),
   uom: z.string().min(1).max(20),
   scrapPct: z.number().min(0).max(100).default(0),
+  // Link component to operation by seq (Odoo consume at operation).
+  operationSeq: z.number().int().positive().optional(),
+});
+
+const bomOperationInput = z.object({
+  seq: z.number().int().positive(),
+  name: z.string().min(1).max(80),
+  description: z.string().max(500).optional(),
+  facilityId: z.string().min(1).nullable().optional(),
+  lineId: z.string().min(1).nullable().optional(),
+  machineId: z.string().min(1).nullable().optional(),
+  durationMinutes: z.number().positive().nullable().optional(),
+  requiresQa: z.boolean().default(true),
+  blockedBySeq: z.number().int().positive().nullable().optional(),
+  eligibleLineIds: z.array(z.string().min(1)).optional(),
 });
 
 const bomByproductInput = z.object({
@@ -262,6 +353,8 @@ const bomCreate = z.object({
   defaultFacilityId: z.string().min(1).nullable().optional(),
   defaultLineId: z.string().min(1).nullable().optional(),
   defaultMachineId: z.string().min(1).nullable().optional(),
+  operationDependencies: z.boolean().default(false),
+  operations: z.array(bomOperationInput).default([]),
   items: z.array(bomItemInput).default([]),
   byproducts: z.array(bomByproductInput).default([]),
 });
@@ -273,6 +366,8 @@ const bomUpdate = z.object({
   defaultFacilityId: z.string().min(1).nullable().optional(),
   defaultLineId: z.string().min(1).nullable().optional(),
   defaultMachineId: z.string().min(1).nullable().optional(),
+  operationDependencies: z.boolean().optional(),
+  operations: z.array(bomOperationInput).optional(),
   // Replace-all semantics: if items is provided, replace the entire
   // component list. Omit items to leave them untouched.
   items: z.array(bomItemInput).optional(),
@@ -341,6 +436,47 @@ const validateBomDefaults = async (
   }
 };
 
+type BomOperationDraft = z.infer<typeof bomOperationInput>;
+
+/** Replace-all BOM operations (Odoo Operations tab). Returns seq → operation id. */
+const persistBomOperations = async (
+  bomId: string,
+  operations: BomOperationDraft[]
+): Promise<Map<number, string>> => {
+  await db.bomOperationLine.deleteMany({
+    where: { bomOperation: { bomId } },
+  });
+  await db.bomOperation.deleteMany({ where: { bomId } });
+
+  const seqToId = new Map<number, string>();
+  const sorted = [...operations].sort((a, b) => a.seq - b.seq);
+
+  for (const op of sorted) {
+    const blockedByOperationId = op.blockedBySeq
+      ? (seqToId.get(op.blockedBySeq) ?? null)
+      : null;
+    const row = await db.bomOperation.create({
+      data: {
+        bomId,
+        seq: op.seq,
+        name: op.name,
+        description: op.description ?? null,
+        facilityId: op.facilityId ?? null,
+        lineId: op.lineId ?? null,
+        machineId: op.machineId ?? null,
+        durationMinutes: op.durationMinutes ?? null,
+        requiresQa: op.requiresQa,
+        blockedByOperationId,
+        eligibleLines: op.eligibleLineIds?.length
+          ? { create: op.eligibleLineIds.map((lineId) => ({ lineId })) }
+          : undefined,
+      },
+    });
+    seqToId.set(op.seq, row.id);
+  }
+  return seqToId;
+};
+
 const bomClone = z.object({
   // Where to send the clone:
   //   * variantId set     - clone to a specific variant of the same product
@@ -378,10 +514,16 @@ const assignLine = z.object({
     .array(
       z.object({
         workOrderId: z.string().min(1),
+        lineId: z.string().min(1).optional(),
         machineId: z.string().min(1).nullable().optional(),
       })
     )
     .optional(),
+});
+
+const assignWorkOrder = z.object({
+  lineId: z.string().min(1).optional(),
+  machineId: z.string().min(1).nullable().optional(),
 });
 
 const woUpdate = z.object({
@@ -435,6 +577,10 @@ const completeMo = z.object({
   warehouseId: z.string().optional(),
   // Optional final qty truth-up (else uses the existing actualQty).
   finalGoodQty: z.number().nonnegative().optional(),
+  // Operator may complete an MO even if no stock is left for one or
+  // more BOM components (Issue logs as much as available). Without
+  // this, Complete returns 409 if components can't be fully issued.
+  allowShortMaterials: z.boolean().optional(),
 });
 
 // ----------------------------------------------------------------
@@ -454,65 +600,33 @@ const requireWriter = (
   return true;
 };
 
-// Pick a candidate bin for issuing raw materials.
-//
-// When strict=true (production-line warehouse mode), ONLY search the
-// specified warehouse - no global fallback. When strict=false (legacy
-// mode), fall back to any bin in the company that holds the product,
-// useful in dev/demo setups where raw stock isn't segregated.
-const pickBinForIssue = async (
-  warehouseId: string | null,
-  productId: string,
-  strict = false
-) => {
-  if (warehouseId) {
-    const inWh = await db.bin.findFirst({
-      where: { warehouseId, productId, qty: { gt: 0 } },
-      orderBy: { qty: "desc" },
-    });
-    if (inWh) return inWh;
-    if (strict) return null; // Never fall back when a production-line warehouse is set.
-  }
-  return db.bin.findFirst({
-    where: { productId, qty: { gt: 0 } },
-    orderBy: { qty: "desc" },
-  });
-};
-
 const pickBinForReceive = async (
   warehouseId: string | null,
-  productId: string
+  productId: string,
+  zone?: string | null,
+  variantId?: string | null
 ) => {
   if (warehouseId) {
-    const matching = await db.bin.findFirst({
-      where: { warehouseId, productId, qty: { lt: db.bin.fields.capacity } },
-      orderBy: { qty: "asc" },
+    return pickBestBin(warehouseId, productId, {
+      allowEmptyBinFallback: true,
+      zone: zone ?? undefined,
+      variantId: variantId === undefined ? undefined : variantId,
     });
-    if (matching) return matching;
-    const empty = await db.bin.findFirst({
-      where: { warehouseId, productId: null, qty: 0 },
-      orderBy: [
-        { zone: "asc" },
-        { shelf: "asc" },
-        { bin: "asc" },
-      ],
-    });
-    if (empty) return empty;
   }
-  // Fallback: any non-full bin with this product anywhere, then any
-  // empty bin anywhere.
+  const level =
+    variantId === undefined
+      ? {}
+      : variantId != null
+        ? { variantId }
+        : { variantId: null };
   const matchingAny = await db.bin.findFirst({
-    where: { productId, qty: { lt: db.bin.fields.capacity } },
+    where: { productId, qty: { lt: db.bin.fields.capacity }, ...level },
     orderBy: { qty: "asc" },
   });
   if (matchingAny) return matchingAny;
   return db.bin.findFirst({
-    where: { productId: null, qty: 0 },
-    orderBy: [
-      { zone: "asc" },
-      { shelf: "asc" },
-      { bin: "asc" },
-    ],
+    where: { productId: null, variantId: null, qty: 0 },
+    orderBy: [{ zone: "asc" }, { shelf: "asc" }, { bin: "asc" }],
   });
 };
 
@@ -594,6 +708,8 @@ export const mfgRoutes = async (app: FastifyInstance) => {
     description: z.string().nullable().optional(),
     capacityPerHour: z.number().positive().nullable().optional(),
     productionLineWarehouseId: z.string().min(1).nullable().optional(),
+    productionZone: z.string().max(8).nullable().optional(),
+    replenishWarehouseCodes: z.string().max(500).nullable().optional(),
     autoCreateProductionWarehouse: z.boolean().optional(),
     active: z.boolean().default(true),
   });
@@ -1153,7 +1269,7 @@ export const mfgRoutes = async (app: FastifyInstance) => {
         defaultFacilityId: body.defaultFacilityId ?? null,
         defaultLineId: body.defaultLineId ?? null,
         defaultMachineId: body.defaultMachineId ?? null,
-        items: { create: canonicalItems },
+        operationDependencies: body.operationDependencies,
         byproducts: {
           create: canonicalByproducts.map((b) => ({
             productId: b.productId,
@@ -1164,30 +1280,36 @@ export const mfgRoutes = async (app: FastifyInstance) => {
           })),
         },
       },
+    });
+    const seqToOp =
+      body.operations.length > 0
+        ? await persistBomOperations(created.id, body.operations)
+        : new Map<number, string>();
+    if (canonicalItems.length > 0) {
+      await db.bomItem.createMany({
+        data: body.items.map((it, idx) => ({
+          bomId: created.id,
+          productId: it.productId,
+          qty: canonicalItems[idx]!.qty,
+          uom: canonicalItems[idx]!.uom,
+          scrapPct: it.scrapPct,
+          bomOperationId: it.operationSeq
+            ? (seqToOp.get(it.operationSeq) ?? null)
+            : null,
+        })),
+      });
+    }
+    const full = await db.bom.findUnique({
+      where: { id: created.id },
       include: bomDetailInclude,
     });
-    await recordChange("Bom", created.id, "insert", created, req.user.sub);
-    return created;
+    await recordChange("Bom", created.id, "insert", full, req.user.sub);
+    return full;
   });
 
   // POST /products/:id/generate-default-boms
-  // For each variant of this product that doesn't already have an
-  // active variant-scoped BOM, create a default "packaging BOM":
-  //   * variantId        = variant.id
-  //   * outputQty        = 1 (one variant unit per batch)
-  //   * items[0].productId = the parent product itself
-  //   * items[0].qty     = variant.packSize
-  //   * items[0].uom     = parent.uom
-  //
-  // The generated BOM expresses "1 variant unit consumes packSize parent
-  // units" using the canonical UoM master, so a variant declared as
-  // "1 pc, packSize 1, parent kg" yields a BOM that consumes 1 kg
-  // per pack, and a "100 g pouch" variant declared as "1 pc, packSize
-  // 0.1, parent kg" yields a BOM that consumes 0.1 kg per pack.
-  //
-  // Idempotent: variants that already have an active BOM are skipped.
-  // Returns the list of created BOMs and the list of skipped variants
-  // (so the UI can tell the operator what happened).
+  // Packaging BOMs: parent bulk → retail variants with category-based
+  // line routing (Oil Room fill, manual pack, vacuum pack).
   app.post(
     "/products/:id/generate-default-boms",
     { preHandler: [app.authenticate] },
@@ -1196,12 +1318,20 @@ export const mfgRoutes = async (app: FastifyInstance) => {
       const productId = (req.params as { id: string }).id;
       const product = await db.product.findUnique({
         where: { id: productId },
-        include: { variants: { where: { active: true } } },
+        select: { id: true },
       });
       if (!product) {
         return reply.code(404).send({ error: { code: "product_not_found" } });
       }
-      if (product.variants.length === 0) {
+      const result = await generatePackBomsForProduct(productId);
+      if (!result) {
+        return reply.code(404).send({ error: { code: "product_not_found" } });
+      }
+      if (
+        result.created.length === 0 &&
+        result.updated.length === 0 &&
+        result.skipped.length === 0
+      ) {
         return reply.code(400).send({
           error: {
             code: "no_variants",
@@ -1209,48 +1339,25 @@ export const mfgRoutes = async (app: FastifyInstance) => {
           },
         });
       }
-      const created: Array<{ variantSku: string; bomId: string; consumed: string }> = [];
-      const skipped: Array<{ variantSku: string; reason: string }> = [];
-      for (const v of product.variants) {
-        const existing = await db.bom.findFirst({
-          where: { productId, variantId: v.id, active: true },
-          select: { id: true },
-        });
-        if (existing) {
-          skipped.push({
-            variantSku: v.sku,
-            reason: `already has active BOM ${existing.id}`,
-          });
-          continue;
-        }
-        const packSize = v.packSize && v.packSize > 0 ? v.packSize : 1;
-        const bom = await db.bom.create({
-          data: {
-            productId,
-            variantId: v.id,
-            revision: "Rev-1.0 (auto)",
-            outputQty: 1,
-            active: true,
-            items: {
-              create: [
-                {
-                  productId,
-                  qty: packSize,
-                  uom: product.uom,
-                  scrapPct: 0,
-                },
-              ],
-            },
-          },
-        });
-        created.push({
-          variantSku: v.sku,
-          bomId: bom.id,
-          consumed: `${packSize} ${product.uom} of ${product.sku}`,
-        });
-        await recordChange("Bom", bom.id, "insert", bom, req.user.sub);
+      for (const c of result.created) {
+        await recordChange("Bom", c.bomId, "insert", c, req.user.sub);
       }
-      return { productSku: product.sku, created, skipped };
+      return {
+        productSku: result.productSku,
+        created: result.created.map((c) => ({
+          variantSku: c.variantSku,
+          bomId: c.bomId,
+          consumed: c.batch,
+          line: c.line,
+        })),
+        updated: result.updated.map((u) => ({
+          variantSku: u.variantSku,
+          bomId: u.bomId,
+          consumed: u.batch,
+          line: u.line,
+        })),
+        skipped: result.skipped,
+      };
     }
   );
 
@@ -1448,11 +1555,25 @@ export const mfgRoutes = async (app: FastifyInstance) => {
           data: { active: false },
         });
       }
+      let seqToOp: Map<number, string> | undefined;
+      if (body.operations) {
+        seqToOp = await persistBomOperations(id, body.operations);
+      }
       const updated = await db.$transaction(async (tx) => {
-        if (canonicalItems) {
+        if (canonicalItems && body.items) {
           await tx.bomItem.deleteMany({ where: { bomId: id } });
           await tx.bomItem.createMany({
-            data: canonicalItems.map((it) => ({ ...it, bomId: id })),
+            data: body.items.map((it, idx) => ({
+              bomId: id,
+              productId: it.productId,
+              qty: canonicalItems![idx]!.qty,
+              uom: canonicalItems![idx]!.uom,
+              scrapPct: it.scrapPct,
+              bomOperationId:
+                it.operationSeq && seqToOp
+                  ? (seqToOp.get(it.operationSeq) ?? null)
+                  : null,
+            })),
           });
         }
         if (canonicalByproducts) {
@@ -1482,6 +1603,9 @@ export const mfgRoutes = async (app: FastifyInstance) => {
             }),
             ...(body.defaultMachineId !== undefined && {
               defaultMachineId: body.defaultMachineId,
+            }),
+            ...(body.operationDependencies !== undefined && {
+              operationDependencies: body.operationDependencies,
             }),
           },
           include: bomDetailInclude,
@@ -1527,13 +1651,13 @@ export const mfgRoutes = async (app: FastifyInstance) => {
     return bomTree(bom.productId, qty, { variantId: bom.variantId });
   });
 
-  // GET /boms/:id/explode?qty=N
+  // GET /boms/:id/explode?qty=N — direct components on this BOM (MO planning).
   app.get("/boms/:id/explode", async (req, reply) => {
     const id = (req.params as { id: string }).id;
     const qty = Number((req.query as Record<string, string>)?.qty ?? "1");
     const bom = await db.bom.findUnique({ where: { id } });
     if (!bom) return reply.code(404).send({ error: { code: "not_found" } });
-    return explodeBom(bom.productId, qty, { variantId: bom.variantId });
+    return explodeMoBom(id, qty);
   });
 
   // GET /products/:id/where-used
@@ -1552,10 +1676,17 @@ export const mfgRoutes = async (app: FastifyInstance) => {
     return db.productionOrder.findMany({
       where,
       include: {
-        bom: { include: { product: { select: { sku: true, name: true } } } },
+        bom: {
+          include: {
+            product: { select: { sku: true, name: true } },
+            variant: {
+              select: { id: true, sku: true, size: true, color: true, barcode: true },
+            },
+          },
+        },
         facility: { select: { id: true, code: true, name: true } },
         line: { select: { id: true, code: true, name: true } },
-        workOrders: true,
+        workOrders: woInclude,
       },
       orderBy: { startDate: "desc" },
     });
@@ -1569,6 +1700,9 @@ export const mfgRoutes = async (app: FastifyInstance) => {
         bom: {
           include: {
             product: { select: { id: true, sku: true, name: true, uom: true } },
+            variant: {
+              select: { id: true, sku: true, size: true, color: true, barcode: true },
+            },
             items: {
               include: {
                 product: {
@@ -1586,7 +1720,7 @@ export const mfgRoutes = async (app: FastifyInstance) => {
         },
         facility: { select: { id: true, code: true, name: true } },
         line: { select: { id: true, code: true, name: true } },
-        workOrders: { orderBy: { workOrderNo: "asc" } },
+        workOrders: woInclude,
       },
     });
     if (!po) return reply.code(404).send({ error: { code: "not_found" } });
@@ -1594,8 +1728,7 @@ export const mfgRoutes = async (app: FastifyInstance) => {
   });
 
   // GET /production-orders/:id/requirements
-  // Returns the multi-level explosion + on-hand totals, so the UI can
-  // flag shortages before issuing materials.
+  // Returns direct BOM components + on-hand totals for this MO's BOM.
   app.get(
     "/production-orders/:id/requirements",
     { preHandler: [app.authenticate] },
@@ -1603,20 +1736,23 @@ export const mfgRoutes = async (app: FastifyInstance) => {
       const id = (req.params as { id: string }).id;
       const po = await db.productionOrder.findUnique({
         where: { id },
-        include: { bom: true },
+        include: {
+          bom: { select: { id: true } },
+          facility: { select: { productionLineWarehouseId: true } },
+        },
       });
       if (!po) return reply.code(404).send({ error: { code: "not_found" } });
+      const lineWhId = po.facility?.productionLineWarehouseId ?? null;
       const remaining = Math.max(0, po.plannedQty - po.actualQty);
       const planQty = remaining > 0 ? remaining : po.plannedQty;
-      const leaves = await explodeBom(po.bom.productId, planQty, {
-        variantId: po.bom.variantId,
-      });
-      // On-hand: sum of all bin qty per leaf product (across all bins
-      // we own). Reserved qty is excluded.
+      const leaves = await explodeMoBom(po.bom.id, planQty);
       const productIds = leaves.map((l) => l.productId);
+      const stockWhere = lineWhId
+        ? { productId: { in: productIds }, warehouseId: lineWhId }
+        : { productId: { in: productIds } };
       const stock = await db.bin.groupBy({
         by: ["productId"],
-        where: { productId: { in: productIds } },
+        where: stockWhere,
         _sum: { qty: true, reservedQty: true },
       });
       const stockMap = new Map(
@@ -1632,9 +1768,9 @@ export const mfgRoutes = async (app: FastifyInstance) => {
       const lines = leaves.map((l) => {
         const s = stockMap.get(l.productId) ?? { onHand: 0, reserved: 0 };
         const free = s.onHand - s.reserved;
-        const required = Math.ceil(l.qty);
+        const required = roundComponentQty(l.qty, l.uom);
         const issued = issuedMap.get(l.productId) ?? 0;
-        const stillNeeded = Math.max(0, required - issued);
+        const stillNeeded = round3(Math.max(0, required - issued));
         return {
           productId: l.productId,
           sku: l.sku,
@@ -1659,6 +1795,7 @@ export const mfgRoutes = async (app: FastifyInstance) => {
         plannedFor: planQty,
         orderNo: po.orderNo,
         status: po.status,
+        stockScope: lineWhId ? ("production_line" as const) : ("all" as const),
         lines,
         anyShortage: lines.some((l) => l.shortage > 0),
         allFullyIssued,
@@ -1968,17 +2105,15 @@ export const mfgRoutes = async (app: FastifyInstance) => {
         dueDate: new Date(body.dueDate),
       },
     });
-    // Auto-create one WorkOrder so the MO has something to track immediately.
-    await db.workOrder.create({
-      data: {
-        workOrderNo: `${orderNo}/1`,
-        productionOrderId: created.id,
-        station,
-        machine,
-        workers: "",
-        target: body.plannedQty,
-        lineId: lineId ?? null,
-      },
+    // Auto-create work orders from BOM operations (Odoo confirm MO).
+    await createWorkOrdersFromBom(db, {
+      productionOrderId: created.id,
+      orderNo,
+      plannedQty: body.plannedQty,
+      station,
+      machine,
+      defaultLineId: lineId ?? null,
+      bomId: body.bomId,
     });
     await recordChange("ProductionOrder", created.id, "insert", created, req.user.sub);
     return created;
@@ -2028,18 +2163,43 @@ export const mfgRoutes = async (app: FastifyInstance) => {
       // Optionally stamp individual WOs with line + machine.
       if (body.workOrderAssignments?.length) {
         for (const wa of body.workOrderAssignments) {
-          await db.workOrder.update({
-            where: { id: wa.workOrderId },
-            data: {
-              lineId: body.lineId,
-              ...(wa.machineId !== undefined && { machineId: wa.machineId }),
-            },
+          await assignWorkOrderLineMachine(db, {
+            productionOrderId: id,
+            workOrderId: wa.workOrderId,
+            lineId: wa.lineId ?? body.lineId,
+            machineId: wa.machineId,
           });
         }
       }
 
       await recordChange("ProductionOrder", id, "update", updated, req.user.sub);
       return updated;
+    }
+  );
+
+  // PATCH /production-orders/:id/work-orders/:woId/assign
+  app.patch(
+    "/production-orders/:id/work-orders/:woId/assign",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      if (!requireWriter(req, reply)) return;
+      const { id, woId } = req.params as { id: string; woId: string };
+      const body = assignWorkOrder.parse(req.body);
+      try {
+        const wo = await assignWorkOrderLineMachine(db, {
+          productionOrderId: id,
+          workOrderId: woId,
+          lineId: body.lineId,
+          machineId: body.machineId,
+        });
+        await recordChange("WorkOrder", woId, "update", wo, req.user.sub);
+        return wo;
+      } catch (e) {
+        const err = e as Error & { statusCode?: number };
+        return reply.code(err.statusCode ?? 400).send({
+          error: { code: "assign_failed", message: err.message },
+        });
+      }
     }
   );
 
@@ -2057,10 +2217,12 @@ export const mfgRoutes = async (app: FastifyInstance) => {
       const po = await db.productionOrder.findUnique({
         where: { id },
         include: {
-          bom: { select: { productId: true, variantId: true } },
+          bom: { select: { id: true, productId: true, variantId: true } },
           facility: {
             select: {
               id: true,
+              description: true,
+              replenishWarehouseCodes: true,
               productionLineWarehouse: { select: { id: true, code: true } },
             },
           },
@@ -2084,9 +2246,7 @@ export const mfgRoutes = async (app: FastifyInstance) => {
 
       const remaining = Math.max(0, po.plannedQty - po.actualQty);
       const planQty = remaining > 0 ? remaining : po.plannedQty;
-      const leaves = await explodeBom(po.bom.productId, planQty, {
-        variantId: po.bom.variantId,
-      });
+      const leaves = await explodeMoBom(po.bom.id, planQty);
 
       // Calculate on-hand at the production-line warehouse (if set),
       // else fall back to all bins (same as requirements check).
@@ -2121,25 +2281,29 @@ export const mfgRoutes = async (app: FastifyInstance) => {
       for (const leaf of leaves) {
         const s = stockMap.get(leaf.productId) ?? { onHand: 0, reserved: 0 };
         const free = s.onHand - s.reserved;
-        const shortage = Math.max(0, Math.ceil(leaf.qty) - free);
+        const reqQty = roundComponentQty(leaf.qty, leaf.uom);
+        const shortage = Math.max(0, reqQty - free);
         if (shortage > 0) {
           shortages.push({
             productId: leaf.productId,
             sku: leaf.sku,
-            required: Math.ceil(leaf.qty),
+            required: reqQty,
             available: free,
-            shortage,
+            shortage: round3(shortage),
           });
         }
       }
+
+      const replenishCodes = po.facility
+        ? facilityReplenishCodes(po.facility)
+        : [];
 
       const transferOrderIds: string[] = [];
 
       // Create replenishment TOs for each shortage when a production-line
       // warehouse is configured. Group all shortages into a single TO
-      // pulling from any storage warehouse that has stock.
+      // pulling from configured source warehouses (godowns + local storage).
       if (productionLineWhId && shortages.length > 0) {
-        // Find source bins for each shortage from any storage warehouse.
         const toItems: Array<{
           productId: string;
           qtyRequested: number;
@@ -2147,14 +2311,11 @@ export const mfgRoutes = async (app: FastifyInstance) => {
         }> = [];
 
         for (const sh of shortages) {
-          const srcBin = await db.bin.findFirst({
-            where: {
-              productId: sh.productId,
-              qty: { gt: 0 },
-              warehouse: { kind: "storage", active: true },
-            },
-            orderBy: { qty: "desc" },
-          });
+          const srcBin = await findReplenishmentSourceBin(
+            sh.productId,
+            replenishCodes,
+            sh.shortage
+          );
           toItems.push({
             productId: sh.productId,
             qtyRequested: sh.shortage,
@@ -2162,29 +2323,35 @@ export const mfgRoutes = async (app: FastifyInstance) => {
           });
         }
 
-        // Pick the source warehouse from the first item that has a bin.
-        const srcBinWithWh = await (async () => {
-          for (const it of toItems) {
-            if (it.fromBinId) {
-              return db.bin.findUnique({
-                where: { id: it.fromBinId },
-                select: { warehouseId: true },
-              });
-            }
-          }
-          return null;
-        })();
+        const unresolved = toItems.filter((it) => !it.fromBinId);
+        if (unresolved.length > 0) {
+          const skus = await db.product.findMany({
+            where: { id: { in: unresolved.map((it) => it.productId) } },
+            select: { id: true, sku: true },
+          });
+          const skuById = new Map(skus.map((p) => [p.id, p.sku]));
+          return reply.code(409).send({
+            error: {
+              code: "replenish_source_not_found",
+              message:
+                "Cannot create replenishment transfer: no source bin with stock for " +
+                unresolved
+                  .map((it) => skuById.get(it.productId) ?? it.productId)
+                  .join(", ") +
+                ". Check STR / configured replenish warehouses.",
+            },
+            shortages,
+            unresolvedSkus: unresolved.map(
+              (it) => skuById.get(it.productId) ?? it.productId
+            ),
+          });
+        }
 
-        // Use first active storage warehouse as source if no bin found.
-        const fromWhId =
-          srcBinWithWh?.warehouseId ??
-          (
-            await db.warehouse.findFirst({
-              where: { kind: "storage", active: true },
-              select: { id: true },
-            })
-          )?.id;
-
+        const firstSrcBin = await db.bin.findUnique({
+          where: { id: toItems[0]!.fromBinId! },
+          select: { warehouseId: true },
+        });
+        const fromWhId = firstSrcBin?.warehouseId;
         if (fromWhId) {
           const transferNo = await nextTransferNo();
           const toOrder = await db.transferOrder.create({
@@ -2200,7 +2367,7 @@ export const mfgRoutes = async (app: FastifyInstance) => {
                 create: toItems.map((it) => ({
                   productId: it.productId,
                   qtyRequested: it.qtyRequested,
-                  fromBinId: it.fromBinId ?? null,
+                  fromBinId: it.fromBinId,
                 })),
               },
             },
@@ -2230,8 +2397,8 @@ export const mfgRoutes = async (app: FastifyInstance) => {
   );
 
   // POST /production-orders/:id/issue-materials
-  // Consumes raw materials from inventory based on the multi-level
-  // explosion. Writes one StockLedger row per (component, bin) and
+  // Consumes materials from inventory based on direct BOM components.
+  // Writes one StockLedger row per (component, bin) and
   // updates Bin.qty. Status transitions to 'in-progress' on first
   // successful issue.
   app.post(
@@ -2244,7 +2411,7 @@ export const mfgRoutes = async (app: FastifyInstance) => {
       const po = await db.productionOrder.findUnique({
         where: { id },
         include: {
-          bom: { select: { productId: true, variantId: true } },
+          bom: { select: { id: true, productId: true, variantId: true } },
           facility: {
             select: {
               id: true,
@@ -2261,15 +2428,13 @@ export const mfgRoutes = async (app: FastifyInstance) => {
       }
       const remaining = Math.max(0, po.plannedQty - po.actualQty);
       const planQty = remaining > 0 ? remaining : po.plannedQty;
-      const leaves = await explodeBom(po.bom.productId, planQty, {
-        variantId: po.bom.variantId,
-      });
+      const leaves = await explodeMoBom(po.bom.id, planQty);
       const productIds = leaves.map((l) => l.productId);
       const issuedMap = await issuedQtyByProduct(po.orderNo, productIds);
       const alreadyFullyIssued = leaves.every((l) => {
-        const required = Math.ceil(l.qty);
+        const required = roundComponentQty(l.qty, l.uom);
         const issued = issuedMap.get(l.productId) ?? 0;
-        return Math.max(0, required - issued) <= 0;
+        return Math.max(0, required - issued) <= 0.0001;
       });
       if (alreadyFullyIssued) {
         return reply.code(409).send({
@@ -2303,14 +2468,18 @@ export const mfgRoutes = async (app: FastifyInstance) => {
           stock.map((s) => [s.productId, (s._sum.qty ?? 0) - (s._sum.reservedQty ?? 0)])
         );
         const shortages = leaves.filter(
-          (l) => (stockMap.get(l.productId) ?? 0) < Math.ceil(l.qty)
+          (l) => (stockMap.get(l.productId) ?? 0) < roundComponentQty(l.qty, l.uom)
         );
         if (shortages.length > 0 && !body.allowShort) {
           return reply.code(409).send({
             error: {
               code: "short_at_production_line",
               message: `${shortages.length} component(s) are short at the production-line warehouse. Run POST /release to create replenishment transfers first.`,
-              shortages: shortages.map((l) => ({ sku: l.sku, required: Math.ceil(l.qty), available: stockMap.get(l.productId) ?? 0 })),
+              shortages: shortages.map((l) => ({
+                sku: l.sku,
+                required: roundComponentQty(l.qty, l.uom),
+                available: round3(stockMap.get(l.productId) ?? 0),
+              })),
             },
           });
         }
@@ -2339,48 +2508,22 @@ export const mfgRoutes = async (app: FastifyInstance) => {
       const decrementedBinIds = new Set<string>();
 
       for (const leaf of leaves) {
-        // leaf.qty is in leaf.uom (the component's stock UoM). Round up
-        // because Bin.qty / stockOnHand are integer columns - we'd rather
-        // over-issue by < 1 unit than under-issue and oversell later.
-        const requested = Math.ceil(leaf.qty);
-        let remainingForLeaf = requested;
-        let issuedForLeaf = 0;
-        // Drain bins one at a time until satisfied or out. The bin's
-        // own warehouseId is recorded in the ledger so reports stay
-        // accurate even when the operator-specified warehouse is
-        // empty for this component.
-        while (remainingForLeaf > 0) {
-          const bin = await pickBinForIssue(preferredWhId, leaf.productId, productionLineWhId !== null);
-          if (!bin) break;
-          const take = Math.min(bin.qty, remainingForLeaf);
-          if (take <= 0) break;
-          await db.bin.update({
-            where: { id: bin.id },
-            data: { qty: { decrement: take } },
-          });
-          decrementedBinIds.add(bin.id);
-          await db.stockLedger.create({
-            data: {
-              productId: leaf.productId,
-              // BomItem currently only tracks the parent product, not a
-              // specific variant, so leave variantId null on issue rows.
-              variantId: null,
-              warehouseId: bin.warehouseId,
-              bin: `${bin.zone}/${bin.shelf}/${bin.bin}`,
-              txnType: "Issue",
-              ref: po.orderNo,
-              qty: -take,
-              balance: bin.qty - take,
-              date: new Date(),
-            },
-          });
-          remainingForLeaf -= take;
-          issuedForLeaf += take;
-        }
-        // Keep Product.stockOnHand in sync with the bins. Without this
-        // the parent counter drifts further every issue (the cause of
-        // the "RAW-COCO-OIL parent=0 / bins=1350" drift the reconcile
-        // script flagged earlier).
+        const requested = roundComponentQty(leaf.qty, leaf.uom);
+        if (requested <= 0) continue;
+        const componentVariantId = await resolveComponentVariantIdForMoIssue({
+          moFgVariantId: po.bom.variantId,
+          componentProductSku: leaf.sku,
+        });
+        const { issued: issuedForLeaf, binIds } = await issueMaterialFifo({
+          productId: leaf.productId,
+          warehouseId: preferredWhId,
+          strictWarehouse: productionLineWhId !== null,
+          qty: requested,
+          ref: po.orderNo,
+          variantId: componentVariantId,
+        });
+        for (const binId of binIds) decrementedBinIds.add(binId);
+
         if (issuedForLeaf > 0) {
           await db.product.update({
             where: { id: leaf.productId },
@@ -2758,6 +2901,7 @@ export const mfgRoutes = async (app: FastifyInstance) => {
           facility: {
             select: {
               id: true,
+              productionZone: true,
               productionLineWarehouse: { select: { id: true, code: true, kind: true } },
             },
           },
@@ -2779,6 +2923,76 @@ export const mfgRoutes = async (app: FastifyInstance) => {
 
       const productionLineWhId =
         po.facility?.productionLineWarehouse?.id ?? null;
+
+      // ---- Auto-issue any unissued BOM materials so the ledger reflects
+      // what was physically consumed. Without this, an MO completed
+      // without an explicit Issue step shows ISSUED=0 / VARIANCE<0 on
+      // the historical snapshot. We use the same FIFO util as
+      // /issue-materials and write standard Issue ledger rows.
+      try {
+        const leaves = await explodeMoBom(po.bom.id, po.plannedQty);
+        const productIds = leaves.map((l) => l.productId);
+        const issuedMap = await issuedQtyByProduct(po.orderNo, productIds);
+        const shortfalls = leaves
+          .map((l) => {
+            const required = roundComponentQty(l.qty, l.uom);
+            const alreadyIssued = issuedMap.get(l.productId) ?? 0;
+            const stillNeeded = round3(Math.max(0, required - alreadyIssued));
+            return { leaf: l, required, alreadyIssued, stillNeeded };
+          })
+          .filter((s) => s.stillNeeded > 0.0001);
+
+        if (shortfalls.length > 0) {
+          const autoIssuePreferredWh = productionLineWhId ?? body.warehouseId ?? null;
+          const autoIssued: Array<{ sku: string; requested: number; issued: number }> = [];
+          let autoAnyShort = false;
+          for (const s of shortfalls) {
+            const componentVariantId = await resolveComponentVariantIdForMoIssue({
+              moFgVariantId: po.bom.variantId,
+              componentProductSku: s.leaf.sku,
+            });
+            const { issued: issuedForLeaf } = await issueMaterialFifo({
+              productId: s.leaf.productId,
+              warehouseId: autoIssuePreferredWh,
+              // On completion we fall back to any warehouse if line is
+              // empty — operators may have consumed from elsewhere.
+              strictWarehouse: false,
+              qty: s.stillNeeded,
+              ref: po.orderNo,
+              variantId: componentVariantId,
+            });
+            if (issuedForLeaf > 0) {
+              await db.product.update({
+                where: { id: s.leaf.productId },
+                data: { stockOnHand: { decrement: issuedForLeaf } },
+              });
+            }
+            autoIssued.push({
+              sku: s.leaf.sku,
+              requested: s.stillNeeded,
+              issued: issuedForLeaf,
+            });
+            if (issuedForLeaf < s.stillNeeded) autoAnyShort = true;
+          }
+          if (autoAnyShort && !body.allowShortMaterials) {
+            return reply.code(409).send({
+              error: {
+                code: "short_materials_at_complete",
+                message:
+                  "Some BOM components have no remaining stock to issue. Add stock and retry, or pass allowShortMaterials=true to complete with what was available.",
+                shortfalls: autoIssued,
+              },
+            });
+          }
+        }
+      } catch (err) {
+        // Don't fail the whole completion if auto-issue has a soft
+        // problem — log and continue. Hard validation errors above
+        // (no_output / already_completed) already returned.
+        req.log.warn({ err, orderNo: po.orderNo }, "auto-issue at complete failed");
+      }
+
+      const productionZone = po.facility?.productionZone ?? null;
       const landingWhId = productionLineWhId ?? body.warehouseId ?? null;
 
       const dest = await resolvePutawayDestination(
@@ -2809,6 +3023,8 @@ export const mfgRoutes = async (app: FastifyInstance) => {
         } else if (dest.warehouseId) {
           receiveBin = await pickBestBin(dest.warehouseId, po.bom.productId, {
             allowEmptyBinFallback: !dest.fixedBin,
+            zone: productionZone ?? undefined,
+            variantId: po.bom.variantId ?? null,
           });
           if (!receiveBin && dest.fixedBin) {
             return reply.code(409).send({
@@ -2821,11 +3037,21 @@ export const mfgRoutes = async (app: FastifyInstance) => {
           }
         }
       } else if (productionLineWhId) {
-        receiveBin = await pickBinForReceive(productionLineWhId, po.bom.productId);
+        receiveBin = await pickBinForReceive(
+          productionLineWhId,
+          po.bom.productId,
+          productionZone,
+          po.bom.variantId ?? null
+        );
       }
 
       if (!receiveBin) {
-        receiveBin = await pickBinForReceive(landingWhId, po.bom.productId);
+        receiveBin = await pickBinForReceive(
+          landingWhId,
+          po.bom.productId,
+          productionZone,
+          po.bom.variantId ?? null
+        );
       }
 
       if (!receiveBin) {
@@ -2833,7 +3059,7 @@ export const mfgRoutes = async (app: FastifyInstance) => {
           error: {
             code: "no_receive_bin",
             message:
-              "No bin available to receive finished goods. Configure a putaway rule with a destination bin.",
+              "No receive slot could be resolved. Stock will land in a warehouse-level bulk slot when a warehouse is configured.",
           },
         });
       }
@@ -3093,12 +3319,303 @@ export const mfgRoutes = async (app: FastifyInstance) => {
         }
       }
       await recordChange("ProductionOrder", id, "update", updated, req.user.sub);
+      scheduleStockRulesCheck("mo-complete", req.user.sub, req.log);
       return {
         productionOrder: updated,
         putaway,
         putawayTransferOrderId,
         byproductPostings,
       };
+    }
+  );
+
+  // POST /production-orders/:id/split-operation — parallel lines (Odoo split MO)
+  app.post(
+    "/production-orders/:id/split-operation",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      if (!requireWriter(req, reply)) return;
+      const id = (req.params as { id: string }).id;
+      const body = z
+        .object({
+          bomOperationId: z.string().min(1),
+          splits: z
+            .array(
+              z.object({
+                lineId: z.string().min(1),
+                machineId: z.string().min(1).nullable().optional(),
+                qty: z.number().positive(),
+              })
+            )
+            .min(1),
+        })
+        .parse(req.body);
+
+      const po = await db.productionOrder.findUnique({ where: { id } });
+      if (!po) return reply.code(404).send({ error: { code: "not_found" } });
+      if (po.status === "completed") {
+        return reply.code(409).send({ error: { code: "already_completed" } });
+      }
+
+      try {
+        await splitOperationWorkOrders(db, {
+          productionOrderId: id,
+          orderNo: po.orderNo,
+          bomOperationId: body.bomOperationId,
+          plannedQty: po.plannedQty,
+          station: po.station,
+          machine: "—",
+          splits: body.splits,
+        });
+      } catch (e) {
+        return reply.code(400).send({
+          error: { code: "split_failed", message: (e as Error).message },
+        });
+      }
+      const wos = await db.workOrder.findMany({
+        where: { productionOrderId: id },
+        include: {
+          bomOperation: { select: { seq: true, name: true } },
+          line: { select: { id: true, code: true, name: true } },
+        },
+        orderBy: [{ bomOperationId: "asc" }, { splitSeq: "asc" }],
+      });
+      return { workOrders: wos };
+    }
+  );
+
+  // POST /production-orders/:id/work-orders/:woId/start
+  app.post(
+    "/production-orders/:id/work-orders/:woId/start",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      if (!requireWriter(req, reply)) return;
+      const woId = (req.params as { id: string; woId: string }).woId;
+      try {
+        const wo = await startWorkOrder(db, woId);
+        return wo;
+      } catch (e) {
+        return reply.code(400).send({
+          error: { code: "start_failed", message: (e as Error).message },
+        });
+      }
+    }
+  );
+
+  // POST /production-orders/:id/work-orders/:woId/done
+  app.post(
+    "/production-orders/:id/work-orders/:woId/done",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      if (!requireWriter(req, reply)) return;
+      const woId = (req.params as { id: string; woId: string }).woId;
+      try {
+        const result = await completeWorkOrder(db, woId);
+        const wo = await db.workOrder.findUnique({ where: { id: woId } });
+        return { ...result, workOrder: wo };
+      } catch (e) {
+        return reply.code(400).send({
+          error: { code: "complete_failed", message: (e as Error).message },
+        });
+      }
+    }
+  );
+
+  // POST /production-orders/:id/work-orders/:woId/qa — Odoo quality.check
+  app.post(
+    "/production-orders/:id/work-orders/:woId/qa",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      if (!requireWriter(req, reply)) return;
+      const woId = (req.params as { id: string; woId: string }).woId;
+      const body = z
+        .object({
+          pass: z.boolean(),
+          notes: z.string().max(500).optional(),
+        })
+        .parse(req.body);
+      try {
+        const result = await recordWorkOrderQa(db, woId, body.pass, body.notes);
+        const wo = await db.workOrder.findUnique({ where: { id: woId } });
+        return { ...result, workOrder: wo };
+      } catch (e) {
+        return reply.code(400).send({
+          error: { code: "qa_failed", message: (e as Error).message },
+        });
+      }
+    }
+  );
+
+  // -------------------------------------------------------------------
+  // Multi-machine parallel runs inside a single WorkOrder.
+  //
+  // A WO with no runs keeps legacy single-machine behavior (its
+  // `output` is operator-managed). When >= 1 run exists, the WO output
+  // is rolled up from sum(runs.goodQty) — each machine logs its own
+  // partial input/output and the WO closes when all runs are done
+  // (or the operator hits Done with rollup >= target).
+  // -------------------------------------------------------------------
+
+  const runCreate = z.object({
+    machineId: z.string().min(1),
+    lineId: z.string().min(1).nullable().optional(),
+    plannedQty: z.number().nonnegative().nullable().optional(),
+    operator: z.string().max(120).nullable().optional(),
+  });
+  const runPatch = z.object({
+    goodQty: z.number().nonnegative().optional(),
+    scrapQty: z.number().nonnegative().optional(),
+    inputQty: z.number().nonnegative().optional(),
+    notes: z.string().max(500).nullable().optional(),
+    operator: z.string().max(120).nullable().optional(),
+  });
+
+  const runErr = (e: unknown, fallback: string) => {
+    const err = e as { statusCode?: number; message?: string };
+    return { status: err.statusCode ?? 400, code: fallback, message: err.message ?? fallback };
+  };
+
+  // POST /production-orders/:id/work-orders/:woId/runs — add a machine run
+  app.post(
+    "/production-orders/:id/work-orders/:woId/runs",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      if (!requireWriter(req, reply)) return;
+      const { woId } = req.params as { id: string; woId: string };
+      const body = runCreate.parse(req.body);
+      try {
+        const run = await addWorkOrderRun(db, {
+          workOrderId: woId,
+          machineId: body.machineId,
+          lineId: body.lineId ?? undefined,
+          plannedQty: body.plannedQty ?? null,
+          operator: body.operator ?? null,
+        });
+        await recordChange("WorkOrderRun", run.id, "create", run, req.user.sub);
+        return run;
+      } catch (e) {
+        const err = runErr(e, "run_create_failed");
+        return reply.code(err.status).send({ error: { code: err.code, message: err.message } });
+      }
+    }
+  );
+
+  // POST .../runs/:runId/start
+  app.post(
+    "/production-orders/:id/work-orders/:woId/runs/:runId/start",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      if (!requireWriter(req, reply)) return;
+      const { woId, runId } = req.params as { woId: string; runId: string };
+      try {
+        const run = await startWorkOrderRun(db, woId, runId);
+        await recordChange("WorkOrderRun", run.id, "update", run, req.user.sub);
+        return run;
+      } catch (e) {
+        const err = runErr(e, "run_start_failed");
+        return reply.code(err.status).send({ error: { code: err.code, message: err.message } });
+      }
+    }
+  );
+
+  // PATCH .../runs/:runId — log progress on a run (goodQty / scrapQty / inputQty / notes)
+  app.patch(
+    "/production-orders/:id/work-orders/:woId/runs/:runId",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      if (!requireWriter(req, reply)) return;
+      const { woId, runId } = req.params as { woId: string; runId: string };
+      const body = runPatch.parse(req.body);
+      try {
+        const run = await logWorkOrderRun(db, woId, runId, body);
+        await recordChange("WorkOrderRun", run.id, "update", run, req.user.sub);
+        return run;
+      } catch (e) {
+        const err = runErr(e, "run_log_failed");
+        return reply.code(err.status).send({ error: { code: err.code, message: err.message } });
+      }
+    }
+  );
+
+  // POST .../runs/:runId/complete — close this run; final qty optional
+  app.post(
+    "/production-orders/:id/work-orders/:woId/runs/:runId/complete",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      if (!requireWriter(req, reply)) return;
+      const { woId, runId } = req.params as { woId: string; runId: string };
+      const body = runPatch.parse(req.body ?? {});
+      try {
+        const run = await completeWorkOrderRun(db, woId, runId, body);
+        await recordChange("WorkOrderRun", run.id, "update", run, req.user.sub);
+        return run;
+      } catch (e) {
+        const err = runErr(e, "run_complete_failed");
+        return reply.code(err.status).send({ error: { code: err.code, message: err.message } });
+      }
+    }
+  );
+
+  // POST .../runs/:runId/abandon — mark a run abandoned (broken machine, swapped to another)
+  app.post(
+    "/production-orders/:id/work-orders/:woId/runs/:runId/abandon",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      if (!requireWriter(req, reply)) return;
+      const { woId, runId } = req.params as { woId: string; runId: string };
+      try {
+        const run = await abandonWorkOrderRun(db, woId, runId);
+        await recordChange("WorkOrderRun", run.id, "update", run, req.user.sub);
+        return run;
+      } catch (e) {
+        const err = runErr(e, "run_abandon_failed");
+        return reply.code(err.status).send({ error: { code: err.code, message: err.message } });
+      }
+    }
+  );
+
+  // DELETE .../runs/:runId — remove a queued/abandoned run row entirely
+  app.delete(
+    "/production-orders/:id/work-orders/:woId/runs/:runId",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      if (!requireWriter(req, reply)) return;
+      const { woId, runId } = req.params as { woId: string; runId: string };
+      try {
+        const result = await deleteWorkOrderRun(db, woId, runId);
+        await recordChange("WorkOrderRun", result.id, "delete", result, req.user.sub);
+        return result;
+      } catch (e) {
+        const err = runErr(e, "run_delete_failed");
+        return reply.code(err.status).send({ error: { code: err.code, message: err.message } });
+      }
+    }
+  );
+
+  // POST /production-orders/:id/cancel
+  // Cancels an open MO: reverses material issues, cancels linked TOs,
+  // closes work orders, sets status=cancelled.
+  app.post(
+    "/production-orders/:id/cancel",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      if (!requireWriter(req, reply)) return;
+      const id = (req.params as { id: string }).id;
+      try {
+        const result = await cancelProductionOrder(id);
+        const updated = await db.productionOrder.findUnique({ where: { id } });
+        if (updated) {
+          await recordChange("ProductionOrder", id, "update", updated, req.user.sub);
+        }
+        return result;
+      } catch (e) {
+        if (e instanceof MoCancelError) {
+          return reply.code(e.statusCode).send({
+            error: { code: e.code, message: e.message },
+          });
+        }
+        throw e;
+      }
     }
   );
 

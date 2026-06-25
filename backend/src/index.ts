@@ -34,6 +34,9 @@ import { returnsRoutes } from "./routes/returns.js";
 import { transfersRoutes } from "./routes/transfers.js";
 import { enquiriesRoutes } from "./routes/enquiries.js";
 import { stockRulesRoutes } from "./routes/stock-rules.js";
+import { channelMappingRoutes } from "./routes/channel-mappings.js";
+import { importedOrderRoutes } from "./routes/imported-orders.js";
+import { startStockRulesInterval } from "./lib/stock-rules-runner.js";
 import multipart from "@fastify/multipart";
 import fastifyStatic from "@fastify/static";
 import { fileURLToPath } from "url";
@@ -182,6 +185,11 @@ await app.register(
     await withRole(api, enquiriesRoutes,     "supervisor", "billing");
     await withRole(api, salesRoutes,         "supervisor", "billing");
     await withRole(api, bulkOrderRoutes,     "supervisor", "billing");
+    await withRole(api, importedOrderRoutes, "supervisor", "billing");
+    // Channel mappings live under settings but are usable by anyone
+    // who can create a sales order (so the import preview can resolve
+    // courier item codes inline).
+    await withRole(api, channelMappingRoutes, "supervisor", "billing", "admin");
     await withRole(api, billingRoutes,       "billing");
     await withRole(api, customerPaymentRoutes, "billing");
     await withRole(api, returnsRoutes,       "supervisor", "billing", "warehouse");
@@ -192,8 +200,8 @@ await app.register(
     await withRole(api, tripRoutes,          "supervisor", "warehouse");
     await withRole(api, locationsRoutes,     "supervisor", "warehouse");
 
-    // Procurement
-    await withRole(api, procurementRoutes,   "procurement");
+    // Procurement — warehouse staff receive GRNs on mobile /m/grn
+    await withRole(api, procurementRoutes,   "procurement", "warehouse", "supervisor");
     await withRole(api, pricingRoutes,       "procurement");
     await withRole(api, uomRoutes,           "procurement");
 
@@ -219,6 +227,7 @@ await app.register(
 
 try {
   await app.listen({ host: config.host, port: config.port });
+  startStockRulesInterval(app.log);
   console.log(`\nNovaERP API ready · http://localhost:${config.port}/v1`);
   console.log(`Health check        · http://localhost:${config.port}/health\n`);
 } catch (err) {

@@ -254,6 +254,17 @@ export const reportsRoutes = async (app: FastifyInstance) => {
             busy: busyMachineIds.has(m.id) || busyMachineNames.has(m.name),
           })),
         })),
+        // Flattened for Productivity / Manufacturing panels that treat each
+        // facility as one row with all machines from its production lines.
+        machines: fac.lines.flatMap((l) =>
+          l.machines.map((m) => ({
+            id: m.id,
+            code: m.code,
+            name: m.name,
+            status: m.status,
+            busy: busyMachineIds.has(m.id) || busyMachineNames.has(m.name),
+          }))
+        ),
         activeOrders: orders.length,
         orders: orders.map((o) => ({
           id: o.id,
@@ -1303,6 +1314,328 @@ export const reportsRoutes = async (app: FastifyInstance) => {
         containers: rows.reduce((s, r) => s + r.containers, 0),
         estKg: Math.round(rows.reduce((s, r) => s + r.estKg, 0) * 100) / 100,
         actualKg: Math.round(rows.reduce((s, r) => s + r.actualKg, 0) * 100) / 100,
+      },
+      rows,
+    };
+  });
+
+  // =====================================================================
+  // Production logs (MO + WO) and machine utilization
+  //
+  // Two endpoints power the "Production Log" view in Manufacturing:
+  //
+  //   GET /reports/mo-wo-log
+  //     One row per Work Order with parent MO context:
+  //       - mo (orderNo, status, planned/actual qty, startDate, dueDate,
+  //              created/updated, efficiency, product/variant SKU)
+  //       - wo (workOrderNo, status, startTime, endTime, output, target,
+  //              splitSeq, qaStatus)
+  //       - line (code/name/capacityPerHour), machine (code/name/status)
+  //       - operation (BomOperation.name + capacityPerHour)
+  //       - workers (parsed CSV)
+  //       - durationMin (endTime − startTime, null if not ended)
+  //       - utilizationPct (output ÷ (capacityPerHour · durationHours))
+  //       - materialsConsumed (sum of qty issued via StockLedger ref=MO orderNo)
+  //
+  //   GET /reports/machine-utilization?days=30
+  //     Aggregated per-machine summary for the window:
+  //       - runMinutes, output, woCount, avg WO duration
+  //       - availableMinutes = days * 8 * 60 (configurable)
+  //       - utilizationPct = runMinutes / availableMinutes * 100
+  //       - throughputPerHour = output / runHours
+  //
+  // Filters (all optional): days, facilityId, lineId, machineId, status.
+  // Both endpoints support format=csv.
+  // =====================================================================
+  app.get("/reports/mo-wo-log", async (req, reply) => {
+    const q = (req.query as Record<string, string>) ?? {};
+    const days = Math.min(Math.max(parseInt(q.days ?? "30", 10) || 30, 1), 365);
+    const since = new Date(Date.now() - days * 86400000);
+    const facilityId = q.facilityId || undefined;
+    const lineId = q.lineId || undefined;
+    const machineId = q.machineId || undefined;
+    const status = q.status || undefined;
+    const format = q.format || "json";
+
+    const wos = await db.workOrder.findMany({
+      where: {
+        ...(lineId ? { lineId } : {}),
+        ...(machineId ? { machineId } : {}),
+        ...(status ? { status } : {}),
+        OR: [
+          { startTime: { gte: since } },
+          { endTime: { gte: since } },
+          { updatedAt: { gte: since } },
+        ],
+      },
+      include: {
+        productionOrder: {
+          include: {
+            facility: { select: { id: true, code: true, name: true } },
+            bom: {
+              include: {
+                product: { select: { sku: true, name: true } },
+                variant: { select: { sku: true, size: true } },
+              },
+            },
+          },
+        },
+        line: { select: { id: true, code: true, name: true, capacityPerHour: true, facilityId: true } },
+        machineRef: { select: { id: true, code: true, name: true, status: true } },
+        bomOperation: { select: { id: true, seq: true, name: true, durationMinutes: true } },
+      },
+      orderBy: [{ startTime: "desc" }, { updatedAt: "desc" }],
+      take: 2000,
+    });
+
+    const filtered = facilityId
+      ? wos.filter((w) => w.productionOrder.facilityId === facilityId)
+      : wos;
+
+    // Sum materials consumed per MO (StockLedger 'Issue' rows with ref=orderNo).
+    const moOrderNos = [...new Set(filtered.map((w) => w.productionOrder.orderNo))];
+    const materialsByMo = new Map<string, number>();
+    if (moOrderNos.length > 0) {
+      const ledger = await db.stockLedger.findMany({
+        where: { ref: { in: moOrderNos }, txnType: "Issue" },
+        select: { ref: true, qty: true },
+      });
+      for (const l of ledger) {
+        if (!l.ref) continue;
+        materialsByMo.set(l.ref, (materialsByMo.get(l.ref) ?? 0) + Math.abs(l.qty));
+      }
+    }
+
+    const rows = filtered.map((w) => {
+      const start = w.startTime ? new Date(w.startTime) : null;
+      const end = w.endTime ? new Date(w.endTime) : null;
+      const durationMin = start && end ? Math.max(0, Math.round((end.getTime() - start.getTime()) / 60000)) : null;
+      // Output vs target = how close the WO got to its planned qty.
+      const targetVsActualPct =
+        w.target > 0 ? Math.round((w.output / w.target) * 100) : null;
+      // Time vs planned = planned operation minutes ÷ actual run minutes.
+      // (Higher = faster than plan; capped at 100% for capacity utilisation framing.)
+      const plannedMin = w.bomOperation?.durationMinutes ?? null;
+      const timeVsPlanPct =
+        plannedMin && plannedMin > 0 && durationMin && durationMin > 0
+          ? Math.round((plannedMin / durationMin) * 100)
+          : null;
+      // Capacity util = output ÷ (line capacityPerHour × run hours).
+      const cap = w.line?.capacityPerHour ?? null;
+      const utilizationPct =
+        cap && cap > 0 && durationMin && durationMin > 0
+          ? Math.min(100, Math.round((w.output / (cap * (durationMin / 60))) * 100))
+          : null;
+      const workers = (w.workers || "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+      const mo = w.productionOrder;
+      return {
+        moId: mo.id,
+        orderNo: mo.orderNo,
+        moStatus: mo.status,
+        moStartDate: mo.startDate,
+        moDueDate: mo.dueDate,
+        moCreatedAt: mo.createdAt,
+        moUpdatedAt: mo.updatedAt,
+        plannedQty: mo.plannedQty,
+        actualQty: mo.actualQty,
+        scrapQty: mo.scrapQty,
+        efficiency: mo.efficiency,
+        productSku: mo.bom.variant?.sku ?? mo.bom.product.sku,
+        productName: mo.bom.product.name,
+        variantSize: mo.bom.variant?.size ?? null,
+        facilityCode: mo.facility?.code ?? null,
+        facilityName: mo.facility?.name ?? null,
+        woId: w.id,
+        workOrderNo: w.workOrderNo,
+        woStatus: w.status,
+        woStartTime: w.startTime,
+        woEndTime: w.endTime,
+        durationMin,
+        output: w.output,
+        target: w.target,
+        splitSeq: w.splitSeq,
+        qaStatus: w.qaStatus,
+        lineCode: w.line?.code ?? null,
+        lineName: w.line?.name ?? null,
+        lineCapacityPerHour: w.line?.capacityPerHour ?? null,
+        machineCode: w.machineRef?.code ?? w.machine ?? null,
+        machineName: w.machineRef?.name ?? null,
+        machineStatus: w.machineRef?.status ?? null,
+        operationSeq: w.bomOperation?.seq ?? null,
+        operationName: w.bomOperation?.name ?? null,
+        plannedMinutes: plannedMin,
+        workers,
+        targetVsActualPct,
+        timeVsPlanPct,
+        utilizationPct,
+        materialsConsumed: materialsByMo.get(mo.orderNo) ?? 0,
+      };
+    });
+
+    if (format === "csv") {
+      const headers = [
+        "orderNo", "moStatus", "productSku", "productName", "facility",
+        "workOrderNo", "woStatus", "operation", "line", "machine",
+        "woStartTime", "woEndTime", "durationMin", "plannedMinutes",
+        "target", "output", "targetVsActualPct", "timeVsPlanPct",
+        "splitSeq", "qaStatus",
+        "lineCapPerHour", "capUtilPct",
+        "plannedQty", "actualQty", "scrapQty", "efficiency",
+        "materialsConsumed", "workers",
+      ];
+      const csvRows = rows.map((r) => [
+        r.orderNo, r.moStatus, r.productSku, r.productName, r.facilityCode ?? "",
+        r.workOrderNo, r.woStatus, r.operationName ?? "", r.lineCode ?? "", r.machineCode ?? "",
+        r.woStartTime ? new Date(r.woStartTime).toISOString() : "",
+        r.woEndTime ? new Date(r.woEndTime).toISOString() : "",
+        r.durationMin ?? "", r.plannedMinutes ?? "",
+        r.target, r.output, r.targetVsActualPct ?? "", r.timeVsPlanPct ?? "",
+        r.splitSeq, r.qaStatus ?? "",
+        r.lineCapacityPerHour ?? "", r.utilizationPct ?? "",
+        r.plannedQty, r.actualQty, r.scrapQty, r.efficiency,
+        r.materialsConsumed,
+        r.workers.join("|"),
+      ]);
+      reply.header("Content-Type", "text/csv; charset=utf-8");
+      reply.header("Content-Disposition", csvAttachment(`mo-wo-log-${days}d.csv`));
+      return toCsv(headers, csvRows);
+    }
+
+    return {
+      rangeDays: days,
+      since: since.toISOString(),
+      totals: {
+        woCount: rows.length,
+        moCount: new Set(rows.map((r) => r.moId)).size,
+        totalOutput: rows.reduce((s, r) => s + r.output, 0),
+        totalRunMin: rows.reduce((s, r) => s + (r.durationMin ?? 0), 0),
+      },
+      rows,
+    };
+  });
+
+  // Per-machine utilization aggregation.
+  app.get("/reports/machine-utilization", async (req, reply) => {
+    const q = (req.query as Record<string, string>) ?? {};
+    const days = Math.min(Math.max(parseInt(q.days ?? "30", 10) || 30, 1), 365);
+    const hoursPerDay = Math.min(Math.max(parseFloat(q.hoursPerDay ?? "8") || 8, 1), 24);
+    const since = new Date(Date.now() - days * 86400000);
+    const facilityId = q.facilityId || undefined;
+    const lineId = q.lineId || undefined;
+    const format = q.format || "json";
+
+    const machines = await db.machine.findMany({
+      where: {
+        active: true,
+        ...(lineId ? { productionLineId: lineId } : {}),
+        ...(facilityId
+          ? { productionLine: { facilityId } }
+          : {}),
+      },
+      include: {
+        productionLine: {
+          select: {
+            id: true, code: true, name: true, capacityPerHour: true,
+            facility: { select: { id: true, code: true, name: true } },
+          },
+        },
+      },
+      orderBy: { code: "asc" },
+    });
+
+    const wos = await db.workOrder.findMany({
+      where: {
+        machineId: { in: machines.map((m) => m.id) },
+        OR: [
+          { startTime: { gte: since } },
+          { endTime: { gte: since } },
+          {
+            AND: [
+              { startTime: null },
+              { output: { gt: 0 } },
+              { updatedAt: { gte: since } },
+            ],
+          },
+        ],
+      },
+      select: {
+        machineId: true,
+        startTime: true,
+        endTime: true,
+        output: true,
+        status: true,
+      },
+    });
+
+    const availableMin = days * hoursPerDay * 60;
+    const rows = machines.map((m) => {
+      const mWos = wos.filter((w) => w.machineId === m.id);
+      let runMin = 0;
+      for (const w of mWos) {
+        if (w.startTime && w.endTime) {
+          runMin += Math.max(0, (new Date(w.endTime).getTime() - new Date(w.startTime).getTime()) / 60000);
+        }
+      }
+      const output = mWos.reduce((s, w) => s + w.output, 0);
+      const completedCount = mWos.filter((w) => w.status === "complete").length;
+      const runHours = runMin / 60;
+      const cap = m.productionLine?.capacityPerHour ?? null;
+      return {
+        machineId: m.id,
+        machineCode: m.code,
+        machineName: m.name,
+        machineStatus: m.status,
+        lineCode: m.productionLine?.code ?? null,
+        lineName: m.productionLine?.name ?? null,
+        facilityCode: m.productionLine?.facility?.code ?? null,
+        facilityName: m.productionLine?.facility?.name ?? null,
+        capacityPerHour: cap,
+        woCount: mWos.length,
+        completedCount,
+        runMin: Math.round(runMin),
+        availableMin,
+        utilizationPct: availableMin > 0 ? Math.round((runMin / availableMin) * 100 * 10) / 10 : 0,
+        output,
+        throughputPerHour: runHours > 0 ? Math.round((output / runHours) * 100) / 100 : 0,
+        capacityUtilizationPct:
+          cap && runHours > 0
+            ? Math.min(100, Math.round((output / (cap * runHours)) * 100))
+            : null,
+      };
+    });
+
+    if (format === "csv") {
+      const headers = [
+        "machineCode", "machineName", "machineStatus", "line", "facility",
+        "woCount", "completedCount", "runMin", "availableMin", "utilizationPct",
+        "output", "capacityPerHour", "throughputPerHour", "capacityUtilizationPct",
+      ];
+      const csvRows = rows.map((r) => [
+        r.machineCode, r.machineName, r.machineStatus, r.lineCode ?? "", r.facilityCode ?? "",
+        r.woCount, r.completedCount, r.runMin, r.availableMin, r.utilizationPct,
+        r.output, r.capacityPerHour ?? "", r.throughputPerHour, r.capacityUtilizationPct ?? "",
+      ]);
+      reply.header("Content-Type", "text/csv; charset=utf-8");
+      reply.header("Content-Disposition", csvAttachment(`machine-utilization-${days}d.csv`));
+      return toCsv(headers, csvRows);
+    }
+
+    return {
+      rangeDays: days,
+      hoursPerDay,
+      since: since.toISOString(),
+      totals: {
+        machines: rows.length,
+        woCount: rows.reduce((s, r) => s + r.woCount, 0),
+        runMin: rows.reduce((s, r) => s + r.runMin, 0),
+        output: rows.reduce((s, r) => s + r.output, 0),
+        avgUtilizationPct:
+          rows.length > 0
+            ? Math.round((rows.reduce((s, r) => s + r.utilizationPct, 0) / rows.length) * 10) / 10
+            : 0,
       },
       rows,
     };

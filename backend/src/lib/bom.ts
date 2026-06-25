@@ -336,6 +336,80 @@ export const bomTree = async (
 };
 
 // ----------------------------------------------------------------
+// MO-scoped explosion — direct BOM lines only (no sub-BOM recursion).
+//
+// Manufacturing orders issue components listed on *this* BOM. Upstream
+// stages (extract, filter, pack) are separate MOs; we do not drill
+// through semi/finished parents into their manufacturing BOMs.
+
+export const explodeMoBom = async (
+  bomId: string,
+  qty: number = 1
+): Promise<BomLeaf[]> => {
+  const bom = await db.bom.findUnique({
+    where: { id: bomId },
+    include: {
+      product: { select: { sku: true } },
+      items: {
+        include: {
+          product: {
+            select: { id: true, sku: true, name: true, uom: true, type: true },
+          },
+        },
+      },
+    },
+  });
+  if (!bom) {
+    throw Object.assign(new Error(`BOM not found: ${bomId}`), {
+      statusCode: 404,
+      code: "bom_not_found",
+    });
+  }
+
+  const outputDivisor = bom.outputQty > 0 ? bom.outputQty : 1;
+  const parentSku = bom.product.sku;
+  const leaves = new Map<string, BomLeaf>();
+
+  for (const item of bom.items) {
+    const convertedQty = toStockUom(
+      item.uom,
+      item.qty,
+      item.product.uom,
+      item.product.sku
+    );
+    const perOutput = convertedQty / outputDivisor;
+    const inflate = 1 + (item.scrapPct ?? 0) / 100;
+    const effectiveQty = perOutput * qty * inflate;
+
+    const existing = leaves.get(item.productId);
+    if (existing) {
+      existing.qty += effectiveQty;
+      if (existing.bomUom === item.uom) {
+        existing.bomQty = totalAuthoredFromStock(
+          existing.qty,
+          item.product.uom,
+          item.uom,
+          item.product.sku
+        );
+      }
+    } else {
+      leaves.set(item.productId, {
+        productId: item.productId,
+        sku: item.product.sku,
+        name: item.product.name,
+        uom: item.product.uom,
+        qty: effectiveQty,
+        bomUom: item.uom,
+        bomQty: item.qty,
+        path: [parentSku],
+      });
+    }
+  }
+
+  return Array.from(leaves.values()).sort((a, b) => a.sku.localeCompare(b.sku));
+};
+
+// ----------------------------------------------------------------
 // Flat explosion - aggregated leaves only.
 
 export const explodeBom = async (

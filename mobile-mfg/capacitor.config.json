@@ -1,0 +1,21 @@
+{
+  "appId": "com.prakruthivanam.manufacturing",
+  "appName": "Prakruthivanam Manufacturing",
+  "webDir": "www",
+  "android": {
+    "allowMixedContent": true,
+    "captureInput": true,
+    "webContentsDebuggingEnabled": true
+  },
+  "server": {
+    "androidScheme": "https",
+    "cleartext": true
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchAutoHide": true,
+      "launchShowDuration": 600,
+      "backgroundColor": "#003087"
+    }
+  }
+}

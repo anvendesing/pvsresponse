@@ -27,9 +27,10 @@ export const MobileScan = () => {
       const result = (await api.resolveLocation(raw)) as {
         kind: "zone" | "shelf" | "bin" | "product";
         bin?: { id?: string };
+        code?: string;
       };
+      const navCode = encodeURIComponent(result.code ?? raw);
       if (result.kind === "bin" && result.bin?.id) {
-        // Log the scan as a productive event before we navigate.
         void api
           .logScanEvent({
             kind: "bin",
@@ -39,10 +40,30 @@ export const MobileScan = () => {
           })
           .catch(() => undefined);
         nav(`/m/bin/${result.bin.id}`);
+      } else if (result.kind === "shelf") {
+        void api
+          .logScanEvent({
+            kind: "shelf",
+            code: raw,
+            outcome: "ok",
+            context: "verify",
+          })
+          .catch(() => undefined);
+        nav(`/m/loc/${navCode}`);
+      } else if (result.kind === "zone") {
+        void api
+          .logScanEvent({
+            kind: "zone",
+            code: raw,
+            outcome: "ok",
+            context: "verify",
+          })
+          .catch(() => undefined);
+        nav(`/m/loc/${navCode}`);
       } else if (result.kind === "product") {
-        nav(`/m/loc/${encodeURIComponent(raw)}`);
+        nav(`/m/loc/${navCode}`);
       } else {
-        nav(`/m/loc/${encodeURIComponent(raw)}`);
+        nav(`/m/loc/${navCode}`);
       }
     } catch (err) {
       void api
@@ -70,8 +91,8 @@ export const MobileScan = () => {
       <div className="mb-4 rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-200">
         <h2 className="text-base font-semibold text-slate-900">Scan a label</h2>
         <p className="mt-1 text-sm text-slate-500">
-          Point the camera at a bin or product label. The app will jump to
-          the right screen automatically.
+          Point the camera at a zone (e.g. WSP.A), shelf (WSP.AS05), bin, or product
+          label. The app opens the matching screen with expandable bin lists.
         </p>
         <button
           type="button"
@@ -119,7 +140,7 @@ const ManualForm = ({ onSubmit }: { onSubmit: (s: string) => void }) => {
       <input
         value={code}
         onChange={(e) => setCode(e.target.value)}
-        placeholder="B.WH-MAIN.A.R1.S1.B1"
+        placeholder="WSP.AS05 or WSP.AS05.11"
         autoCapitalize="characters"
         autoCorrect="off"
         className="flex-1 rounded-xl border border-slate-300 bg-white px-3 py-2 font-mono text-sm focus:outline-none"

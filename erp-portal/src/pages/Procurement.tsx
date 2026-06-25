@@ -10,6 +10,7 @@
 // has been removed - everything reads from the procurement backend.
 
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   AlertTriangle,
   Building2,
@@ -36,11 +37,14 @@ import { api } from "@/lib/api";
 import { useApi } from "@/hooks/useApi";
 import type { PurchaseOrder, Vendor } from "@/data/types";
 import { dd, inr, num } from "@/lib/format";
+import { csvStamp, downloadCsv } from "@/lib/csv-export";
 import { cn } from "@/lib/cn";
 import { VendorEditor } from "@/components/procurement/VendorEditor";
+import { VendorDetailModal } from "@/components/procurement/VendorDetailModal";
 import { PoEditor } from "@/components/procurement/PoEditor";
 import { GrnReceiveModal } from "@/components/procurement/GrnReceiveModal";
 import { GrnDetailModal } from "@/components/procurement/GrnDetailModal";
+import { ClosePoConfirmModal } from "@/components/procurement/ClosePoConfirmModal";
 import { ShareDocumentMenu } from "@/components/common/ShareDocumentMenu";
 
 const poTone = (s: PurchaseOrder["status"]) => {
@@ -64,6 +68,7 @@ const qcTone = (s: "pending" | "pass" | "rework" | "reject") =>
   s === "pass" ? "success" : s === "rework" ? "warning" : s === "reject" ? "danger" : "info";
 
 export const Procurement = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
   const [tab, setTab] = useState<"po" | "vendors" | "grn">("po");
   const [q, setQ] = useState("");
   const [vendorQ, setVendorQ] = useState("");
@@ -78,6 +83,7 @@ export const Procurement = () => {
 
   // Modal state.
   const [vendorEditing, setVendorEditing] = useState<{ vendor: Vendor | null } | null>(null);
+  const [vendorDetail, setVendorDetail] = useState<Vendor | null>(null);
   const [poEditing, setPoEditing] = useState<{ poId: string | null } | null>(null);
   const [grnReceiving, setGrnReceiving] = useState<string | null>(null); // poId
   // GRN currently open in the detail/QC modal. Null when no GRN
@@ -87,6 +93,20 @@ export const Procurement = () => {
   const [poDetail, setPoDetail] = useState<Awaited<
     ReturnType<typeof api.getPurchaseOrder>
   > | null>(null);
+  const [closePoTarget, setClosePoTarget] = useState<{ id: string; poNo: string } | null>(
+    null
+  );
+
+  // Deep-link: /procurement?poId=… opens the PO editor.
+  useEffect(() => {
+    const poId = searchParams.get("poId");
+    if (!poId) return;
+    setTab("po");
+    setPoEditing({ poId });
+    const next = new URLSearchParams(searchParams);
+    next.delete("poId");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   // Banner.
   const [banner, setBanner] = useState<{
@@ -154,6 +174,101 @@ export const Procurement = () => {
     await Promise.all([livePos.refetch(), liveVendors.refetch(), liveGrns.refetch()]);
   };
 
+  const handleExport = () => {
+    const stamp = csvStamp();
+    if (tab === "vendors") {
+      downloadCsv(
+        `vendors-${stamp}.csv`,
+        [
+          "Code",
+          "Name",
+          "City",
+          "GST",
+          "Contact",
+          "Email",
+          "Payment Terms",
+          "Lead Days",
+          "Rating",
+          "Active",
+          "Outstanding PO",
+          "Total Spend",
+        ],
+        filteredVendors.map((v) => [
+          v.code,
+          v.name,
+          v.city,
+          v.gst,
+          v.contact,
+          v.email ?? "",
+          v.paymentTerms ?? "",
+          v.leadTimeDays,
+          v.rating,
+          v.active ? "yes" : "no",
+          v.outstandingPO,
+          v.totalSpend,
+        ])
+      );
+      return;
+    }
+    if (tab === "grn") {
+      downloadCsv(
+        `grns-${stamp}.csv`,
+        [
+          "GRN No",
+          "Date",
+          "PO No",
+          "Vendor",
+          "QC Status",
+          "Lines",
+          "Accepted Qty",
+          "Truck",
+          "Driver",
+        ],
+        grns.map((g) => {
+          const accepted = g.items.reduce(
+            (s, i) => s + i.receivedQty - i.rejectedQty,
+            0
+          );
+          return [
+            g.grnNo,
+            dd(g.date),
+            g.po.poNo,
+            g.po.vendor.name,
+            g.qcStatus,
+            g.items.length,
+            accepted,
+            g.truckNo ?? "",
+            g.driver ?? "",
+          ];
+        })
+      );
+      return;
+    }
+    downloadCsv(
+      `purchase-orders-${stamp}.csv`,
+      [
+        "PO No",
+        "Vendor",
+        "Date",
+        "Expected",
+        "Status",
+        "Items",
+        "Amount",
+        "Received %",
+      ],
+      filteredPos.map((p) => [
+        p.poNo,
+        p.vendor,
+        dd(p.date),
+        dd(p.expectedDate),
+        p.status,
+        p.itemCount,
+        p.amount,
+        p.receivedPct,
+      ])
+    );
+  };
+
   // ---- PO actions ----
   const approvePo = async (id: string, poNo: string) => {
     try {
@@ -174,15 +289,8 @@ export const Procurement = () => {
       setBanner({ tone: "err", text: (e as Error).message });
     }
   };
-  const closePo = async (id: string, poNo: string) => {
-    if (!window.confirm(`Close ${poNo}? This freezes the PO from further receipts.`)) return;
-    try {
-      await api.closePurchaseOrder(id);
-      setBanner({ tone: "ok", text: `${poNo} closed.` });
-      await refreshAll();
-    } catch (e) {
-      setBanner({ tone: "err", text: (e as Error).message });
-    }
+  const closePo = (id: string, poNo: string) => {
+    setClosePoTarget({ id, poNo });
   };
 
   // ---- Columns ----
@@ -364,7 +472,7 @@ export const Procurement = () => {
       cell: (r) => (
         <button
           type="button"
-          onClick={() => setVendorEditing({ vendor: r })}
+          onClick={() => setVendorDetail(r)}
           className="text-left"
         >
           <div className="font-semibold hover:text-primary">{r.name}</div>
@@ -495,7 +603,13 @@ export const Procurement = () => {
         }
         right={
           <>
-            <Button variant="outline" size="sm" icon={<Download size={14} />}>
+            <Button
+              variant="outline"
+              size="sm"
+              icon={<Download size={14} />}
+              onClick={handleExport}
+              title={`Export ${tab === "po" ? "purchase orders" : tab === "vendors" ? "vendors" : "GRNs"} as CSV`}
+            >
               Export
             </Button>
             {tab === "po" && (
@@ -831,6 +945,22 @@ export const Procurement = () => {
       )}
 
       {/* ---- Modals ---- */}
+      {vendorDetail && (
+        <VendorDetailModal
+          vendor={vendorDetail}
+          onClose={() => setVendorDetail(null)}
+          onEditProfile={() => {
+            setVendorEditing({ vendor: vendorDetail });
+          }}
+          onSaved={async (msg) => {
+            setBanner({ tone: "ok", text: msg });
+            await liveVendors.refetch();
+            const fresh = await api.vendor(vendorDetail.id);
+            setVendorDetail(fresh);
+          }}
+        />
+      )}
+
       {vendorEditing && (
         <VendorEditor
           vendor={vendorEditing.vendor}
@@ -858,11 +988,16 @@ export const Procurement = () => {
                     productId: i.productId,
                     qty: i.qty,
                     rate: i.rate,
+                    vendorProductId: i.vendorProductId,
+                    vendorQty: i.vendorQty,
+                    vendorUom: i.vendorUom,
+                    vendorRate: i.vendorRate,
                     product: {
                       sku: i.product.sku,
                       name: i.product.name,
                       uom: i.product.uom,
                     },
+                    vendorProduct: i.vendorProduct ?? null,
                   })),
                 }
               : null
@@ -924,6 +1059,20 @@ export const Procurement = () => {
             />
           );
         })()}
+
+      {closePoTarget && (
+        <ClosePoConfirmModal
+          poId={closePoTarget.id}
+          poNo={closePoTarget.poNo}
+          onCancel={() => setClosePoTarget(null)}
+          onClosed={async () => {
+            const { poNo } = closePoTarget;
+            setClosePoTarget(null);
+            setBanner({ tone: "ok", text: `${poNo} closed.` });
+            await refreshAll();
+          }}
+        />
+      )}
     </div>
   );
 };

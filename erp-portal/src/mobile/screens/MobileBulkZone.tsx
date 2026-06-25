@@ -64,6 +64,7 @@ export const MobileBulkZone = () => {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<BulkResult | null>(null);
+  const [scanOpen, setScanOpen] = useState(false);
   const [scanBinId, setScanBinId] = useState<string | null>(null);
 
   const loadBins = useCallback(async () => {
@@ -100,6 +101,123 @@ export const MobileBulkZone = () => {
     }
     return n;
   }, [zoneBins, edits]);
+
+  const shelfGroups = useMemo(() => {
+    const map = new Map<string, Bin[]>();
+    for (const b of zoneBins) {
+      const list = map.get(b.shelf) ?? [];
+      list.push(b);
+      map.set(b.shelf, list);
+    }
+    return [...map.entries()].sort(([a], [b]) =>
+      a.localeCompare(b, undefined, { numeric: true })
+    );
+  }, [zoneBins]);
+
+  const [openShelves, setOpenShelves] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (shelfFilter) {
+      setOpenShelves(new Set([shelfFilter]));
+    } else {
+      setOpenShelves(new Set());
+    }
+  }, [effectiveZone, shelfFilter]);
+
+  const applyLocationScan = async (code: string) => {
+    setScanOpen(false);
+    try {
+      const res = (await api.resolveLocation(code)) as {
+        kind: string;
+        zone?: string;
+        shelf?: string;
+        warehouse?: { code?: string };
+      };
+      if (res.warehouse?.code && res.warehouse.code !== deviceWh?.code) {
+        setError(`Scanned location is in ${res.warehouse.code}, not ${deviceWh?.code}.`);
+        return;
+      }
+      if (res.kind === "zone" && res.zone) {
+        setZone(res.zone);
+        setShelfFilter("");
+      } else if (res.kind === "shelf" && res.zone && res.shelf) {
+        setZone(res.zone);
+        setShelfFilter(res.shelf);
+      } else {
+        setError("Scan a zone (WSP.A) or shelf (WSP.AS05) label.");
+      }
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const renderBinRow = (b: Bin) => {
+    const row = edits[b.id] ?? { barcode: "", qty: "" };
+    const loc = `${b.shelf}/${b.bin}`;
+    const sku = b.variantSku ?? b.productSku;
+    const rowResult = result?.results.find((r) => r.binId === b.id);
+    const hasInput = row.barcode.trim() || row.qty.trim();
+    return (
+      <div
+        key={b.id}
+        className={[
+          "rounded-xl bg-white p-3 ring-1 shadow-sm",
+          rowResult?.status === "error"
+            ? "ring-red-300 bg-red-50/30"
+            : rowResult?.status === "applied"
+              ? "ring-emerald-300 bg-emerald-50/20"
+              : hasInput
+                ? "ring-[#003087]/40"
+                : "ring-slate-200",
+        ].join(" ")}
+      >
+        <div className="mb-2 flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="font-mono text-sm font-bold text-[#003087]">{loc}</div>
+            <div className="truncate text-xs text-slate-600">
+              {b.productName ?? "Empty"}
+              {sku ? ` · ${sku}` : ""}
+            </div>
+          </div>
+          <div className="shrink-0 text-right">
+            <div className="text-[10px] uppercase text-slate-400">Now</div>
+            <div className="font-bold tabular-nums text-sm">{b.qty ?? 0}</div>
+          </div>
+        </div>
+        <div className="grid grid-cols-[1fr_auto] gap-2">
+          <input
+            type="text"
+            placeholder="Barcode / SKU"
+            value={row.barcode}
+            onChange={(e) => setRow(b.id, { barcode: e.target.value })}
+            className={inputCls}
+            aria-label={`Barcode ${loc}`}
+          />
+          <button
+            type="button"
+            onClick={() => setScanBinId(b.id)}
+            className="h-10 w-10 shrink-0 rounded-xl border border-slate-300 bg-slate-50 text-lg"
+            aria-label={`Scan barcode for ${loc}`}
+          >
+            📷
+          </button>
+        </div>
+        <input
+          type="number"
+          min={0}
+          step={1}
+          placeholder="New qty"
+          value={row.qty}
+          onChange={(e) => setRow(b.id, { qty: e.target.value })}
+          className={[inputCls, "mt-2"].join(" ")}
+          aria-label={`Qty ${loc}`}
+        />
+        {rowResult?.status === "error" && (
+          <div className="mt-2 text-xs text-red-600">{rowResult.message}</div>
+        )}
+      </div>
+    );
+  };
 
   const setRow = (binId: string, patch: Partial<RowEdit>) => {
     setEdits((prev) => ({
@@ -246,6 +364,14 @@ export const MobileBulkZone = () => {
           </select>
         </label>
 
+        <button
+          type="button"
+          onClick={() => setScanOpen(true)}
+          className="mb-3 w-full rounded-xl border border-dashed border-[#003087]/40 bg-blue-50/50 py-2.5 text-sm font-semibold text-[#003087]"
+        >
+          Scan zone or shelf label
+        </button>
+
         {/* Shelf filter chips */}
         {shelves.length > 1 && (
           <div className="mb-3">
@@ -298,77 +424,47 @@ export const MobileBulkZone = () => {
         </div>
 
         <div className="space-y-2">
-          {zoneBins.map((b) => {
-            const row = edits[b.id] ?? { barcode: "", qty: "" };
-            const loc = `${b.shelf}/${b.bin}`;
-            const sku = b.variantSku ?? b.productSku;
-            const rowResult = result?.results.find((r) => r.binId === b.id);
-            const hasInput = row.barcode.trim() || row.qty.trim();
-            return (
-              <div
-                key={b.id}
-                className={[
-                  "rounded-xl bg-white p-3 ring-1 shadow-sm",
-                  rowResult?.status === "error"
-                    ? "ring-red-300 bg-red-50/30"
-                    : rowResult?.status === "applied"
-                    ? "ring-emerald-300 bg-emerald-50/20"
-                    : hasInput
-                    ? "ring-[#003087]/40"
-                    : "ring-slate-200",
-                ].join(" ")}
-              >
-                <div className="mb-2 flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <div className="font-mono text-sm font-bold text-[#003087]">
-                      {loc}
-                    </div>
-                    <div className="truncate text-xs text-slate-600">
-                      {b.productName ?? "Empty"}
-                      {sku ? ` · ${sku}` : ""}
-                    </div>
-                  </div>
-                  <div className="shrink-0 text-right">
-                    <div className="text-[10px] uppercase text-slate-400">Now</div>
-                    <div className="font-bold tabular-nums text-sm">{b.qty ?? 0}</div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-[1fr_auto] gap-2">
-                  <input
-                    type="text"
-                    placeholder="Barcode / SKU"
-                    value={row.barcode}
-                    onChange={(e) => setRow(b.id, { barcode: e.target.value })}
-                    className={inputCls}
-                    aria-label={`Barcode ${loc}`}
-                  />
+          {!shelfFilter && shelfGroups.length > 1 ? (
+            shelfGroups.map(([shelf, groupBins]) => {
+              const open = openShelves.has(shelf);
+              return (
+                <div
+                  key={shelf}
+                  className="rounded-xl bg-slate-50 ring-1 ring-slate-200 overflow-hidden"
+                >
                   <button
                     type="button"
-                    onClick={() => setScanBinId(b.id)}
-                    className="h-10 w-10 shrink-0 rounded-xl border border-slate-300 bg-slate-50 text-lg"
-                    aria-label={`Scan barcode for ${loc}`}
+                    onClick={() =>
+                      setOpenShelves((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(shelf)) next.delete(shelf);
+                        else next.add(shelf);
+                        return next;
+                      })
+                    }
+                    className="flex w-full items-center justify-between px-4 py-3 text-left bg-white"
                   >
-                    📷
+                    <div>
+                      <div className="font-mono text-sm font-bold text-[#003087]">
+                        Shelf {shelf}
+                      </div>
+                      <div className="text-xs text-slate-500">
+                        {groupBins.length} bins
+                      </div>
+                    </div>
+                    <span className="text-slate-400">{open ? "▼" : "▶"}</span>
                   </button>
+                  {open && (
+                    <div className="space-y-2 p-2 border-t border-slate-200">
+                      {groupBins.map((b) => renderBinRow(b))}
+                    </div>
+                  )}
                 </div>
-                <input
-                  type="number"
-                  min={0}
-                  step={1}
-                  placeholder="New qty"
-                  value={row.qty}
-                  onChange={(e) => setRow(b.id, { qty: e.target.value })}
-                  className={[inputCls, "mt-2"].join(" ")}
-                  aria-label={`Qty ${loc}`}
-                />
-
-                {rowResult?.status === "error" && (
-                  <div className="mt-2 text-xs text-red-600">{rowResult.message}</div>
-                )}
-              </div>
-            );
-          })}
+              );
+            })
+          ) : (
+            zoneBins.map((b) => renderBinRow(b))
+          )}
 
           {!loading && zoneBins.length === 0 && (
             <div className="rounded-xl bg-white px-4 py-8 text-center text-sm text-slate-500 ring-1 ring-slate-200">
@@ -402,6 +498,13 @@ export const MobileBulkZone = () => {
             setRow(scanBinId, { barcode: text.trim() });
             setScanBinId(null);
           }}
+        />
+      )}
+      {scanOpen && (
+        <BarcodeScanner
+          active
+          onClose={() => setScanOpen(false)}
+          onResult={(text) => void applyLocationScan(text.trim())}
         />
       )}
     </div>

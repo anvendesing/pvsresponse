@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import {
@@ -25,10 +25,12 @@ import { Input } from "@/components/common/Input";
 import { Toolbar } from "@/components/common/Toolbar";
 import { EmptyState } from "@/components/common/EmptyState";
 import { ProductEditor } from "@/components/products/ProductEditor";
+import { ProductSupplyOutlookPanel } from "@/components/products/ProductSupplyOutlookPanel";
 import { ProductVariantsTable, countVariantRows, filterVariantRows } from "@/components/products/ProductVariantsTable";
 import { NormalizeUomsModal } from "@/components/products/NormalizeUomsModal";
 import { effectiveUom, type Product, type ProductType } from "@/data/types";
 import { inr, num } from "@/lib/format";
+import { csvStamp, downloadCsv } from "@/lib/csv-export";
 import { api, auth, resolveUploadUrl } from "@/lib/api";
 import { useApi } from "@/hooks/useApi";
 
@@ -46,6 +48,7 @@ const typeChip = (t: ProductType) => {
 export const Products = () => {
   const [viewTab, setViewTab] = useState<"products" | "variants">("products");
   const [q, setQ] = useState("");
+  const [debouncedQ, setDebouncedQ] = useState("");
   const [type, setType] = useState<ProductType | "all">("all");
   const [selected, setSelected] = useState<Product | null>(null);
   const [editorMode, setEditorMode] = useState<"create" | "edit" | null>(null);
@@ -76,34 +79,28 @@ export const Products = () => {
     }
   };
 
-  const live = useApi(() => api.products({ limit: 500 }), []);
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebouncedQ(q), 250);
+    return () => window.clearTimeout(t);
+  }, [q]);
+
+  const live = useApi(
+    () =>
+      api.products({
+        q: debouncedQ.trim() || undefined,
+        type: type !== "all" ? type : undefined,
+        limit: debouncedQ.trim() ? 500 : 2000,
+      }),
+    [debouncedQ, type]
+  );
   const products = live.data ?? [];
   const variantCount = useMemo(() => countVariantRows(products), [products]);
   const filteredVariants = useMemo(
-    () => filterVariantRows(products, q, type),
-    [products, q, type]
+    () => filterVariantRows(products, debouncedQ, "all"),
+    [products, debouncedQ]
   );
 
-  const filtered = useMemo(() => {
-    return products.filter((p) => {
-      if (type !== "all" && p.type !== type) return false;
-      if (!q) return true;
-      const t = q.toLowerCase();
-      return (
-        p.name.toLowerCase().includes(t) ||
-        p.sku.toLowerCase().includes(t) ||
-        p.barcode.toLowerCase().includes(t) ||
-        (p.category?.name ?? "").toLowerCase().includes(t) ||
-        (p.variants ?? []).some(
-          (v) =>
-            v.sku.toLowerCase().includes(t) ||
-            (v.barcode ?? "").toLowerCase().includes(t) ||
-            (v.size ?? "").toLowerCase().includes(t) ||
-            (v.color ?? "").toLowerCase().includes(t)
-        )
-      );
-    });
-  }, [q, type, products]);
+  const filtered = products;
 
   const columns: Column<Product>[] = [
     {
@@ -162,7 +159,7 @@ export const Products = () => {
       header: "Variants / Stock",
       align: "center",
       sortable: true,
-      sortValue: (r) => r.stockOnHand,
+      sortValue: (r) => productEffective(r),
       cell: (r) => <VariantStockCell product={r} />,
       width: "180px",
     },
@@ -240,6 +237,73 @@ export const Products = () => {
     }
   };
 
+  const handleExport = () => {
+    const stamp = csvStamp();
+    if (viewTab === "variants") {
+      downloadCsv(
+        `products-variants-${stamp}.csv`,
+        [
+          "Parent SKU",
+          "Parent Name",
+          "Type",
+          "Variant SKU",
+          "Size",
+          "Color",
+          "UOM",
+          "Stock",
+          "Cost",
+          "Price",
+          "Active",
+        ],
+        filteredVariants.map(({ product, variant }) => [
+          product.sku,
+          product.name,
+          product.type,
+          variant.sku,
+          variant.size ?? "",
+          variant.color ?? "",
+          variant.uom ?? product.uom,
+          variant.stockOnHand,
+          variant.costPriceOverride ?? product.costPrice,
+          variant.sellingPriceOverride ?? product.sellingPrice,
+          variant.active ? "yes" : "no",
+        ])
+      );
+      return;
+    }
+    downloadCsv(
+      `products-${stamp}.csv`,
+      [
+        "SKU",
+        "Name",
+        "Type",
+        "Category",
+        "UOM",
+        "Barcode",
+        "Stock",
+        "Effective",
+        "Reorder",
+        "Cost",
+        "Price",
+        "State",
+      ],
+      filtered.map((p) => [
+        p.sku,
+        p.name,
+        p.type,
+        p.category?.name ?? "",
+        p.uom,
+        p.barcode,
+        p.stockOnHand,
+        p.pipeline?.effective ?? p.stockOnHand,
+        p.reorderLevel,
+        p.costPrice,
+        p.sellingPrice,
+        p.state,
+      ])
+    );
+  };
+
   return (
     <div className="h-full flex flex-col">
       <Toolbar
@@ -294,7 +358,13 @@ export const Products = () => {
             <Button variant="outline" size="sm" icon={<Upload size={14} />}>
               Import
             </Button>
-            <Button variant="outline" size="sm" icon={<Download size={14} />}>
+            <Button
+              variant="outline"
+              size="sm"
+              icon={<Download size={14} />}
+              onClick={handleExport}
+              title={`Export ${viewTab === "variants" ? "variants" : "products"} as CSV`}
+            >
               Export
             </Button>
             <Button
@@ -387,8 +457,8 @@ export const Products = () => {
             ) : (
               <ProductVariantsTable
                 products={products}
-                q={q}
-                type={type}
+                q={debouncedQ}
+                type="all"
                 loading={live.loading}
                 error={live.error}
                 onRetry={live.refetch}
@@ -463,7 +533,23 @@ export const Products = () => {
                 </div>
               )}
               <div className="grid grid-cols-2 gap-3">
-                <Stat label="On Hand" value={num(selected.stockOnHand)} />
+                <Stat label="On Hand" value={`${num(selected.stockOnHand)} ${selected.uom}`} />
+                <Stat
+                  label="Expected"
+                  value={
+                    productIncoming(selected) > 0
+                      ? `+${num(productIncoming(selected))} ${selected.uom}`
+                      : "—"
+                  }
+                  hint={
+                    productIncoming(selected) > 0 ? incomingDetail(selected) : undefined
+                  }
+                />
+                <Stat
+                  label="Supply outlook"
+                  value={`${num(productEffective(selected))} ${selected.uom}`}
+                  hint="On hand + incoming PO/MO (not yet in bins)"
+                />
                 <Stat label="Reorder" value={num(selected.reorderLevel)} />
                 <Stat label="Cost" value={inr(selected.costPrice)} />
                 <Stat label="Selling" value={inr(selected.sellingPrice)} />
@@ -471,6 +557,7 @@ export const Products = () => {
                 <Stat label="GST" value={`${selected.gstRate ?? 18}%`} />
                 <Stat label="UOM" value={selected.uom} />
               </div>
+              <ProductSupplyOutlookPanel productId={selected.id} uom={selected.uom} />
               <Card title="Attributes" noPadding>
                 <div className="divide-y divide-border">
                   <Row k="Category" v={selected.category?.name ?? "—"} />
@@ -735,10 +822,19 @@ const DeleteProductDialog = ({
   </div>
 );
 
-const Stat = ({ label, value }: { label: string; value: string }) => (
+const Stat = ({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+}) => (
   <div className="bg-canvas border border-border rounded-md px-3 py-2">
     <div className="text-caption text-ink-muted uppercase">{label}</div>
     <div className="text-body font-bold text-ink mt-0.5 tnum">{value}</div>
+    {hint && <div className="text-caption text-ink-muted mt-0.5 leading-snug">{hint}</div>}
   </div>
 );
 
@@ -764,6 +860,33 @@ const stockTone = (
 const stockClass = (tone: ReturnType<typeof stockTone>) =>
   tone === "danger" ? "text-danger" : tone === "warning" ? "text-warning" : "text-ink";
 
+const productIncoming = (p: Product) =>
+  (p.pipeline?.poPipeline ?? 0) + (p.pipeline?.moPipeline ?? 0);
+
+const productEffective = (p: Product) => p.pipeline?.effective ?? p.stockOnHand;
+
+const incomingDetail = (p: Product) => {
+  const po = p.pipeline?.poPipeline ?? 0;
+  const mo = p.pipeline?.moPipeline ?? 0;
+  const parts: string[] = [];
+  if (po > 0) parts.push(`${num(po)} on open PO${po !== 1 ? "s" : ""}`);
+  if (mo > 0) parts.push(`${num(mo)} in production`);
+  return parts.join(" · ");
+};
+
+const IncomingBadge = ({ product }: { product: Product }) => {
+  const incoming = productIncoming(product);
+  if (incoming <= 0) return null;
+  return (
+    <span
+      className="text-caption text-info tnum leading-tight"
+      title={`Expected supply not yet received: ${incomingDetail(product)}`}
+    >
+      +{num(incoming)} expected
+    </span>
+  );
+};
+
 // Combined cell for the "Variants / Stock" column. Replaces the old separate
 // "On Hand" column - the parent total still drives sort and row tone, while
 // hovering reveals the per-variant breakdown when a product has variants
@@ -778,10 +901,10 @@ const VariantStockCell = ({ product }: { product: Product }) => {
 
   const variants = product.variants ?? [];
   const hasVariants = variants.length > 0;
-  const variantSum = hasVariants
-    ? variants.reduce((s, v) => s + v.stockOnHand, 0)
-    : 0;
-  const parentTone = stockTone(product.stockOnHand, product.reorderLevel);
+  const incoming = productIncoming(product);
+  const effective = productEffective(product);
+  const parentTone = stockTone(effective, product.reorderLevel);
+  const onHandTone = stockTone(product.stockOnHand, product.reorderLevel);
   const anyNegativeVariant = hasVariants && variants.some((v) => v.stockOnHand < 0);
 
   const recomputePos = () => {
@@ -815,29 +938,35 @@ const VariantStockCell = ({ product }: { product: Product }) => {
     <>
       <div
         ref={triggerRef}
-        className="inline-flex items-center justify-center gap-1.5 cursor-help select-none"
+        className="inline-flex flex-col items-center justify-center gap-0.5 cursor-help select-none min-w-[4rem]"
         onMouseEnter={onEnter}
         onMouseLeave={onLeave}
       >
         {hasVariants ? (
           <>
-            <Chip
-              size="sm"
-              tone={anyNegativeVariant ? "danger" : "info"}
-              icon={<Layers size={11} />}
-            >
-              {variants.length}
-            </Chip>
-            <span
-              className={`font-semibold tnum text-body-sm ${stockClass(parentTone)}`}
-            >
-              {num(product.stockOnHand)}
-            </span>
+            <div className="inline-flex items-center gap-1.5">
+              <Chip
+                size="sm"
+                tone={anyNegativeVariant ? "danger" : "info"}
+                icon={<Layers size={11} />}
+              >
+                {variants.length}
+              </Chip>
+              <span
+                className={`font-semibold tnum text-body-sm ${stockClass(onHandTone)}`}
+              >
+                {num(product.stockOnHand)}
+              </span>
+            </div>
+            <IncomingBadge product={product} />
           </>
         ) : (
-          <span className={`font-semibold tnum text-body-sm ${stockClass(parentTone)}`}>
-            {num(product.stockOnHand)}
-          </span>
+          <>
+            <span className={`font-semibold tnum text-body-sm ${stockClass(onHandTone)}`}>
+              {num(product.stockOnHand)}
+            </span>
+            <IncomingBadge product={product} />
+          </>
         )}
       </div>
       {open && pos
@@ -938,6 +1067,12 @@ const VariantStockCell = ({ product }: { product: Product }) => {
                     </tfoot>
                   </table>
                   <div className="px-3 py-2 border-t border-border flex flex-wrap items-center justify-between gap-2">
+                    {incoming > 0 && (
+                      <span className="text-caption text-info tnum">
+                        Expected: +{num(incoming)} {product.uom}
+                        <span className="text-ink-muted"> · outlook {num(effective)}</span>
+                      </span>
+                    )}
                     <span className="text-caption text-ink-muted">
                       Packaged total in bulk UoM:{" "}
                       <span className="tnum font-semibold text-ink">
@@ -971,26 +1106,58 @@ const VariantStockCell = ({ product }: { product: Product }) => {
                   <div className="flex items-center justify-between">
                     <span className="text-ink-muted">On hand</span>
                     <span
-                      className={`tnum font-bold ${stockClass(parentTone)}`}
+                      className={`tnum font-bold ${stockClass(onHandTone)}`}
                     >
                       {num(product.stockOnHand)} {product.uom}
                     </span>
                   </div>
+                  {incoming > 0 && (
+                    <>
+                      {(product.pipeline?.poPipeline ?? 0) > 0 && (
+                        <div className="flex items-center justify-between">
+                          <span className="text-ink-muted">Open POs</span>
+                          <span className="tnum font-semibold text-info">
+                            +{num(product.pipeline!.poPipeline)} {product.uom}
+                          </span>
+                        </div>
+                      )}
+                      {(product.pipeline?.moPipeline ?? 0) > 0 && (
+                        <div className="flex items-center justify-between">
+                          <span className="text-ink-muted">In production</span>
+                          <span className="tnum font-semibold text-info">
+                            +{num(product.pipeline!.moPipeline)} {product.uom}
+                          </span>
+                        </div>
+                      )}
+                      <div className="flex items-center justify-between">
+                        <span className="text-ink-muted">Supply outlook</span>
+                        <span className={`tnum font-bold ${stockClass(parentTone)}`}>
+                          {num(effective)} {product.uom}
+                        </span>
+                      </div>
+                    </>
+                  )}
                   <div className="flex items-center justify-between">
                     <span className="text-ink-muted">Reorder level</span>
                     <span className="tnum font-semibold text-ink">
                       {num(product.reorderLevel)} {product.uom}
                     </span>
                   </div>
-                  {parentTone === "danger" && (
+                  {parentTone === "danger" && product.stockOnHand < 0 && (
                     <div className="text-caption text-danger pt-1">
                       Negative on-hand: more units issued than recorded. Recount in
                       Inventory.
                     </div>
                   )}
-                  {parentTone === "warning" && (
+                  {parentTone === "warning" && effective <= product.reorderLevel && (
                     <div className="text-caption text-warning pt-1">
-                      At or below reorder level. Consider raising a purchase order.
+                      Supply outlook at or below reorder level. Consider raising a purchase
+                      order.
+                    </div>
+                  )}
+                  {onHandTone === "warning" && parentTone === "neutral" && incoming > 0 && (
+                    <div className="text-caption text-info pt-1">
+                      On hand is low but {incomingDetail(product)} — no new order needed yet.
                     </div>
                   )}
                 </div>

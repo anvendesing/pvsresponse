@@ -5,6 +5,27 @@
 // handler.
 import { db } from "../db.js";
 
+// Imported (external-channel) orders use their own invoice series so
+// reports and audits can distinguish channel revenue from back-office
+// billing at a glance. The base sequence starts at 1 so the first
+// imported invoice is IMP-INV-2026-0001 regardless of how many B2B
+// invoices exist.
+export const nextImportedInvoiceNo = async (
+  year: number,
+  base = 1
+): Promise<string> => {
+  const where = { startsWith: `IMP-INV-${year}-` };
+  const rows = await db.invoice.findMany({
+    where: { invoiceNo: where },
+    select: { invoiceNo: true },
+  });
+  const tail = rows
+    .map((r) => parseInt(r.invoiceNo.split("-").pop() ?? "0", 10))
+    .filter((n) => Number.isFinite(n));
+  const max = tail.length > 0 ? Math.max(...tail) : base - 1;
+  return `IMP-INV-${year}-${String(max + 1).padStart(4, "0")}`;
+};
+
 export const nextFulfilmentDocNo = async (
   prefix: "PL" | "PS" | "INV",
   year: number,

@@ -50,6 +50,11 @@ import {
 } from "@/lib/api";
 import { effectiveUom } from "@/data/types";
 import type { Bom, BomByproductRow, BomItem, Product } from "@/data/types";
+import {
+  BomOperationsPanel,
+  freshOperation,
+  type EditableOperation,
+} from "@/components/manufacturing/BomOperationsPanel";
 import { cn } from "@/lib/cn";
 
 interface Props {
@@ -69,7 +74,7 @@ interface Props {
 
 // Working copy of the items list - mutable, validated client-side
 // before submit.
-type EditableItem = BomItem & { tempKey: string };
+type EditableItem = BomItem & { tempKey: string; operationSeq?: number };
 type EditableByproduct = BomByproductRow & { tempKey: string };
 
 const fresh = (productId?: string, products?: Product[]): EditableItem => {
@@ -256,6 +261,7 @@ export const BomEditor = ({
     () =>
       (bom?.items ?? []).map((i) => ({
         ...i,
+        operationSeq: i.operationSeq ?? (i.bomOperationId ? undefined : 1),
         tempKey: Math.random().toString(36).slice(2),
       }))
   );
@@ -266,7 +272,22 @@ export const BomEditor = ({
         tempKey: Math.random().toString(36).slice(2),
       }))
   );
-  const [bomTab, setBomTab] = useState<"consumed" | "released">("consumed");
+  const [operations, setOperations] = useState<EditableOperation[]>(() => {
+    if (bom?.operations?.length) {
+      return bom.operations.map((o) => ({
+        ...o,
+        tempKey: o.id ?? Math.random().toString(36).slice(2),
+        eligibleLineIds: o.eligibleLineIds ?? [],
+      }));
+    }
+    return [freshOperation(1)];
+  });
+  const [operationDependencies, setOperationDependencies] = useState(
+    bom?.operationDependencies ?? false
+  );
+  const [bomTab, setBomTab] = useState<"consumed" | "released" | "operations">(
+    "consumed"
+  );
 
   // Right-pane preview: which BOM are we visualising? When the root
   // BOM exists (edit mode) we always preview it. When the user clicks
@@ -522,11 +543,25 @@ export const BomEditor = ({
       defaultFacilityId: defaultFacilityId || null,
       defaultLineId: defaultLineId || null,
       defaultMachineId: defaultMachineId || null,
+      operationDependencies,
+      operations: operations.map((o) => ({
+        seq: o.seq,
+        name: o.name.trim(),
+        description: o.description ?? undefined,
+        facilityId: o.facilityId ?? null,
+        lineId: o.lineId ?? null,
+        machineId: o.machineId ?? null,
+        durationMinutes: o.durationMinutes ?? null,
+        requiresQa: o.requiresQa,
+        blockedBySeq: operationDependencies ? (o.blockedBySeq ?? null) : null,
+        eligibleLineIds: o.eligibleLineIds?.length ? o.eligibleLineIds : undefined,
+      })),
       items: items.map((i) => ({
         productId: i.productId!,
         qty: i.qty,
         uom: i.uom,
         scrapPct: i.scrapPct,
+        operationSeq: i.operationSeq ?? operations[0]?.seq ?? 1,
       })),
       byproducts: byproducts.map((b) => ({
         productId: b.productId!,
@@ -1028,7 +1063,21 @@ export const BomEditor = ({
               >
                 Released ({byproducts.length})
               </button>
+              <button
+                type="button"
+                className={cn(
+                  "px-3 py-1.5 rounded-md text-body-sm font-semibold",
+                  bomTab === "operations"
+                    ? "bg-primary text-white"
+                    : "text-ink-muted hover:bg-canvas"
+                )}
+                onClick={() => setBomTab("operations")}
+              >
+                Operations ({operations.length})
+              </button>
             </div>
+            {bomTab !== "operations" && (
+            <>
             <div className="px-4 py-2 border-b border-border flex items-center justify-between">
               <div>
                 <div className="text-caption text-ink-muted uppercase font-semibold">
@@ -1117,6 +1166,10 @@ export const BomEditor = ({
                         key={it.tempKey}
                         item={it}
                         products={products}
+                        operationSteps={operations.map((o) => ({
+                          seq: o.seq,
+                          name: o.name,
+                        }))}
                         isPickerOpen={pickerFor === it.tempKey}
                         onPickerOpen={() => setPickerFor(it.tempKey)}
                         onPickerClose={() => setPickerFor(null)}
@@ -1383,6 +1436,18 @@ export const BomEditor = ({
                 </div>
               )}
             </div>
+            </>
+            )}
+            {bomTab === "operations" && (
+              <BomOperationsPanel
+                operations={operations}
+                operationDependencies={operationDependencies}
+                lineOptions={allLines}
+                machineOptions={allMachines}
+                onChange={setOperations}
+                onDependenciesChange={setOperationDependencies}
+              />
+            )}
           </div>
 
           {/* Right: live tree + where-used */}
@@ -1729,6 +1794,7 @@ const CloneModal = ({
 const ComponentRow = ({
   item,
   products,
+  operationSteps,
   isPickerOpen,
   onPickerOpen,
   onPickerClose,
@@ -1739,6 +1805,7 @@ const ComponentRow = ({
 }: {
   item: EditableItem;
   products: Product[];
+  operationSteps?: Array<{ seq: number; name: string }>;
   isPickerOpen: boolean;
   onPickerOpen: () => void;
   onPickerClose: () => void;
@@ -1778,7 +1845,12 @@ const ComponentRow = ({
   return (
     <div className="px-3 py-2 hover:bg-canvas/50">
       <div className="grid grid-cols-12 gap-2 items-center">
-        <div className="col-span-5 min-w-0">
+        <div
+          className={cn(
+            "min-w-0",
+            (operationSteps?.length ?? 0) > 1 ? "col-span-3" : "col-span-4"
+          )}
+        >
           {item.productId ? (
             <button
               onClick={onPickerOpen}
@@ -1798,7 +1870,25 @@ const ComponentRow = ({
             </Button>
           )}
         </div>
-        <div className="col-span-2">
+        {(operationSteps?.length ?? 0) > 1 && (
+          <div className="col-span-2">
+            <select
+              value={item.operationSeq ?? operationSteps![0]!.seq}
+              onChange={(e) =>
+                onPatch({ operationSeq: parseInt(e.target.value, 10) })
+              }
+              className="h-8 w-full border border-border rounded text-caption px-1"
+              title="Consume at operation"
+            >
+              {operationSteps!.map((s) => (
+                <option key={s.seq} value={s.seq}>
+                  {s.seq}. {s.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
+        <div className={cn("col-span-2", (operationSteps?.length ?? 0) <= 1 && "col-start-auto")}>
           <Input
             size="sm"
             type="number"
@@ -1838,7 +1928,12 @@ const ComponentRow = ({
             <span className="text-caption text-ink-muted">%</span>
           </div>
         </div>
-        <div className="col-span-2 flex items-center justify-end gap-1">
+        <div
+          className={cn(
+            "flex items-center justify-end gap-1",
+            (operationSteps?.length ?? 0) > 1 ? "col-span-2" : "col-span-3"
+          )}
+        >
           {item.hasSubAssembly && (
             <button
               onClick={onDrillIn}

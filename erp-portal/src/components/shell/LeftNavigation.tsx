@@ -45,6 +45,7 @@ const NAV_ROLES: Record<string, string[]> = {
   transfers:     ["admin", "supervisor", "warehouse"],
   "warehouse-audit": ["admin", "warehouse"],
   manufacturing: ["admin", "supervisor"],
+  "production-log": ["admin", "supervisor"],
   boms:          ["admin", "supervisor"],
   productivity:  ["admin", "supervisor"],
   transport:     ["admin", "supervisor", "warehouse"],
@@ -83,11 +84,12 @@ const ALL_ITEMS = [
   { id: "transfers", label: "Transfers", icon: ArrowRightLeft, path: "/transfers" },
   // `end` = exact path only (avoids /manufacturing also matching /manufacturing/boms)
   { id: "manufacturing", label: "Manufacturing", icon: Factory, path: "/manufacturing", end: true },
+  { id: "production-log", label: "Production Log", icon: BarChart3, path: "/manufacturing/log" },
   { id: "boms", label: "BOMs", icon: Network, path: "/manufacturing/boms" },
   { id: "productivity", label: "Productivity", icon: Users, path: "/productivity" },
   { id: "transport", label: "Transport", icon: Truck, path: "/transport" },
   { id: "billing", label: "Billing", icon: Receipt, path: "/billing" },
-  { id: "reports", label: "Reports", icon: BarChart3, path: "/reports" },
+  { id: "reports", label: "Reports", icon: BarChart3, path: "/reports", end: true },
   { id: "container-reports", label: "Containers", icon: Boxes, path: "/reports/containers" },
   { id: "warehouse-audit", label: "WH Audit", icon: ShieldAlert, path: "/warehouse-audit" },
 ];

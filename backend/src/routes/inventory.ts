@@ -10,6 +10,11 @@ import {
   applyBinRecount,
   RECOUNT_REASONS,
 } from "../lib/bin-stock-update.js";
+import {
+  resolveOrCreateLocationBin,
+  resolveReceiveBinForProduct,
+  LocationLevelBlockedError,
+} from "../lib/location-bin.js";
 
 const transferSchema = z.object({
   productId: z.string(),
@@ -19,6 +24,12 @@ const transferSchema = z.object({
   fromBin: z.string().optional(),
   toBin: z.string().optional(),
   ref: z.string().optional(),
+});
+
+const locationSchema = z.object({
+  zone: z.string().min(1),
+  shelf: z.string().optional(),
+  bin: z.string().optional(),
 });
 
 const adjustSchema = z.object({
@@ -33,11 +44,167 @@ const adjustSchema = z.object({
   warehouseId: z.string(),
   /** When set, the delta is applied to this bin (Manufacturing reads bin qty). */
   binId: z.string().optional(),
+  /** Save stock at zone / shelf / bin (creates the bin row if needed). */
+  location: locationSchema.optional(),
   qty: z.number(),
   reason: z.string().min(2),
 });
 
 export const inventoryRoutes = async (app: FastifyInstance) => {
+  // -----------------------------------------------------------------
+  // GET /zone-pr-variants
+  // -----------------------------------------------------------------
+  // Powers the mobile "Bulk capture — Zone PR" workflow. Returns the
+  // full list of variants that should land in Stock Room (STR) Zone PR
+  // per the active putaway rules, plus each variant's CURRENT capture
+  // state:
+  //   - status "captured" means a Zone PR bin already holds qty > 0
+  //     for that variant.
+  //   - status "pending"  means no Zone PR bin holds stock yet.
+  // The mobile UI uses this single payload to render Pending vs.
+  // Captured tabs without any extra round-trips. The "Clear & redo"
+  // action on the Captured tab calls the existing POST /bins/:id/recount
+  // with qtyAfter=0, which flips the variant back to "pending" on the
+  // next refresh.
+  app.get("/zone-pr-variants", { preHandler: [app.authenticate] }, async () => {
+    const strWh = await db.warehouse.findUnique({
+      where: { code: "STR" },
+      select: { id: true, name: true, code: true },
+    });
+    if (!strWh) {
+      return { warehouse: null, variants: [] };
+    }
+
+    const rules = await db.putawayRule.findMany({
+      where: { toWarehouseId: strWh.id, toZone: "PR", active: true },
+      include: {
+        product: {
+          select: {
+            id: true,
+            sku: true,
+            name: true,
+            type: true,
+            state: true,
+            variants: {
+              select: {
+                id: true,
+                sku: true,
+                barcode: true,
+                size: true,
+                uom: true,
+                stockOnHand: true,
+              },
+              orderBy: { sku: "asc" },
+            },
+          },
+        },
+        variant: {
+          select: {
+            id: true,
+            sku: true,
+            barcode: true,
+            size: true,
+            uom: true,
+            stockOnHand: true,
+          },
+        },
+      },
+    });
+
+    const bins = await db.bin.findMany({
+      where: { warehouseId: strWh.id, zone: "PR" },
+      select: {
+        id: true,
+        code: true,
+        zone: true,
+        shelf: true,
+        bin: true,
+        productId: true,
+        variantId: true,
+        qty: true,
+      },
+    });
+
+    // Index bins by variantId and by productId (for parent-product bins).
+    const binByVariant = new Map<
+      string,
+      { id: string; code: string | null; qty: number }
+    >();
+    const binByProduct = new Map<
+      string,
+      { id: string; code: string | null; qty: number }
+    >();
+    for (const b of bins) {
+      const entry = { id: b.id, code: b.code, qty: b.qty };
+      if (b.variantId) {
+        const prev = binByVariant.get(b.variantId);
+        if (!prev || b.qty > prev.qty) binByVariant.set(b.variantId, entry);
+      } else if (b.productId) {
+        const prev = binByProduct.get(b.productId);
+        if (!prev || b.qty > prev.qty) binByProduct.set(b.productId, entry);
+      }
+    }
+
+    type VariantRow = {
+      productId: string;
+      productSku: string;
+      productName: string;
+      productType: string;
+      variantId: string;
+      variantSku: string;
+      variantBarcode: string | null;
+      variantSize: string | null;
+      variantUom: string | null;
+      stockOnHand: number;
+      status: "pending" | "captured";
+      binId: string | null;
+      binCode: string | null;
+      binQty: number;
+    };
+
+    const out: VariantRow[] = [];
+    const seenVariants = new Set<string>();
+
+    for (const rule of rules) {
+      const targets =
+        rule.variantId && rule.variant ? [rule.variant] : rule.product.variants;
+      for (const v of targets) {
+        if (seenVariants.has(v.id)) continue;
+        seenVariants.add(v.id);
+        const bin = binByVariant.get(v.id) ?? binByProduct.get(rule.product.id);
+        const captured = !!bin && bin.qty > 0;
+        out.push({
+          productId: rule.product.id,
+          productSku: rule.product.sku,
+          productName: rule.product.name,
+          productType: rule.product.type,
+          variantId: v.id,
+          variantSku: v.sku,
+          variantBarcode: v.barcode,
+          variantSize: v.size,
+          variantUom: v.uom,
+          stockOnHand: v.stockOnHand,
+          status: captured ? "captured" : "pending",
+          binId: bin?.id ?? null,
+          binCode: bin?.code ?? null,
+          binQty: bin?.qty ?? 0,
+        });
+      }
+    }
+
+    out.sort((a, b) => a.variantSku.localeCompare(b.variantSku));
+
+    return {
+      warehouse: { id: strWh.id, code: strWh.code, name: strWh.name },
+      counts: {
+        total: out.length,
+        captured: out.filter((r) => r.status === "captured").length,
+        pending: out.filter((r) => r.status === "pending").length,
+      },
+      variants: out,
+    };
+  });
+
   app.get("/ledger", async (req) => {
     const q = (req.query as Record<string, string>) ?? {};
     const limit = q.limit ? parseInt(q.limit, 10) : 200;
@@ -56,6 +223,28 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
         // bulk consumed material).
         variant: { select: { sku: true, size: true } },
         warehouse: { select: { code: true } },
+      },
+    });
+  });
+
+  // GET /inventory/lots — FIFO-ordered stock lots (GRN receipts, etc.)
+  app.get("/inventory/lots", { preHandler: [app.authenticate] }, async (req) => {
+    const q = (req.query as Record<string, string>) ?? {};
+    const onlyOpen = q.includeEmpty !== "1";
+    return db.stockLot.findMany({
+      where: {
+        ...(q.productId ? { productId: q.productId } : {}),
+        ...(q.warehouseId ? { warehouseId: q.warehouseId } : {}),
+        ...(onlyOpen ? { qtyOnHand: { gt: 0 } } : {}),
+      },
+      orderBy: [{ receivedAt: "asc" }, { batchNo: "asc" }],
+      take: q.limit ? parseInt(q.limit, 10) : 500,
+      include: {
+        product: {
+          select: { sku: true, name: true, uom: true, type: true, batchTracked: true },
+        },
+        bin: { select: { zone: true, shelf: true, bin: true, code: true } },
+        warehouse: { select: { code: true, name: true } },
       },
     });
   });
@@ -343,6 +532,15 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
       });
     }
 
+    if (body.binId && body.location) {
+      return reply.code(400).send({
+        error: {
+          code: "location_conflict",
+          message: "Pass either binId or location, not both.",
+        },
+      });
+    }
+
     const result = await db.$transaction(async (tx) => {
       const adjNo = await nextAdjustNo(tx as unknown as typeof db);
       let bin: {
@@ -404,6 +602,52 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
           productId: picked.productId ?? body.productId,
           variantId: variantId ?? picked.variantId,
         };
+      } else if (body.location) {
+        const wh = await tx.warehouse.findUnique({
+          where: { id: body.warehouseId },
+          select: { id: true, code: true, scanPrefix: true },
+        });
+        if (!wh) throw new Error("warehouse_not_found");
+
+        let picked = await resolveOrCreateLocationBin(tx, wh, body.location);
+
+        if (variantId) {
+          if (picked.variantId && picked.variantId !== variantId) {
+            throw new Error("bin_variant_mismatch");
+          }
+          if (picked.productId && picked.productId !== body.productId) {
+            throw new Error("bin_product_mismatch");
+          }
+          if (body.qty > 0 && (!picked.productId || !picked.variantId)) {
+            picked = await tx.bin.update({
+              where: { id: picked.id },
+              data: { productId: body.productId, variantId },
+            });
+          }
+        } else {
+          if (picked.variantId) {
+            throw new Error("bin_is_variant_only");
+          }
+          if (body.qty < 0 && picked.productId && picked.productId !== body.productId) {
+            throw new Error("bin_product_mismatch");
+          }
+          if (body.qty > 0) {
+            if (picked.productId && picked.productId !== body.productId) {
+              throw new Error("bin_product_mismatch");
+            }
+            if (!picked.productId) {
+              picked = await tx.bin.update({
+                where: { id: picked.id },
+                data: { productId: body.productId },
+              });
+            }
+          }
+        }
+        bin = {
+          ...picked,
+          productId: picked.productId ?? body.productId,
+          variantId: variantId ?? picked.variantId,
+        };
       } else {
         // No bin specified — auto-pick. Variant adjustments only
         // search variant-tagged bins; parent/bulk only bins where
@@ -415,7 +659,6 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
           orderBy: { qty: "desc" },
         });
         if (!bin && body.qty > 0) {
-          // Land positive stock in the first empty bin in this warehouse.
           const empty = await tx.bin.findFirst({
             where: {
               warehouseId: body.warehouseId,
@@ -435,6 +678,35 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
               productId: body.productId,
               variantId: variantId ?? null,
             };
+          } else {
+            const wh = await tx.warehouse.findUnique({
+              where: { id: body.warehouseId },
+              select: { id: true, code: true, scanPrefix: true },
+            });
+            if (!wh) throw new Error("warehouse_not_found");
+            const product = await tx.product.findUnique({
+              where: { id: body.productId },
+              select: { sku: true },
+            });
+            if (!product) throw new Error("product_not_found");
+            const bulk = await resolveReceiveBinForProduct(
+              tx,
+              wh,
+              body.productId,
+              product.sku,
+              { variantId: variantId ?? null }
+            );
+            if (variantId) {
+              bin = await tx.bin.update({
+                where: { id: bulk.id },
+                data: { productId: body.productId, variantId },
+              });
+            } else {
+              bin = await tx.bin.update({
+                where: { id: bulk.id },
+                data: { productId: body.productId },
+              });
+            }
           }
         }
       }
@@ -493,7 +765,7 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
           error: {
             code: "no_bin_available",
             message:
-              "No bin holds this product in the chosen warehouse, and no empty bin is free to receive it. Reassign a bin first.",
+              "No bin holds this product in the chosen warehouse. A warehouse-level slot is created automatically on positive adjustments when possible.",
           },
         });
         return null;
@@ -539,6 +811,17 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
             code: "bin_is_variant_only",
             message:
               "That bin holds a sellable variant; bulk/parent stock cannot be mixed in. Pick a parent-only bin or pass the variantId so this becomes a variant-level adjustment.",
+          },
+        });
+        return null;
+      }
+      if (e instanceof LocationLevelBlockedError) {
+        reply.code(409).send({
+          error: {
+            code: "location_level_blocked",
+            message: e.message,
+            level: e.level,
+            available: e.available,
           },
         });
         return null;

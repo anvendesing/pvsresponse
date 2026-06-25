@@ -164,4 +164,4 @@ export const searchProductsForBinAssign = (
   };
 };
 
-export { variantLabel, effectivePrice };
+export { variantLabel, effectivePrice, productMatchesTerm, variantMatchesTerm };

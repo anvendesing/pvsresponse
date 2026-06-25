@@ -1,22 +1,24 @@
 import { useEffect, useMemo, useState } from "react";
-import { RefreshCw, Search } from "lucide-react";
+import { RefreshCw, Search, Truck } from "lucide-react";
 import { Chip } from "@/components/common/Chip";
 import { DataTable, type Column } from "@/components/common/DataTable";
 import { EmptyState } from "@/components/common/EmptyState";
 import { Input } from "@/components/common/Input";
 import { Toolbar } from "@/components/common/Toolbar";
 import { SalesOrderDetail } from "@/components/sales/SalesOrderDetail";
+import { ImportOrderPdfModal } from "@/components/sales/ImportOrderPdfModal";
 import { api, type SalesOrderRow, type SalesOrderStatus } from "@/lib/api";
 import { useApi } from "@/hooks/useApi";
 import { dd, inr } from "@/lib/format";
 import { cn } from "@/lib/cn";
 
-type SourceFilter = "all" | "internal" | "ecommerce";
+type SourceFilter = "all" | "internal" | "ecommerce" | "imported";
 
 const SOURCE_FILTERS: { id: SourceFilter; label: string }[] = [
   { id: "all", label: "All sources" },
   { id: "internal", label: "Back office" },
   { id: "ecommerce", label: "Ecommerce" },
+  { id: "imported", label: "Imported" },
 ];
 
 const STATUS_FILTERS: { id: SalesOrderStatus | "all"; label: string }[] = [
@@ -51,6 +53,7 @@ export const SalesOrders = () => {
   const [status, setStatus] = useState<SalesOrderStatus | "all">("all");
   const [source, setSource] = useState<SourceFilter>("all");
   const [openId, setOpenId] = useState<string | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
 
   const live = useApi(() => api.salesOrders({ limit: 500 }), []);
   const sos = live.data ?? [];
@@ -104,6 +107,11 @@ export const SalesOrders = () => {
           {r.source === "ecommerce" && (
             <Chip tone="primary" size="sm" className="!h-4 !px-1.5 text-[10px] uppercase tracking-wide">
               Ecom
+            </Chip>
+          )}
+          {r.source === "imported" && (
+            <Chip tone="warning" size="sm" className="!h-4 !px-1.5 text-[10px] uppercase tracking-wide">
+              Imp
             </Chip>
           )}
         </div>
@@ -200,19 +208,30 @@ export const SalesOrders = () => {
       <Toolbar
         left={<h2 className="text-h3 font-bold">Sales Orders</h2>}
         right={
-          <button
-            type="button"
-            onClick={() => void live.refetch()}
-            disabled={live.loading}
-            title="Refresh list"
-            className={cn(
-              "h-7 px-3 inline-flex items-center gap-1.5 rounded-md text-caption font-semibold border border-border bg-surface text-ink-muted hover:text-primary hover:border-primary transition-colors",
-              live.loading && "opacity-60 cursor-not-allowed"
-            )}
-          >
-            <RefreshCw size={13} className={cn(live.loading && "animate-spin")} />
-            Refresh
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setImportOpen(true)}
+              title="Import a shipping-label / external order PDF"
+              className="h-7 px-3 inline-flex items-center gap-1.5 rounded-md text-caption font-semibold border border-primary bg-primary text-white hover:bg-primary/90 transition-colors"
+            >
+              <Truck size={13} />
+              Import order PDF
+            </button>
+            <button
+              type="button"
+              onClick={() => void live.refetch()}
+              disabled={live.loading}
+              title="Refresh list"
+              className={cn(
+                "h-7 px-3 inline-flex items-center gap-1.5 rounded-md text-caption font-semibold border border-border bg-surface text-ink-muted hover:text-primary hover:border-primary transition-colors",
+                live.loading && "opacity-60 cursor-not-allowed"
+              )}
+            >
+              <RefreshCw size={13} className={cn(live.loading && "animate-spin")} />
+              Refresh
+            </button>
+          </div>
         }
       />
 
@@ -287,6 +306,15 @@ export const SalesOrders = () => {
           onChanged={() => void live.refetch()}
         />
       )}
+
+      <ImportOrderPdfModal
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onCreated={(soId) => {
+          void live.refetch();
+          setOpenId(soId);
+        }}
+      />
     </div>
   );
 };

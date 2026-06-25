@@ -1,34 +1,18 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { api, auth } from "../../lib/api";
+import { api } from "../../lib/api";
+import type { GrnPurchaseOrder } from "../../lib/api";
+import {
+  GrnMobileAllocation,
+  useGrnAllocationDefaults,
+  useGrnReceiveHints,
+  type MobileGrnAllocation,
+} from "../components/GrnMobileHelpers";
 
 // =====================================================================
-// /m/grn         — list of open purchase orders to receive against
+// /m/grn         — open POs ready to receive (approved + partial)
 // /m/grn/:poId   — receive lines for a specific PO
 // =====================================================================
-// NOTE: The backend gates GRN creation to the "procurement" role.
-// Warehouse staff using this screen must have the "procurement" role
-// assigned by an admin, or the backend role gate on POST /grns must be
-// extended to include "warehouse" (supervisor/admin decision required).
-
-// ── Types ─────────────────────────────────────────────────────────────
-
-interface PoLine {
-  id: string;
-  productId: string;
-  product: { sku: string; name: string; uom: string };
-  variant?: { sku: string; size?: string | null } | null;
-  qtyOrdered: number;
-  qtyReceived: number;
-}
-
-interface PurchaseOrder {
-  id: string;
-  poNo: string;
-  status: string;
-  vendor?: { name: string } | null;
-  items: PoLine[];
-}
 
 type QcStatus = "pending" | "pass" | "rework" | "reject";
 
@@ -45,11 +29,14 @@ const QC_COLOR: Record<QcStatus, string> = {
   reject: "bg-red-100 text-red-700",
 };
 
+const poRemaining = (po: GrnPurchaseOrder) =>
+  po.items.reduce((s, l) => s + Math.max(0, l.qty - l.received), 0);
+
 // ── PO list ───────────────────────────────────────────────────────────
 
 export const MobileGrnList = () => {
   const nav = useNavigate();
-  const [pos, setPos] = useState<PurchaseOrder[]>([]);
+  const [pos, setPos] = useState<GrnPurchaseOrder[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -57,8 +44,8 @@ export const MobileGrnList = () => {
     setLoading(true);
     setError(null);
     try {
-      const result = await api.purchaseOrders({ status: "approved" });
-      setPos(result as unknown as PurchaseOrder[]);
+      const result = await api.purchaseOrdersForGrn();
+      setPos(result);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -66,7 +53,9 @@ export const MobileGrnList = () => {
     }
   }, []);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
 
   if (loading) return <LoadingScreen />;
 
@@ -76,29 +65,35 @@ export const MobileGrnList = () => {
         <h2 className="text-xs font-semibold uppercase tracking-wider text-slate-500">
           Open purchase orders
         </h2>
-        <button
-          type="button"
-          onClick={() => void refresh()}
-          className="text-xs text-[#003087] font-medium"
-        >
-          Refresh
-        </button>
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={() => nav("/m/grn-qc")}
+            className="text-xs text-[#003087] font-medium"
+          >
+            QC queue
+          </button>
+          <button
+            type="button"
+            onClick={() => void refresh()}
+            className="text-xs text-[#003087] font-medium"
+          >
+            Refresh
+          </button>
+        </div>
       </div>
 
       {error && <ErrorBanner message={error} />}
 
-      {pos.length === 0 && !loading && (
+      {pos.length === 0 && !error && (
         <div className="rounded-xl bg-white px-4 py-8 text-center text-sm text-slate-500 ring-1 ring-slate-200">
-          No open purchase orders to receive.
+          No approved or partial POs with qty left to receive.
         </div>
       )}
 
       <div className="space-y-2">
         {pos.map((po) => {
-          const remaining = po.items.reduce(
-            (s, l) => s + Math.max(0, l.qtyOrdered - l.qtyReceived),
-            0
-          );
+          const remaining = poRemaining(po);
           return (
             <button
               key={po.id}
@@ -115,10 +110,11 @@ export const MobileGrnList = () => {
                 </span>
               </div>
               <div className="mt-1 text-sm font-medium text-slate-800 truncate">
-                {po.vendor?.name ?? "—"}
+                {po.vendorName}
               </div>
               <div className="mt-0.5 text-xs text-slate-500">
-                {po.items.length} line{po.items.length === 1 ? "" : "s"} · {remaining} units to receive
+                {po.items.length} line{po.items.length === 1 ? "" : "s"} · {remaining}{" "}
+                units to receive
               </div>
             </button>
           );
@@ -134,35 +130,55 @@ export const MobileGrnReceive = () => {
   const { poId } = useParams<{ poId: string }>();
   const nav = useNavigate();
 
-  const [po, setPo] = useState<PurchaseOrder | null>(null);
+  const [po, setPo] = useState<GrnPurchaseOrder | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [success, setSuccess] = useState(false);
 
-  // Per-line receive quantities (keyed by PO item id)
   const [received, setReceived] = useState<Record<string, string>>({});
   const [rejected, setRejected] = useState<Record<string, string>>({});
+  const [batches, setBatches] = useState<Record<string, string>>({});
   const [qcStatus, setQcStatus] = useState<QcStatus>("pending");
   const [truckNo, setTruckNo] = useState("");
   const [notes, setNotes] = useState("");
+  const [allocations, setAllocations] = useState<
+    Record<string, MobileGrnAllocation[]>
+  >({});
+
+  const productIds = useMemo(
+    () => (po?.items ?? []).map((i) => i.productId),
+    [po?.items]
+  );
+  const hints = useGrnReceiveHints(productIds);
+
+  const allocationItems = useMemo(
+    () =>
+      (po?.items ?? []).map((item) => {
+        const recv = Number(received[item.id] ?? 0);
+        const rej = Number(rejected[item.id] ?? 0);
+        return {
+          id: item.id,
+          productId: item.productId,
+          accepted: Math.max(0, recv - rej),
+        };
+      }),
+    [po?.items, received, rejected]
+  );
+
+  useGrnAllocationDefaults(allocationItems, hints, setAllocations);
 
   const refresh = useCallback(async () => {
     if (!poId) return;
     setLoading(true);
     setError(null);
     try {
-      const result = await fetch(
-        `${import.meta.env.VITE_API_URL}/v1/purchase-orders/${poId}`,
-        { headers: { Authorization: `Bearer ${auth.token()}` } }
-      ).then((r) => r.json());
-      const p = result as PurchaseOrder;
+      const p = await api.getPurchaseOrderForGrn(poId);
       setPo(p);
-      // Pre-fill received qty = remaining to receive
       const initQtys: Record<string, string> = {};
       for (const item of p.items) {
-        const rem = Math.max(0, item.qtyOrdered - item.qtyReceived);
-        initQtys[item.id] = String(rem);
+        const rem = Math.max(0, item.qty - item.received);
+        initQtys[item.id] = rem > 0 ? String(rem) : "0";
       }
       setReceived(initQtys);
     } catch (e) {
@@ -172,7 +188,9 @@ export const MobileGrnReceive = () => {
     }
   }, [poId]);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
 
   const submit = async () => {
     if (!po) return;
@@ -181,11 +199,33 @@ export const MobileGrnReceive = () => {
     try {
       const items = po.items
         .filter((item) => Number(received[item.id] ?? 0) > 0)
-        .map((item) => ({
-          poItemId: item.id,
-          receivedQty: Number(received[item.id] ?? 0),
-          rejectedQty: Number(rejected[item.id] ?? 0),
-        }));
+        .map((item) => {
+          const recv = Number(received[item.id] ?? 0);
+          const rej = Number(rejected[item.id] ?? 0);
+          const accepted = Math.max(0, recv - rej);
+          const rows = allocations[item.id] ?? [];
+          if (accepted > 0 && rows.length > 0) {
+            const sum = rows.reduce((s, a) => s + a.qty, 0);
+            if (Math.abs(sum - accepted) > 0.001) {
+              throw new Error(
+                `${item.product.sku}: bin qty (${sum}) must equal accepted (${accepted}).`
+              );
+            }
+            if (rows.some((a) => !a.binId)) {
+              throw new Error(`${item.product.sku}: pick a bin for every row.`);
+            }
+          }
+          return {
+            poItemId: item.id,
+            receivedQty: recv,
+            rejectedQty: rej,
+            batchNo: batches[item.id]?.trim() || null,
+            allocations:
+              rows.length > 0
+                ? rows.map((a) => ({ binId: a.binId, qty: a.qty }))
+                : undefined,
+          };
+        });
 
       if (items.length === 0) {
         setError("Enter a received quantity for at least one line.");
@@ -198,7 +238,7 @@ export const MobileGrnReceive = () => {
         truckNo: truckNo.trim() || undefined,
         notes: notes.trim() || undefined,
         items,
-      } as Parameters<typeof api.createGrn>[0]);
+      });
 
       setSuccess(true);
     } catch (e) {
@@ -232,7 +272,6 @@ export const MobileGrnReceive = () => {
 
   return (
     <div className="px-4 pt-4 pb-40">
-      {/* Header */}
       <div className="mb-4 rounded-2xl bg-white ring-1 ring-slate-200 shadow-sm overflow-hidden">
         <div className="bg-[#003087] px-4 py-3">
           <div className="flex items-center justify-between">
@@ -245,7 +284,7 @@ export const MobileGrnReceive = () => {
               ← POs
             </button>
           </div>
-          <div className="mt-0.5 text-sm text-blue-100">{po.vendor?.name ?? "—"}</div>
+          <div className="mt-0.5 text-sm text-blue-100">{po.vendorName}</div>
         </div>
         <div className="px-4 py-3 space-y-2">
           <div className="flex items-center gap-2">
@@ -266,7 +305,9 @@ export const MobileGrnReceive = () => {
               className={`flex-1 h-8 rounded-lg border border-slate-200 px-2 text-sm font-semibold ${QC_COLOR[qcStatus]}`}
             >
               {(Object.keys(QC_LABEL) as QcStatus[]).map((s) => (
-                <option key={s} value={s}>{QC_LABEL[s]}</option>
+                <option key={s} value={s}>
+                  {QC_LABEL[s]}
+                </option>
               ))}
             </select>
           </div>
@@ -283,64 +324,106 @@ export const MobileGrnReceive = () => {
         </div>
       </div>
 
-      {/* Lines */}
       <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
         Lines
       </div>
       <div className="space-y-3">
         {po.items.map((item) => {
-          const remaining = Math.max(0, item.qtyOrdered - item.qtyReceived);
-          const sku = item.variant?.sku ?? item.product.sku;
+          const remaining = Math.max(0, item.qty - item.received);
+          const recv = Number(received[item.id] ?? 0);
+          const rej = Number(rejected[item.id] ?? 0);
+          const accepted = Math.max(0, recv - rej);
           return (
-            <div key={item.id} className="rounded-xl bg-white ring-1 ring-slate-200 shadow-sm px-4 py-3 space-y-2">
+            <div
+              key={item.id}
+              className="rounded-xl bg-white ring-1 ring-slate-200 shadow-sm px-4 py-3 space-y-2"
+            >
               <div className="flex items-start justify-between gap-2">
                 <div>
-                  <div className="font-mono text-sm font-semibold text-[#003087]">{sku}</div>
+                  <div className="font-mono text-sm font-semibold text-[#003087]">
+                    {item.product.sku}
+                  </div>
                   <div className="text-sm text-slate-700 truncate">{item.product.name}</div>
-                  {item.variant?.size && (
-                    <div className="text-xs text-slate-500">{item.variant.size}</div>
-                  )}
                 </div>
                 <div className="text-right shrink-0 text-xs text-slate-500">
-                  <div>Ordered: {item.qtyOrdered} {item.product.uom}</div>
-                  <div>Received: {item.qtyReceived}</div>
-                  <div className={remaining > 0 ? "text-amber-700 font-semibold" : "text-emerald-700"}>
+                  <div>
+                    Ordered: {item.qty} {item.product.uom}
+                  </div>
+                  <div>Received: {item.received}</div>
+                  <div
+                    className={
+                      remaining > 0 ? "text-amber-700 font-semibold" : "text-emerald-700"
+                    }
+                  >
                     Remaining: {remaining}
                   </div>
                 </div>
               </div>
               <div className="flex gap-3">
                 <div className="flex-1">
-                  <label className="text-[10px] text-slate-500 uppercase tracking-wide">Receive qty</label>
+                  <label className="text-[10px] text-slate-500 uppercase tracking-wide">
+                    Receive qty
+                  </label>
                   <input
                     type="number"
                     min={0}
                     step={1}
                     value={received[item.id] ?? ""}
-                    onChange={(e) => setReceived((p) => ({ ...p, [item.id]: e.target.value }))}
+                    onChange={(e) =>
+                      setReceived((p) => ({ ...p, [item.id]: e.target.value }))
+                    }
                     className="mt-0.5 w-full h-10 rounded-lg border border-slate-300 bg-slate-50 px-3 text-base font-semibold"
                   />
                 </div>
                 <div className="flex-1">
-                  <label className="text-[10px] text-slate-500 uppercase tracking-wide">Reject qty</label>
+                  <label className="text-[10px] text-slate-500 uppercase tracking-wide">
+                    Reject qty
+                  </label>
                   <input
                     type="number"
                     min={0}
                     step={1}
                     value={rejected[item.id] ?? "0"}
-                    onChange={(e) => setRejected((p) => ({ ...p, [item.id]: e.target.value }))}
+                    onChange={(e) =>
+                      setRejected((p) => ({ ...p, [item.id]: e.target.value }))
+                    }
                     className="mt-0.5 w-full h-10 rounded-lg border border-slate-300 bg-slate-50 px-3 text-base"
                   />
                 </div>
               </div>
+              {Number(received[item.id] ?? 0) > 0 && (
+                <div>
+                  <label className="text-[10px] text-slate-500 uppercase tracking-wide">
+                    Batch / lot
+                  </label>
+                  <input
+                    type="text"
+                    value={batches[item.id] ?? ""}
+                    onChange={(e) => setBatches((p) => ({ ...p, [item.id]: e.target.value }))}
+                    placeholder="Auto if blank"
+                    className="mt-0.5 w-full h-9 rounded-lg border border-slate-200 px-3 text-sm font-mono"
+                  />
+                </div>
+              )}
+              <GrnMobileAllocation
+                acceptedQty={accepted}
+                hint={hints[item.productId]}
+                allocations={allocations[item.id] ?? []}
+                onChange={(next) =>
+                  setAllocations((prev) => ({ ...prev, [item.id]: next }))
+                }
+              />
             </div>
           );
         })}
       </div>
 
-      {error && <div className="mt-3"><ErrorBanner message={error} /></div>}
+      {error && (
+        <div className="mt-3">
+          <ErrorBanner message={error} />
+        </div>
+      )}
 
-      {/* Fixed action bar */}
       <div className="fixed inset-x-0 bottom-[calc(72px+env(safe-area-inset-bottom))] z-30 border-t border-slate-200 bg-white px-4 py-3 shadow-[0_-4px_12px_-8px_rgba(0,0,0,0.15)]">
         <button
           type="button"
@@ -351,14 +434,12 @@ export const MobileGrnReceive = () => {
           {busy ? "Posting GRN…" : "Post GRN"}
         </button>
         <p className="mt-1.5 text-center text-[10px] text-slate-400">
-          Requires procurement role — contact admin if you get a 403.
+          Requires procurement or warehouse role — contact admin if you get a 403.
         </p>
       </div>
     </div>
   );
 };
-
-// ── Shared helpers ────────────────────────────────────────────────────
 
 const LoadingScreen = () => (
   <div className="flex h-[50vh] items-center justify-center text-sm text-slate-400 animate-pulse">

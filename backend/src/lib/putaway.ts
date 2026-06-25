@@ -10,6 +10,9 @@
 //   3. Fallback: any active storage warehouse + auto-pick best bin there
 
 import { db } from "../db.js";
+import {
+  resolveReceiveBinForProduct,
+} from "./location-bin.js";
 
 export interface PutawayDestination {
   warehouseId: string;
@@ -23,7 +26,21 @@ export interface PutawayDestination {
 export type PickBinOptions = {
   /** When false, never assign to an empty bin slot (strict fixed-location). */
   allowEmptyBinFallback?: boolean;
+  /** Prefer bins in this zone within the warehouse (falls back to any zone). */
+  zone?: string;
+  /**
+   * Stock level for bin matching. Set for MO/GRN receive and issue.
+   * undefined = no variant filter (legacy). null = bulk parent only.
+   */
+  variantId?: string | null;
 };
+
+const stockLevelFilter = (opts: PickBinOptions) => {
+  if (opts.variantId === undefined) return {};
+  return opts.variantId != null ? { variantId: opts.variantId } : { variantId: null };
+};
+
+const zoneWhere = (zone?: string) => (zone ? { zone } : {});
 
 // resolvePutawayDestination - returns where a product/variant should go.
 //
@@ -54,8 +71,14 @@ export const resolvePutawayDestination = async (
         fixedBin: true,
       };
     }
+    // Honour the rule's zone (e.g. STR.PR for vacuum-pack staging).
+    // pickBestBin → resolveReceiveBinForProduct will land the product
+    // into a per-product slot inside that zone (one bin per SKU) so the
+    // warehouse tree shows `<warehouse> → Zone <z> → <SKU>`.
     const bin = await pickBestBin(rule.toWarehouseId, productId, {
       allowEmptyBinFallback: true,
+      ...(rule.toZone ? { zone: rule.toZone } : {}),
+      ...(variantId !== undefined ? { variantId: variantId ?? null } : {}),
     });
     return {
       warehouseId: rule.toWarehouseId,
@@ -78,21 +101,58 @@ export const pickBestBin = async (
   options: PickBinOptions = {}
 ) => {
   const allowEmpty = options.allowEmptyBinFallback !== false;
-  const existing = await db.bin.findFirst({
-    where: {
-      warehouseId,
-      productId,
-      qty: { gt: 0 },
-    },
-    orderBy: { qty: "asc" },
-  });
+  const zw = zoneWhere(options.zone);
+  const level = stockLevelFilter(options);
+
+  const findExisting = async (zone?: string) =>
+    db.bin.findFirst({
+      where: {
+        warehouseId,
+        productId,
+        qty: { gt: 0 },
+        ...level,
+        ...zoneWhere(zone),
+      },
+      orderBy: { qty: "asc" },
+    });
+
+  const findEmpty = async (zone?: string) =>
+    db.bin.findFirst({
+      where: {
+        warehouseId,
+        productId: null,
+        variantId: null,
+        qty: 0,
+        ...zoneWhere(zone),
+      },
+      orderBy: [{ zone: "asc" }, { shelf: "asc" }, { bin: "asc" }],
+    });
+
+  let existing = await findExisting(options.zone);
+  if (!existing && options.zone) existing = await findExisting();
   if (existing) return existing;
 
   if (!allowEmpty) return null;
 
-  return db.bin.findFirst({
-    where: { warehouseId, productId: null, qty: 0 },
-    orderBy: [{ zone: "asc" }, { shelf: "asc" }, { bin: "asc" }],
+  let empty = await findEmpty(options.zone);
+  if (!empty && options.zone) empty = await findEmpty();
+  if (empty) return empty;
+
+  const wh = await db.warehouse.findUnique({
+    where: { id: warehouseId },
+    select: { id: true, code: true, scanPrefix: true },
+  });
+  if (!wh) return null;
+
+  const product = await db.product.findUnique({
+    where: { id: productId },
+    select: { sku: true },
+  });
+  if (!product) return null;
+
+  return resolveReceiveBinForProduct(db, wh, productId, product.sku, {
+    zone: options.zone,
+    variantId: options.variantId,
   });
 };
 

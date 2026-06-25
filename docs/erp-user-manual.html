@@ -1,0 +1,1649 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>PVS ERP — User Manual &amp; Training Guide</title>
+  <style>/* PVS ERP User Manual — print / PDF styles (A4) */
+
+:root {
+  --primary: #003087;
+  --primary-light: #eef4ff;
+  --ink: #0f172a;
+  --ink-muted: #475569;
+  --border: #cbd5e1;
+  --code-bg: #f1f5f9;
+}
+
+@page {
+  size: A4;
+  margin: 18mm 16mm 20mm 16mm;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 10.5pt;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: "Segoe UI", Inter, -apple-system, BlinkMacSystemFont, sans-serif;
+  color: var(--ink);
+  line-height: 1.55;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+/* Cover (first page only) */
+.cover-page {
+  page-break-after: always;
+  min-height: 257mm;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  background: linear-gradient(160deg, var(--primary) 0%, #001a4d 100%);
+  color: #fff;
+  padding: 8mm 4mm;
+  margin: -18mm -16mm 0 -16mm;
+  width: calc(100% + 32mm);
+}
+
+.cover-page .cover-top {
+  padding-top: 12mm;
+}
+
+.cover-page .logo-line {
+  font-size: 11pt;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  opacity: 0.85;
+  margin-bottom: 8mm;
+}
+
+.cover-page h1 {
+  font-size: 32pt;
+  font-weight: 800;
+  line-height: 1.1;
+  margin: 0 0 6mm;
+  letter-spacing: -0.02em;
+}
+
+.cover-page .subtitle {
+  font-size: 14pt;
+  font-weight: 400;
+  opacity: 0.92;
+  max-width: 140mm;
+  line-height: 1.45;
+}
+
+.cover-page .cover-meta {
+  font-size: 10pt;
+  opacity: 0.8;
+  border-top: 1px solid rgba(255, 255, 255, 0.25);
+  padding-top: 6mm;
+}
+
+.cover-page .cover-meta p {
+  margin: 0 0 2mm;
+}
+
+/* Main content */
+.manual {
+  max-width: 100%;
+}
+
+.manual > h1:first-of-type {
+  display: none; /* title already on cover */
+}
+
+.manual h1 {
+  font-size: 20pt;
+  font-weight: 800;
+  color: var(--primary);
+  margin: 10mm 0 4mm;
+  padding-bottom: 2mm;
+  border-bottom: 2px solid var(--primary);
+  page-break-after: avoid;
+}
+
+.manual h2 {
+  font-size: 14pt;
+  font-weight: 700;
+  color: var(--ink);
+  margin: 7mm 0 3mm;
+  page-break-after: avoid;
+}
+
+.manual h3 {
+  font-size: 11.5pt;
+  font-weight: 700;
+  margin: 5mm 0 2mm;
+  page-break-after: avoid;
+}
+
+.manual h4 {
+  font-size: 10.5pt;
+  font-weight: 700;
+  margin: 4mm 0 2mm;
+}
+
+.manual p {
+  margin: 0 0 3mm;
+  orphans: 3;
+  widows: 3;
+}
+
+.manual ul,
+.manual ol {
+  margin: 0 0 4mm;
+  padding-left: 6mm;
+}
+
+.manual li {
+  margin-bottom: 1.5mm;
+}
+
+.manual li > ul,
+.manual li > ol {
+  margin-top: 1mm;
+  margin-bottom: 1mm;
+}
+
+.manual hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 6mm 0;
+}
+
+.manual a {
+  color: var(--primary);
+  text-decoration: none;
+}
+
+.manual a[href^="#"] {
+  color: var(--ink-muted);
+}
+
+.manual strong {
+  font-weight: 700;
+}
+
+.manual blockquote {
+  margin: 4mm 0;
+  padding: 3mm 4mm;
+  border-left: 3px solid var(--primary);
+  background: var(--primary-light);
+  color: var(--ink-muted);
+}
+
+.manual code {
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 9pt;
+  background: var(--code-bg);
+  padding: 0.1em 0.35em;
+  border-radius: 3px;
+}
+
+.manual pre {
+  background: #1e293b;
+  color: #e2e8f0;
+  padding: 4mm;
+  border-radius: 4px;
+  overflow-x: auto;
+  font-size: 8.5pt;
+  line-height: 1.45;
+  margin: 3mm 0 5mm;
+  page-break-inside: avoid;
+}
+
+.manual pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+}
+
+.manual table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 3mm 0 5mm;
+  font-size: 9.5pt;
+  page-break-inside: avoid;
+}
+
+.manual thead {
+  background: var(--primary);
+  color: #fff;
+}
+
+.manual th {
+  text-align: left;
+  padding: 2.5mm 3mm;
+  font-weight: 600;
+}
+
+.manual td {
+  padding: 2.5mm 3mm;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.manual tbody tr:nth-child(even) {
+  background: #f8fafc;
+}
+
+.manual img {
+  max-width: 100%;
+  height: auto;
+}
+
+/* Section breaks — major h2 sections start new page after TOC area */
+.manual h2 {
+  page-break-before: auto;
+}
+
+@media print {
+  .manual h1 {
+    page-break-before: always;
+  }
+
+  .manual h1:first-of-type {
+    page-break-before: avoid;
+  }
+}
+</style>
+</head>
+<body>
+  <section class="cover-page">
+    <div class="cover-top">
+      <div class="logo-line">PVS · Kothavaripalle, AP</div>
+      <h1>ERP User Manual<br />&amp; Training Guide</h1>
+      <p class="subtitle">
+        Desktop portal, mobile warehouse app, procurement, manufacturing,
+        inventory, sales, and administration — for supervisors, warehouse,
+        procurement, billing, and admin users.
+      </p>
+    </div>
+    <div class="cover-meta">
+      <p><strong>Version</strong> 1.0</p>
+      <p><strong>Generated</strong> 2026-06-24</p>
+      <p><strong>Source</strong> docs/erp-user-manual.md</p>
+    </div>
+  </section>
+  <article class="manual"><h1>PVS ERP — User Manual &amp; Training Guide</h1>
+<p><strong>Version:</strong> 1.0 · <strong>Site:</strong> Kothavaripalle, AP<br><strong>Portal:</strong> ERP Portal (desktop) + Mobile Warehouse PWA<br><strong>Audience:</strong> Supervisors, procurement, warehouse staff, billing, and administrators</p>
+<hr>
+<h2>Table of contents</h2>
+<ol>
+<li><a href="#1-introduction">Introduction</a></li>
+<li><a href="#2-getting-started">Getting started</a></li>
+<li><a href="#3-roles-and-access">Roles and access</a></li>
+<li><a href="#4-physical-layout-and-terminology">Physical layout and terminology</a></li>
+<li><a href="#5-desktop-navigation">Desktop navigation</a></li>
+<li><a href="#6-dashboard">Dashboard</a></li>
+<li><a href="#7-products-and-catalog">Products and catalog</a></li>
+<li><a href="#8-procurement">Procurement</a></li>
+<li><a href="#9-inventory-and-stock">Inventory and stock</a></li>
+<li><a href="#10-warehouse-and-locations">Warehouse and locations</a></li>
+<li><a href="#11-transfer-orders">Transfer orders</a></li>
+<li><a href="#12-manufacturing">Manufacturing</a></li>
+<li><a href="#13-sales-quotes-and-fulfilment">Sales, quotes, and fulfilment</a></li>
+<li><a href="#14-billing-and-pos">Billing and POS</a></li>
+<li><a href="#15-transport-and-dispatch">Transport and dispatch</a></li>
+<li><a href="#16-returns-and-credit-notes">Returns and credit notes</a></li>
+<li><a href="#17-approvals">Approvals</a></li>
+<li><a href="#18-reports">Reports</a></li>
+<li><a href="#19-settings-and-administration">Settings and administration</a></li>
+<li><a href="#20-mobile-warehouse-app">Mobile warehouse app</a></li>
+<li><a href="#21-automation-stock-rules">Automation: stock rules</a></li>
+<li><a href="#22-end-to-end-scenarios">End-to-end scenarios</a></li>
+<li><a href="#23-glossary">Glossary</a></li>
+<li><a href="#24-tips-and-troubleshooting">Tips and troubleshooting</a></li>
+</ol>
+<hr>
+<h2>1. Introduction</h2>
+<p>PVS ERP is an integrated system for a food-processing plant. It connects:</p>
+<ul>
+<li><strong>Buying</strong> raw materials (procurement, GRN)</li>
+<li><strong>Making</strong> products (manufacturing orders, BOMs, work orders)</li>
+<li><strong>Storing</strong> stock (warehouses, bins, transfers)</li>
+<li><strong>Selling</strong> to customers (quotes, sales orders, invoices)</li>
+<li><strong>Shipping</strong> (pick, pack, trips)</li>
+</ul>
+<p>The same stock ledger powers desktop screens and the <strong>mobile warehouse app</strong> used on the shop floor with barcode scanning.</p>
+<h3>Two applications</h3>
+<table>
+<thead>
+<tr>
+<th>Application</th>
+<th>URL (dev)</th>
+<th>Who uses it</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>ERP Portal</strong> (desktop)</td>
+<td><code>http://localhost:5173/</code></td>
+<td>Office, supervisors, procurement, billing</td>
+</tr>
+<tr>
+<td><strong>Mobile PWA</strong></td>
+<td><code>/m/</code> on same host</td>
+<td>Warehouse workers, floor staff</td>
+</tr>
+</tbody></table>
+<p>Workers typically log in on mobile with a <strong>6-digit PIN</strong>. Office staff use <strong>username + password</strong>.</p>
+<hr>
+<h2>2. Getting started</h2>
+<h3>2.1 Logging in (desktop)</h3>
+<ol>
+<li>Open the ERP Portal.</li>
+<li>Enter <strong>username</strong> and <strong>password</strong>.</li>
+<li>You land on the <strong>Dashboard</strong>.</li>
+</ol>
+<p>Your role controls which menu items you see. If a module is missing from the left menu, your account does not have access — ask an administrator.</p>
+<h3>2.2 Workspace tabs</h3>
+<p>Each item you open from the left navigation opens in a <strong>tab</strong> at the top. You can keep several modules open (e.g. Manufacturing + Inventory) and switch between tabs without losing your place.</p>
+<h3>2.3 Command Palette (power users)</h3>
+<p>Press <strong><code>Ctrl+K</code></strong> or <strong><code>Ctrl+/</code></strong> to open the Command Palette.</p>
+<p>Use it to:</p>
+<ul>
+<li><strong>Jump</strong> to any module (Dashboard, Products, Procurement, Manufacturing, …)</li>
+<li><strong>Search</strong> products, invoices, vendors, workers, production orders</li>
+<li><strong>Quick actions:</strong> New Invoice, New Purchase Order, Stock Transfer, New Production Order</li>
+</ul>
+<h3>2.4 Barcode scanner overlay</h3>
+<p>Press <strong><code>Ctrl+B</code></strong> from the desktop top bar to open the scanner overlay for quick product or location lookup.</p>
+<h3>2.5 Signing out</h3>
+<p>Use <strong>Sign out</strong> in the top command bar. On mobile, use <strong>Profile → Sign out</strong>.</p>
+<hr>
+<h2>3. Roles and access</h2>
+<table>
+<thead>
+<tr>
+<th>Role</th>
+<th>Typical users</th>
+<th>Main modules</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Admin</strong></td>
+<td>IT, plant manager</td>
+<td>Everything including <strong>Settings</strong></td>
+</tr>
+<tr>
+<td><strong>Supervisor</strong></td>
+<td>Production/plant supervisor</td>
+<td>Manufacturing, BOMs, Productivity, most ops, Approvals</td>
+</tr>
+<tr>
+<td><strong>Procurement</strong></td>
+<td>Purchase team</td>
+<td>Products, Procurement, Price lists, Inventory (read/adjust)</td>
+</tr>
+<tr>
+<td><strong>Billing</strong></td>
+<td>Sales counter, accounts</td>
+<td>Customers, Quotes, SOs, Billing, Returns, Picking/Packing (office view)</td>
+</tr>
+<tr>
+<td><strong>Warehouse</strong></td>
+<td>Storekeepers</td>
+<td>Inventory, Warehouse, Transfers, Picking, Packing, WH Audit, mobile</td>
+</tr>
+<tr>
+<td><strong>Worker</strong></td>
+<td>Floor operators</td>
+<td><strong>Mobile app only</strong> — tasks, scan, count</td>
+</tr>
+</tbody></table>
+<p><strong>Admin</strong> bypasses all restrictions. Other roles see only the nav items listed in the system configuration.</p>
+<hr>
+<h2>4. Physical layout and terminology</h2>
+<p>Understanding <em>where</em> stock lives is essential before using inventory or manufacturing modules.</p>
+<h3>4.1 Warehouse types</h3>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Examples</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Storage (godowns)</strong></td>
+<td>WH-STOR (Big Godown), WH-GDNW (New Godown), WH-STO-OILSEEDS, WH-RAW</td>
+<td>Long-term bulk raw materials</td>
+</tr>
+<tr>
+<td><strong>Production</strong></td>
+<td>WH-PROD-OIL, WH-PROD-MILL, WH-PROD-SOAP, …</td>
+<td>Shop-floor buffer: materials staged here before/during MO; temporary FG before putaway</td>
+</tr>
+<tr>
+<td><strong>Finished goods</strong></td>
+<td><strong>STR</strong> (Stock Room)</td>
+<td>Retail-ready products; vacuum/manual packing zone A</td>
+</tr>
+</tbody></table>
+<h3>4.2 Production facilities (rooms)</h3>
+<p>Each facility is a physical area with one or more <strong>production lines</strong> and a linked <strong>production warehouse</strong>:</p>
+<table>
+<thead>
+<tr>
+<th>Facility</th>
+<th>Production WH</th>
+<th>Typical work</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Oil Extraction</td>
+<td>WH-PROD-OIL</td>
+<td>Seed → oil extract → filter → fill variants</td>
+</tr>
+<tr>
+<td>Milling Room</td>
+<td>WH-PROD-MILL</td>
+<td>Destone, hull, rice/ragi → semi-finished</td>
+</tr>
+<tr>
+<td>Manual Cleaning</td>
+<td>WH-PROD-MCLEAN</td>
+<td>Grade/clean semi → bulk for STR</td>
+</tr>
+<tr>
+<td>Flour Mill</td>
+<td>WH-PROD-FLOUR</td>
+<td>Flour, spice, ravva grinding</td>
+</tr>
+<tr>
+<td>Soap Room</td>
+<td>WH-PROD-SOAP</td>
+<td>Soap process</td>
+</tr>
+<tr>
+<td>Snacks Room</td>
+<td>WH-PROD-SNACKS</td>
+<td>Snacks production</td>
+</tr>
+<tr>
+<td>Stock Room Packing</td>
+<td>STR zone A</td>
+<td>Vacuum and manual retail packing</td>
+</tr>
+</tbody></table>
+<h3>4.3 Location hierarchy</h3>
+<p>Stock is always stored in <strong>bins</strong>:</p>
+<pre><code>Warehouse → Zone → Shelf → Bin
+Example:   STR → A → S17 → 03
+</code></pre>
+<ul>
+<li><strong>Godowns</strong> are often scanned at <strong>shelf</strong> level (bin <code>00</code> = whole shelf).</li>
+<li><strong>Stock Room</strong> uses full bin labels on every slot.</li>
+</ul>
+<h3>4.4 Key document types</h3>
+<table>
+<thead>
+<tr>
+<th>Code prefix</th>
+<th>Name</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>PO-</td>
+<td>Purchase order</td>
+<td>Order to a vendor</td>
+</tr>
+<tr>
+<td>GRN-</td>
+<td>Goods receipt</td>
+<td>Physical receipt against a PO</td>
+</tr>
+<tr>
+<td>MO-</td>
+<td>Manufacturing order</td>
+<td>Production run</td>
+</tr>
+<tr>
+<td>TRF-</td>
+<td>Transfer order</td>
+<td>Warehouse move (pick → drop)</td>
+</tr>
+<tr>
+<td>SO-</td>
+<td>Sales order</td>
+<td>Customer order</td>
+</tr>
+<tr>
+<td>INV-</td>
+<td>Invoice</td>
+<td>Bill to customer</td>
+</tr>
+<tr>
+<td>TRP-</td>
+<td>Trip</td>
+<td>Truck dispatch plan</td>
+</tr>
+</tbody></table>
+<hr>
+<h2>5. Desktop navigation</h2>
+<p>Left menu groups (top to bottom):</p>
+<p><strong>Overview:</strong> Dashboard  </p>
+<p><strong>Catalog &amp; buying:</strong> Products, Procurement, Price lists  </p>
+<p><strong>Sales:</strong> Customers, Enquiries, Quotes, Sales orders, Picking, Packing, Returns  </p>
+<p><strong>Stock:</strong> Inventory, Warehouse, Transfers  </p>
+<p><strong>Production:</strong> Manufacturing, BOMs, Productivity  </p>
+<p><strong>Logistics:</strong> Transport  </p>
+<p><strong>Finance:</strong> Billing  </p>
+<p><strong>Analytics:</strong> Reports, Container reports  </p>
+<p><strong>Bottom:</strong> Approvals, Settings (admin)</p>
+<hr>
+<h2>6. Dashboard</h2>
+<p><strong>Purpose:</strong> Plant-wide snapshot at login.</p>
+<p><strong>What you see:</strong></p>
+<ul>
+<li>Production efficiency, active workers, delayed MOs</li>
+<li>Low-stock alerts (below reorder level)</li>
+<li>Sales vs COGS chart (14 days)</li>
+<li>Procurement spend by category</li>
+<li>Planned vs actual production</li>
+<li>Station load (work centres)</li>
+<li>Enquiry pipeline widget</li>
+</ul>
+<p><strong>Actions:</strong> Click KPIs or chart segments to drill into Manufacturing, Inventory, Enquiries, etc.</p>
+<hr>
+<h2>7. Products and catalog</h2>
+<p><strong>Path:</strong> Products<br><strong>Roles:</strong> Supervisor, Procurement, Admin</p>
+<h3>7.1 Product types</h3>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Example</th>
+<th>Used for</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Raw</td>
+<td>WSS (white sesame seeds)</td>
+<td>Purchased inputs</td>
+</tr>
+<tr>
+<td>Semi</td>
+<td>GOIL-UNFILT</td>
+<td>Intermediate manufacturing output</td>
+</tr>
+<tr>
+<td>Finished</td>
+<td>GOIL, RAGI</td>
+<td>Sold products (bulk or packed)</td>
+</tr>
+<tr>
+<td>Consumable</td>
+<td>Packaging, chemicals</td>
+<td>Used but not sold</td>
+</tr>
+<tr>
+<td>Service</td>
+<td>Labour, freight</td>
+<td>Non-stock lines</td>
+</tr>
+</tbody></table>
+<h3>7.2 Variants</h3>
+<p>A <strong>parent product</strong> (e.g. Groundnut Oil) can have <strong>variants</strong> (500 ml, 1 L, 5 L). Each variant has its own SKU, barcode, and stock counter.</p>
+<h3>7.3 Common tasks</h3>
+<p><strong>Create a product</strong></p>
+<ol>
+<li>Click <strong>New product</strong>.</li>
+<li>Enter SKU, name, type, UoM (kg, L, pc), category, prices.</li>
+<li>Add variants if needed (size, pack size, barcode).</li>
+<li>Save.</li>
+</ol>
+<p><strong>Edit / upload image</strong></p>
+<ol>
+<li>Select product in the list.</li>
+<li>Use the detail panel → <strong>Edit</strong> or drag an image.</li>
+</ol>
+<p><strong>Supply outlook</strong></p>
+<p>Select a product → <strong>Supply outlook</strong> panel shows:</p>
+<ul>
+<li>On-hand stock</li>
+<li>Open purchase orders (incoming)</li>
+<li>Open manufacturing orders (pipeline)</li>
+<li>Stock rules and replenishment hints</li>
+</ul>
+<p><strong>Export</strong></p>
+<p>Use <strong>Export CSV</strong> for a spreadsheet of products or variants.</p>
+<p><strong>Find a SKU quickly</strong></p>
+<p>Use the search box above the list. If a SKU does not appear in dropdowns elsewhere, ensure it is active and the list limit includes it.</p>
+<hr>
+<h2>8. Procurement</h2>
+<p><strong>Path:</strong> Procurement<br><strong>Roles:</strong> Procurement, Admin</p>
+<p>Three tabs: <strong>PO</strong>, <strong>Vendors</strong>, <strong>GRN</strong>.</p>
+<h3>8.1 Vendors</h3>
+<p><strong>Add vendor:</strong> Vendors tab → <strong>Add vendor</strong> → code, name, GST, contact, payment terms, lead time.</p>
+<p><strong>Vendor catalog:</strong> Link vendor part numbers and pack sizes to internal SKUs (used for PO lines and auto-reorder).</p>
+<p><strong>Vendor detail:</strong> View performance metrics and catalog from the vendor row.</p>
+<h3>8.2 Purchase orders (PO)</h3>
+<p><strong>Create PO</strong></p>
+<ol>
+<li>PO tab → <strong>New PO</strong>.</li>
+<li>Select vendor, add lines (product, qty, rate).</li>
+<li>Set expected delivery date.</li>
+<li>Save as <strong>draft</strong>.</li>
+</ol>
+<p><strong>Approve PO</strong></p>
+<ol>
+<li>Open draft PO → <strong>Approve</strong>.</li>
+<li>Status becomes <strong>approved</strong> — lines are locked (notes only).</li>
+<li>Share PO with vendor via <strong>Share</strong> link if needed.</li>
+</ol>
+<p><strong>PO statuses</strong></p>
+<pre><code>draft → approved → partial → received
+                 ↘ closed (manual)
+draft → cancelled (only if no GRNs)
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Status</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>draft</td>
+<td>Being prepared</td>
+</tr>
+<tr>
+<td>approved</td>
+<td>Sent to vendor; awaiting delivery</td>
+</tr>
+<tr>
+<td>partial</td>
+<td>Some goods received</td>
+</tr>
+<tr>
+<td>received</td>
+<td>Fully received</td>
+</tr>
+<tr>
+<td>closed</td>
+<td>Manually closed (short-ship, write-off)</td>
+</tr>
+<tr>
+<td>cancelled</td>
+<td>Voided before receipt</td>
+</tr>
+</tbody></table>
+<h3>8.3 Goods receipt (GRN)</h3>
+<p><strong>Receive against PO (desktop)</strong></p>
+<ol>
+<li>Open approved PO → <strong>Receive</strong> (or GRN tab → receive from PO).</li>
+<li>Enter accepted qty, rejected qty, batch/expiry if applicable.</li>
+<li><strong>Allocate bins</strong> — split qty across one or more destination bins (putaway).</li>
+<li>Post GRN.</li>
+</ol>
+<p><strong>GRN QC</strong></p>
+<p>After receipt, QC status is set per GRN:</p>
+<table>
+<thead>
+<tr>
+<th>QC status</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>pending</td>
+<td>Awaiting inspection</td>
+</tr>
+<tr>
+<td>pass</td>
+<td>Accepted into stock</td>
+</tr>
+<tr>
+<td>rework</td>
+<td>Needs rework before use</td>
+</tr>
+<tr>
+<td>reject</td>
+<td>Rejected; qty not added to usable stock</td>
+</tr>
+</tbody></table>
+<p><strong>Close PO</strong></p>
+<p>When all lines are received (or you accept short-ship), use <strong>Close PO</strong> with confirmation preview.</p>
+<h3>8.4 Procurement workflow summary</h3>
+<pre><code>Need stock → Create PO → Approve → Vendor delivers
+    → GRN receive + bin allocation → Stock in bins → PO received/closed
+</code></pre>
+<p>Stock rules can also <strong>auto-draft POs</strong> when global raw stock falls below minimum (Settings → Stock rules, trigger type <strong>PO</strong>).</p>
+<hr>
+<h2>9. Inventory and stock</h2>
+<p><strong>Path:</strong> Inventory<br><strong>Roles:</strong> Supervisor, Warehouse, Procurement, Admin</p>
+<h3>9.1 Tabs</h3>
+<table>
+<thead>
+<tr>
+<th>Tab</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Locations</strong></td>
+<td>Find stock by product, warehouse, or bin; adjust qty</td>
+</tr>
+<tr>
+<td><strong>Ledger</strong></td>
+<td>Full audit trail of movements</td>
+</tr>
+<tr>
+<td><strong>Valuation</strong></td>
+<td>Inventory value snapshot</td>
+</tr>
+<tr>
+<td><strong>Batches</strong></td>
+<td>Lot/batch traceability (FIFO)</td>
+</tr>
+</tbody></table>
+<h3>9.2 Finding stock</h3>
+<ol>
+<li>Locations tab → search by SKU, product name, or bin code.</li>
+<li>Expand warehouse → zone → shelf → bin.</li>
+<li>See qty, reserved qty, and product assignment.</li>
+</ol>
+<h3>9.3 Adjust stock</h3>
+<ol>
+<li>Select a bin or use <strong>Adjust stock</strong> from product context.</li>
+<li>Choose <strong>delta</strong> (+/− qty) or <strong>count</strong> (set absolute qty).</li>
+<li>Enter reason (physical match, damage, spillage, etc.).</li>
+<li>Save — ledger row is written automatically.</li>
+</ol>
+<p><strong>Deep link from Manufacturing:</strong> When an MO shows a shortage, use the link to Inventory with <code>adjust=1</code> pre-filled.</p>
+<h3>9.4 Stock ledger transaction types</h3>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Typical source</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>GRN</td>
+<td>Goods receipt</td>
+</tr>
+<tr>
+<td>Sale</td>
+<td>Invoice / dispatch</td>
+</tr>
+<tr>
+<td>Issue</td>
+<td>MO material issue</td>
+</tr>
+<tr>
+<td>Production</td>
+<td>MO output / complete</td>
+</tr>
+<tr>
+<td>Transfer</td>
+<td>Transfer order pick/drop</td>
+</tr>
+<tr>
+<td>Adjust</td>
+<td>Manual adjustment or cycle count</td>
+</tr>
+</tbody></table>
+<h3>9.5 Reserved quantity</h3>
+<p><strong>Reserved qty</strong> on a bin means stock is earmarked for an open <strong>pick list</strong> or <strong>in-transit transfer</strong> but not yet finally consumed. Free stock = <code>qty − reservedQty</code>.</p>
+<hr>
+<h2>10. Warehouse and locations</h2>
+<p><strong>Path:</strong> Warehouse<br><strong>Roles:</strong> Supervisor, Warehouse, Admin</p>
+<h3>10.1 Tree navigation</h3>
+<p>Browse <strong>Warehouse → Zone → Shelf → Bin</strong>. Occupancy indicators (green / amber / red) show how full a bin is relative to capacity.</p>
+<h3>10.2 Bin operations</h3>
+<table>
+<thead>
+<tr>
+<th>Action</th>
+<th>When to use</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Edit bin</strong></td>
+<td>Change capacity, notes</td>
+</tr>
+<tr>
+<td><strong>Bin layout</strong></td>
+<td>Bulk-create bins for a new zone/shelf</td>
+</tr>
+<tr>
+<td><strong>Rename/delete zone or shelf</strong></td>
+<td>Layout changes (must be empty first)</td>
+</tr>
+<tr>
+<td><strong>Bulk zone stock</strong></td>
+<td>Mass update qty across a zone</td>
+</tr>
+</tbody></table>
+<h3>10.3 WH Audit</h3>
+<p><strong>Path:</strong> WH Audit<br><strong>Roles:</strong> Warehouse, Admin</p>
+<p>Supervisor review of floor activity:</p>
+<ul>
+<li><strong>Variance tab</strong> — cycle counts flagged as abnormal (&gt;10% or &gt;50 units difference)</li>
+<li><strong>Scans tab</strong> — scan events where outcome was not OK</li>
+</ul>
+<p>Use this to follow up with workers after mobile recounts.</p>
+<hr>
+<h2>11. Transfer orders</h2>
+<p><strong>Path:</strong> Transfers<br><strong>Roles:</strong> Supervisor, Warehouse, Admin</p>
+<h3>11.1 What is a transfer order?</h3>
+<p>A <strong>transfer order (TO)</strong> is a structured move: worker <strong>picks</strong> from source bin(s), carries stock, then <strong>drops</strong> at destination bin(s). Every pick and drop updates the stock ledger.</p>
+<h3>11.2 Transfer kinds</h3>
+<table>
+<thead>
+<tr>
+<th>Kind</th>
+<th>Created by</th>
+<th>Typical flow</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Replenishment</strong></td>
+<td>MO release or stock rule</td>
+<td>Godown → production WH</td>
+</tr>
+<tr>
+<td><strong>Putaway</strong></td>
+<td>MO complete or GRN</td>
+<td>Production WH / dock → STR or rule bin</td>
+</tr>
+<tr>
+<td><strong>Manual</strong></td>
+<td>User</td>
+<td>Any warehouse-to-warehouse move</td>
+</tr>
+</tbody></table>
+<h3>11.3 Transfer status flow</h3>
+<pre><code>ready → [worker claims] → ready (assigned)
+     → [pick confirmed]  → in_transit
+     → [drop confirmed]  → done
+
+Any non-done → cancel → cancelled
+</code></pre>
+<h3>11.4 Desktop actions</h3>
+<ul>
+<li>Filter by kind: All, Putaway, Replenishment, Manual</li>
+<li>Open detail slide-over to see lines, bins, linked MO</li>
+<li><strong>Cancel</strong> (supervisor/admin) while draft or ready</li>
+<li>Assign worker (admin/supervisor)</li>
+</ul>
+<h3>11.5 Pick and drop rules</h3>
+<ul>
+<li>Each line should have a <strong>source bin</strong> (<code>fromBinId</code>) before pick.</li>
+<li>If auto-created TO has no source bin, supervisor must assign one (or re-release MO after godown stock is seeded).</li>
+<li>On drop, destination bin may be auto-selected if empty bin exists in destination warehouse.</li>
+</ul>
+<h3>11.6 Putaway rules</h3>
+<p><strong>Path:</strong> Settings → Putaway rules (or <code>/putaway-rules</code>, admin only)</p>
+<p>Define: <em>When product X arrives, default destination = warehouse Y, bin Z.</em></p>
+<p>Used by GRN receive hints and MO complete putaway TOs.</p>
+<hr>
+<h2>12. Manufacturing</h2>
+<p><strong>Path:</strong> Manufacturing, BOMs<br><strong>Roles:</strong> Supervisor, Admin</p>
+<p>See also: <code>docs/manufacturing-multi-step-bom.md</code>, <code>docs/soap-manufacturing-process.md</code></p>
+<h3>12.1 Concepts</h3>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>BOM</strong></td>
+<td>Bill of Materials — recipe (components, scrap, by-products, operations)</td>
+</tr>
+<tr>
+<td><strong>MO</strong></td>
+<td>Manufacturing Order — a planned production run</td>
+</tr>
+<tr>
+<td><strong>WO</strong></td>
+<td>Work Order — one shop-floor step (operation) on an MO</td>
+</tr>
+<tr>
+<td><strong>Release</strong></td>
+<td>Check materials at production WH; create replenishment TOs if short</td>
+</tr>
+<tr>
+<td><strong>Issue materials</strong></td>
+<td>Consume components from bins (FIFO lots)</td>
+</tr>
+<tr>
+<td><strong>Log output</strong></td>
+<td>Record good/scrap/rework qty mid-run</td>
+</tr>
+<tr>
+<td><strong>Complete</strong></td>
+<td>Post finished goods to inventory; close WOs; may create putaway TO</td>
+</tr>
+</tbody></table>
+<h3>12.2 BOMs</h3>
+<p><strong>Path:</strong> Manufacturing → BOMs (or <code>/manufacturing/boms</code>)</p>
+<p><strong>Create/edit BOM</strong></p>
+<ol>
+<li>Select product (and variant if variant-specific).</li>
+<li>Add <strong>components</strong> with qty and UoM.</li>
+<li>Add <strong>operations</strong> (sequence, line, machine, duration, QA flag) for multi-step processes.</li>
+<li>Set default <strong>facility</strong> and <strong>line</strong>.</li>
+<li>Set output qty per batch (e.g. 100 L per extract run).</li>
+</ol>
+<p><strong>BOM tools</strong></p>
+<ul>
+<li><strong>Tree view</strong> — nested sub-assemblies</li>
+<li><strong>Explode</strong> — total raw materials for a planned qty</li>
+<li><strong>Where used</strong> — which parent BOMs use this component</li>
+</ul>
+<p><strong>Pack BOMs</strong> are often auto-generated for retail variants (Rev-Pack revision).</p>
+<h3>12.3 Manufacturing orders</h3>
+<p><strong>Create MO</strong></p>
+<ol>
+<li>Manufacturing → <strong>New MO</strong> (or Command Palette).</li>
+<li>Select BOM, planned qty, facility/line, dates.</li>
+<li>Save → status <strong>planned</strong>.</li>
+</ol>
+<p><strong>Release MO</strong> (planned only)</p>
+<ol>
+<li>Select MO → <strong>Release</strong>.</li>
+<li>System checks component stock at <strong>production warehouse</strong>.</li>
+<li>If short → creates <strong>replenishment TO</strong> (one TO with all shortage lines).</li>
+<li>If no shortage → MO moves to <strong>in-progress</strong>.</li>
+</ol>
+<p><strong>Issue materials</strong></p>
+<ol>
+<li>MO must be in-progress (or release with stock already at line).</li>
+<li><strong>Issue materials</strong> — consumes BOM explosion from bins; writes ledger.</li>
+<li>First issue typically sets MO to <strong>in-progress</strong>.</li>
+</ol>
+<p><strong>Work orders (multi-step)</strong></p>
+<p>For BOMs with operations (oil extract/filter, grain mill/clean):</p>
+<ul>
+<li>Panel shows WOs per operation sequence.</li>
+<li><strong>Start</strong> → <strong>Log output</strong> → <strong>QA</strong> (if required) → next operation.</li>
+<li><strong>Split operation</strong> — divide work across parallel lines (e.g. six oil extractors).</li>
+</ul>
+<p><strong>Complete MO</strong></p>
+<ol>
+<li>All WOs complete (or single-step MO ready).</li>
+<li><strong>Complete</strong> (shortcut <strong>F8</strong>) — posts FG (+ by-products) to facility WH or putaway bin.</li>
+<li>If putaway rule points to STR → auto <strong>putaway TO</strong> created.</li>
+</ol>
+<h3>12.4 MO status flow</h3>
+<pre><code>planned → in-progress → [qc] → completed
+         ↘ delayed (flag)
+         ↘ cancelled
+</code></pre>
+<table>
+<thead>
+<tr>
+<th>Status</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>planned</td>
+<td>Created; not yet released or issued</td>
+</tr>
+<tr>
+<td>in-progress</td>
+<td>Materials issued or production started</td>
+</tr>
+<tr>
+<td>qc</td>
+<td>Optional quality hold</td>
+</tr>
+<tr>
+<td>completed</td>
+<td>FG posted; WOs closed</td>
+</tr>
+<tr>
+<td>delayed</td>
+<td>Schedule flag (non-blocking)</td>
+</tr>
+<tr>
+<td>cancelled</td>
+<td>Voided</td>
+</tr>
+</tbody></table>
+<h3>12.5 Oil extraction example (three BOMs)</h3>
+<ol>
+<li><strong>Extract BOM</strong> — seeds → unfiltered semi + press cake  </li>
+<li><strong>Filter BOM</strong> — unfiltered semi → bulk filtered oil  </li>
+<li><strong>Pack BOM</strong> (auto) — bulk oil → retail variants (500 ml, 1 L, …)</li>
+</ol>
+<p>Each stage can be a separate MO linked to the appropriate facility line.</p>
+<h3>12.6 Grain milling example</h3>
+<ol>
+<li><strong>Mill MO</strong> — raw grain → semi at WH-PROD-MILL  </li>
+<li><strong>Transfer</strong> — semi mill → manual cleaning (stock rule or manual TO)  </li>
+<li><strong>Clean MO</strong> — semi → bulk FG  </li>
+<li><strong>Putaway TO</strong> — bulk → STR for retail packing</li>
+</ol>
+<hr>
+<h2>13. Sales, quotes, and fulfilment</h2>
+<p><strong>Roles:</strong> Supervisor, Billing (varies by screen)</p>
+<h3>13.1 CRM — Enquiries</h3>
+<p><strong>Path:</strong> Enquiries</p>
+<p><strong>Pipeline view:</strong> Drag cards between stages:</p>
+<pre><code>new → contacted → qualified → proposal → won / lost
+</code></pre>
+<p><strong>Actions:</strong> Log activities, set follow-up tasks, convert to customer, mark lost (requires reason).</p>
+<h3>13.2 Quotes</h3>
+<p><strong>Path:</strong> Quotes</p>
+<ol>
+<li><strong>Create quote</strong> → add customer, lines, validity date.</li>
+<li><strong>Submit</strong> → formal quote (revision history on edits).</li>
+<li><strong>Accept</strong> → creates sales order (or triggers <strong>credit approval</strong> if over limit).</li>
+<li><strong>Share</strong> → customer link for print/PDF view.</li>
+</ol>
+<p><strong>Quote statuses:</strong> draft, submitted, accepted, converted, expired, rejected</p>
+<h3>13.3 Sales orders</h3>
+<p><strong>Path:</strong> Sales orders</p>
+<p><strong>Create from:</strong> Accepted quote, manual entry, or <strong>ecommerce</strong> (prepaid web order).</p>
+<p><strong>Fulfilment path (mandatory sequence):</strong></p>
+<pre><code>Sales order → Pick list → Packing slip → Invoice
+</code></pre>
+<p>There is no shortcut to invoice without pick/pack (except ecommerce auto-flow).</p>
+<p><strong>SO statuses:</strong> confirmed, partially_invoiced, invoiced, on_hold, closed, cancelled</p>
+<h3>13.4 Picking</h3>
+<p><strong>Path:</strong> Picking<br><strong>Roles:</strong> Supervisor, Warehouse, Billing</p>
+<ol>
+<li>Create or auto-generate pick list from SO.</li>
+<li><strong>Auto-pick</strong> — system allocates bins (may warn on shortfall).</li>
+<li>Print pick list (<code>/print/pick-list/:id</code>) or assign to mobile worker.</li>
+<li>Complete pick → status <strong>picked</strong> → can create packing slip.</li>
+</ol>
+<p><strong>Pick statuses:</strong> draft, picking, picked, cancelled</p>
+<h3>13.5 Packing</h3>
+<p><strong>Path:</strong> Packing</p>
+<ol>
+<li>Open packing slip from picked SO.</li>
+<li>Enter <strong>packed qty</strong> per line (may differ from picked — billing uses packed qty).</li>
+<li><strong>Multi-container mode</strong> — split lines across boxes/crates with weights.</li>
+<li>Mark <strong>packed</strong> → ready for invoice.</li>
+</ol>
+<p><strong>Pack statuses:</strong> open, packed, invoiced, cancelled</p>
+<h3>13.6 Customer payments</h3>
+<p><strong>Path:</strong> Customers → select customer → <strong>Record payment</strong></p>
+<p>Payments allocate FIFO to open invoices. Advances reduce credit exposure on new quotes.</p>
+<hr>
+<h2>14. Billing and POS</h2>
+<p><strong>Path:</strong> Billing<br><strong>Roles:</strong> Billing, Admin</p>
+<h3>14.1 POS tab</h3>
+<p>Walk-in counter sales:</p>
+<ol>
+<li>Search or scan products.</li>
+<li>Add to cart; apply customer (optional) for price list.</li>
+<li>Choose payment: cash, UPI, card, <strong>credit</strong> (requires customer with limit).</li>
+<li><strong>Issue invoice</strong> — stock decrements at invoice time.</li>
+</ol>
+<h3>14.2 Invoices tab</h3>
+<ul>
+<li>List/filter invoices by status, date, customer.</li>
+<li>Open drawer for detail, payments, share link, dispatch assignment.</li>
+<li>Draw down remaining qty from open sales orders.</li>
+</ul>
+<p><strong>Invoice statuses:</strong> draft, issued, partial, paid, overdue</p>
+<h3>14.3 Keyboard shortcut</h3>
+<p><strong>F2</strong> or Command Palette → <strong>New Invoice</strong></p>
+<hr>
+<h2>15. Transport and dispatch</h2>
+<p><strong>Path:</strong> Transport<br><strong>Roles:</strong> Supervisor, Warehouse</p>
+<h3>15.1 Trips</h3>
+<p>A <strong>trip</strong> is one truck + driver + date with multiple <strong>invoice drops</strong>.</p>
+<p><strong>Workflow</strong></p>
+<ol>
+<li>Create trip or <strong>auto-schedule</strong> for upcoming days.</li>
+<li>Add invoices to trip (invoice picker).</li>
+<li><strong>Start trip</strong> → in_transit.</li>
+<li><strong>Complete trip</strong> when deliveries done.</li>
+<li><strong>Cancel/reschedule</strong> — rolls dispatches forward.</li>
+</ol>
+<p><strong>Trip statuses:</strong> scheduled, in_transit, completed, cancelled</p>
+<p>Trips link to <strong>Container reports</strong> for manifest and throughput.</p>
+<hr>
+<h2>16. Returns and credit notes</h2>
+<p><strong>Path:</strong> Returns<br><strong>Roles:</strong> Supervisor, Billing, Warehouse</p>
+<h3>16.1 Workflow</h3>
+<ol>
+<li><strong>Import</strong> return lines from Excel template (customer, SKU, qty, reason).</li>
+<li>Manager <strong>approves/rejects</strong> each line.</li>
+<li><strong>Finalize</strong> → credit note + payment allocation.</li>
+</ol>
+<p><strong>Return statuses:</strong> pending_approval, processed, cancelled</p>
+<p>Mobile: <strong>Returns</strong> screen for field processing where enabled.</p>
+<hr>
+<h2>17. Approvals</h2>
+<p><strong>Path:</strong> Approvals<br><strong>Roles:</strong> Supervisor, Billing</p>
+<p>Central queue for policy gates:</p>
+<table>
+<thead>
+<tr>
+<th>Type</th>
+<th>Example</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Credit limit</td>
+<td>Quote would exceed customer credit → approve to create SO</td>
+</tr>
+<tr>
+<td>Stock adjustment</td>
+<td>Large variance needs sign-off</td>
+</tr>
+<tr>
+<td>PO amendment</td>
+<td>Change to approved PO</td>
+</tr>
+<tr>
+<td>Price override</td>
+<td>Special pricing</td>
+</tr>
+</tbody></table>
+<p><strong>Actions:</strong> Approve or Reject (reject requires reason).</p>
+<p>Priority shown: low, med, high.</p>
+<hr>
+<h2>18. Reports</h2>
+<p><strong>Path:</strong> Reports, Container reports</p>
+<h3>18.1 Reports hub</h3>
+<p>Grouped catalog: Inventory, Production, Procurement, Workforce, Financial.</p>
+<p>Live charts on hub:</p>
+<ul>
+<li>Production trend (14 days)</li>
+<li>Procurement spend split</li>
+<li>Sales trend</li>
+<li>Station load</li>
+</ul>
+<p>Use <strong>Export</strong> where available on individual report pages.</p>
+<h3>18.2 Container reports</h3>
+<p><strong>Path:</strong> Container reports</p>
+<table>
+<thead>
+<tr>
+<th>Tab</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Pack manifest</td>
+<td>Containers per packing slip</td>
+</tr>
+<tr>
+<td>Item history</td>
+<td>SKU/barcode → recent containers and trips</td>
+</tr>
+<tr>
+<td>Trip manifest</td>
+<td>All containers on a trip</td>
+</tr>
+<tr>
+<td>Pack throughput</td>
+<td>Daily slips/containers/weight</td>
+</tr>
+</tbody></table>
+<hr>
+<h2>19. Settings and administration</h2>
+<p><strong>Path:</strong> Settings<br><strong>Roles:</strong> Admin only</p>
+<table>
+<thead>
+<tr>
+<th>Section</th>
+<th>Configure</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Company</strong></td>
+<td>Legal name, GSTIN, address, logo</td>
+</tr>
+<tr>
+<td><strong>Warehouses</strong></td>
+<td>Warehouse codes and kinds</td>
+</tr>
+<tr>
+<td><strong>Putaway rules</strong></td>
+<td>Product → destination bin</td>
+</tr>
+<tr>
+<td><strong>Stock rules</strong></td>
+<td>Auto MO / TO / PO triggers</td>
+</tr>
+<tr>
+<td><strong>Production facilities</strong></td>
+<td>Rooms, lines, machines</td>
+</tr>
+<tr>
+<td><strong>Dispatch options</strong></td>
+<td>Delivery methods</td>
+</tr>
+<tr>
+<td><strong>Packing</strong></td>
+<td>Defaults for packing slips</td>
+</tr>
+<tr>
+<td><strong>Container types</strong></td>
+<td>Box/crate definitions</td>
+</tr>
+<tr>
+<td><strong>Categories</strong></td>
+<td>Product categories</td>
+</tr>
+<tr>
+<td><strong>Users &amp; roles</strong></td>
+<td>Accounts, PIN for mobile</td>
+</tr>
+<tr>
+<td><strong>Security</strong></td>
+<td>Password policies</td>
+</tr>
+<tr>
+<td><strong>Scanner</strong></td>
+<td>Barcode integration</td>
+</tr>
+<tr>
+<td><strong>SMS / Payment</strong></td>
+<td>Notifications, CCAvenue</td>
+</tr>
+<tr>
+<td><strong>Sync &amp; backup</strong></td>
+<td>Offline sync, database backup</td>
+</tr>
+<tr>
+<td><strong>Appearance / Language</strong></td>
+<td>Branding, locale</td>
+</tr>
+</tbody></table>
+<h3>19.1 Users and PIN</h3>
+<ol>
+<li>Settings → Users &amp; roles.</li>
+<li>Create user with username, password, <strong>role</strong>.</li>
+<li>Set <strong>6-digit PIN</strong> for mobile login.</li>
+<li>Worker role users use mobile only.</li>
+</ol>
+<h3>19.2 Stock rules (admin)</h3>
+<p>See <a href="#21-automation-stock-rules">Section 21</a>.</p>
+<hr>
+<h2>20. Mobile warehouse app</h2>
+<p><strong>URL:</strong> <code>/m/</code> (install as PWA on phone)</p>
+<h3>20.1 First login</h3>
+<ol>
+<li>Open mobile URL.</li>
+<li>Login with PIN or password.</li>
+<li><strong>Select warehouse</strong> — device remembers choice (Tasks and scans are scoped to this WH).</li>
+</ol>
+<h3>20.2 Bottom tabs</h3>
+<table>
+<thead>
+<tr>
+<th>Tab</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>Tasks</strong></td>
+<td>Pick, pack, transfer work queue</td>
+</tr>
+<tr>
+<td><strong>Scan</strong></td>
+<td>Camera barcode → location or product</td>
+</tr>
+<tr>
+<td><strong>Count</strong></td>
+<td>Cycle count / bin recount</td>
+</tr>
+<tr>
+<td><strong>Verify</strong></td>
+<td>Flagged counts needing review</td>
+</tr>
+<tr>
+<td><strong>Profile</strong></td>
+<td>Punch in/out, switch warehouse, sign out</td>
+</tr>
+</tbody></table>
+<h3>20.3 Tasks hub</h3>
+<p><strong>Segments:</strong> Pick · Pack · Move (transfers) · More</p>
+<ul>
+<li><strong>My tasks</strong> — work you claimed</li>
+<li><strong>Available</strong> — unclaimed queue (refresh ~30s)</li>
+</ul>
+<p><strong>Claim</strong> a pick list, packing slip, or transfer before starting.</p>
+<p><strong>More shortcuts:</strong> GRN, GRN QC, Bulk zone, Returns</p>
+<h3>20.4 Pick (mobile)</h3>
+<ol>
+<li>Open claimed pick list.</li>
+<li>Walk path — each line shows bin location.</li>
+<li>Scan bin or confirm manually.</li>
+<li>Enter qty picked.</li>
+<li>Complete pick → may auto-create packing slip.</li>
+</ol>
+<h3>20.5 Pack (mobile)</h3>
+<ol>
+<li>Open packing slip.</li>
+<li>Confirm packed qty per line.</li>
+<li><strong>Multi-container:</strong> assign lines to containers → seal → mark packed.</li>
+</ol>
+<h3>20.6 Transfer (mobile)</h3>
+<p>Two steps:</p>
+<ol>
+<li><strong>Pick</strong> — pull from source bin (must have <code>fromBin</code> assigned on line).</li>
+<li><strong>Drop</strong> — put away at destination (auto-suggests bin if not preset).</li>
+</ol>
+<p>Statuses: ready → in_transit → done</p>
+<p><strong>Error “No source bin assigned”:</strong> Supervisor must assign source bin on desktop (Transfers detail) or re-release MO after godown stock exists.</p>
+<h3>20.7 GRN (mobile)</h3>
+<ol>
+<li>More → GRN → select open PO.</li>
+<li>Enter received qty, rejects, batch.</li>
+<li>Allocate to bins (with receive hints from putaway rules).</li>
+<li>Post → optional QC queue.</li>
+</ol>
+<h3>20.8 GRN QC (mobile)</h3>
+<p>More → GRN QC → pending receipts → pass / rework / reject.</p>
+<h3>20.9 Count / bin detail</h3>
+<p><strong>Scan</strong> or <strong>Count</strong> → scan bin:</p>
+<ul>
+<li><strong>Recount</strong> — set new qty (variance flagged if large)</li>
+<li><strong>Reassign</strong> — change product on bin</li>
+<li><strong>Quick adjust</strong> — small correction</li>
+</ul>
+<p>Reason codes: physical_match, damage, found_elsewhere, product_swap, spillage, expired, other.</p>
+<h3>20.10 Bulk zone</h3>
+<p>Mass-edit bins in a zone: filter zone/shelf, scan-to-row, update barcode and qty.</p>
+<h3>20.11 Profile and attendance</h3>
+<ul>
+<li><strong>Punch in / out / break</strong> — links to Productivity reports.</li>
+<li><strong>Switch warehouse</strong> if you work across buildings.</li>
+</ul>
+<hr>
+<h2>21. Automation: stock rules</h2>
+<p><strong>Path:</strong> Settings → Stock rules</p>
+<p>Stock rules watch inventory and auto-create documents when stock falls below <strong>minQty</strong>.</p>
+<h3>21.1 Trigger types</h3>
+<table>
+<thead>
+<tr>
+<th>Trigger</th>
+<th>Creates</th>
+<th>Monitors</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>mo</strong></td>
+<td>Manufacturing order</td>
+<td>Bin qty (or effective stock incl. pipeline)</td>
+</tr>
+<tr>
+<td><strong>transfer</strong></td>
+<td>Replenishment TO</td>
+<td>Monitor bin; pulls from <strong>source bin</strong></td>
+</tr>
+<tr>
+<td><strong>po</strong></td>
+<td>Draft purchase order</td>
+<td>Global product stock (no specific bin)</td>
+</tr>
+</tbody></table>
+<h3>21.2 Key fields</h3>
+<ul>
+<li><strong>minQty</strong> — reorder point (ROP); trigger when effective stock &lt; min  </li>
+<li><strong>maxQty</strong> — target level; MO/TO qty sized toward max  </li>
+<li><strong>monitorBin</strong> — bin whose qty is watched (MO/transfer triggers)  </li>
+<li><strong>sourceBin</strong> — where transfer pulls from (transfer triggers only)  </li>
+<li><strong>bomId</strong> — which BOM to use for auto MO</li>
+</ul>
+<h3>21.3 When rules run</h3>
+<ul>
+<li>After <strong>GRN</strong>, <strong>PO close</strong>, <strong>MO complete</strong>, <strong>transfer pick/drop</strong>, <strong>inventory adjust</strong></li>
+<li><strong>Periodic check</strong> every 6 hours (server setting)</li>
+<li>Manual <strong>Run all checks</strong> (Settings → Stock rules)</li>
+</ul>
+<h3>21.4 Rule sets in this plant</h3>
+<table>
+<thead>
+<tr>
+<th>Tag</th>
+<th>Count (typical)</th>
+<th>Behaviour</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>tally-jit</strong></td>
+<td>~126</td>
+<td>Retail variant low in STR → pack MO</td>
+</tr>
+<tr>
+<td><strong>grain-milling</strong></td>
+<td>~61</td>
+<td>Mill/clean staging low → mill or clean MO</td>
+</tr>
+<tr>
+<td><strong>raw-procurement</strong></td>
+<td>varies</td>
+<td>Global raw low → draft PO</td>
+</tr>
+</tbody></table>
+<p><strong>Important:</strong> A full rule scan can create <strong>many MOs at once</strong> if many monitor bins are below ROP. Open MOs count toward <strong>effective</strong> stock and prevent duplicate MOs for the same BOM.</p>
+<h3>21.5 Disabling auto MOs (testing)</h3>
+<ul>
+<li>Deactivate specific rules in Settings.</li>
+<li>Set env <code>STOCK_RULES_CHECK_INTERVAL_MS=0</code> to disable periodic scan (server admin).</li>
+<li>Avoid <strong>Check all stock rules</strong> until staging bins are stocked.</li>
+</ul>
+<hr>
+<h2>22. End-to-end scenarios</h2>
+<h3>22.1 Buy raw material and put in godown</h3>
+<pre><code>Procurement: Create PO → Approve
+GRN: Receive → allocate to WH-STOR bin
+Stock visible in Inventory → Locations
+</code></pre>
+<h3>22.2 Make oil (full chain)</h3>
+<pre><code>Manufacturing: Create MO (extract BOM) → Release
+  → Replenishment TO: seeds godown → WH-PROD-OIL (mobile pick/drop)
+  → Issue materials → Run extract WO → Log output
+  → Complete → semi on WH-PROD-OIL
+Filter MO → issue semi → filter WO → complete → bulk oil
+Pack MO (or tally-jit auto) → fill variants → STR bins
+Putaway TO if FG lands on production WH first
+</code></pre>
+<h3>22.3 Sell to shop customer</h3>
+<pre><code>Billing POS: Scan products → Pay → Invoice (stock decrements)
+</code></pre>
+<h3>22.4 Sell to dealer (order fulfilment)</h3>
+<pre><code>Quote → Accept → Sales order
+Picking: Auto-pick → mobile pick
+Packing: Pack → containers
+Billing: Invoice from SO
+Transport: Add invoice to trip → dispatch
+</code></pre>
+<h3>22.5 Ecommerce prepaid order</h3>
+<pre><code>Customer pays on web store
+  → Confirmed SO + invoice + draft pick list (automated)
+Warehouse: Pick → Pack → dispatch
+</code></pre>
+<h3>22.6 Replenish retail shelf (JIT)</h3>
+<pre><code>STR variant bin drops below ROP (tally-jit rule)
+  → Auto pack MO OR transfer from bulk bin (if rule configured)
+Complete MO → FG to STR
+</code></pre>
+<hr>
+<h2>23. Glossary</h2>
+<table>
+<thead>
+<tr>
+<th>Term</th>
+<th>Definition</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>STR</strong></td>
+<td>Stock Room — finished-goods warehouse</td>
+</tr>
+<tr>
+<td><strong>Godown</strong></td>
+<td>Bulk raw storage (Big Godown WH-STOR, New Godown WH-GDNW)</td>
+</tr>
+<tr>
+<td><strong>Bin</strong></td>
+<td>Smallest stock location (zone/shelf/bin)</td>
+</tr>
+<tr>
+<td><strong>FIFO lot</strong></td>
+<td>Oldest receipt batch consumed first on issue</td>
+</tr>
+<tr>
+<td><strong>Effective stock</strong></td>
+<td>On-hand + open PO pipeline + open MO pipeline</td>
+</tr>
+<tr>
+<td><strong>Replenishment TO</strong></td>
+<td>Move raw from storage to production WH for an MO</td>
+</tr>
+<tr>
+<td><strong>Putaway TO</strong></td>
+<td>Move FG from production WH to STR (or rule destination)</td>
+</tr>
+<tr>
+<td><strong>WIP</strong></td>
+<td>Work in progress on facility production warehouse</td>
+</tr>
+<tr>
+<td><strong>Semi / Semi-FG</strong></td>
+<td>Intermediate product between process steps</td>
+</tr>
+<tr>
+<td><strong>By-product</strong></td>
+<td>Secondary output (e.g. press cake from oil extraction)</td>
+</tr>
+<tr>
+<td><strong>ATP</strong></td>
+<td>Available-to-promise — stock check at quote time</td>
+</tr>
+<tr>
+<td><strong>ROP</strong></td>
+<td>Reorder point — minQty on stock rules</td>
+</tr>
+<tr>
+<td><strong>GRN</strong></td>
+<td>Goods Receipt Note</td>
+</tr>
+<tr>
+<td><strong>MO / WO / TO / PO / SO</strong></td>
+<td>Manufacturing / Work / Transfer / Purchase / Sales order</td>
+</tr>
+</tbody></table>
+<hr>
+<h2>24. Tips and troubleshooting</h2>
+<h3>24.1 Common issues</h3>
+<table>
+<thead>
+<tr>
+<th>Problem</th>
+<th>Likely cause</th>
+<th>What to do</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>MO release creates TO but pick fails</td>
+<td>No source bin on TO line</td>
+<td>Assign bin on Transfers detail, or seed godown stock and re-release</td>
+</tr>
+<tr>
+<td>Many MOs appeared at once</td>
+<td>Stock rules batch scan</td>
+<td>Review planned MOs; deactivate rules if testing; cancel unneeded MOs</td>
+</tr>
+<tr>
+<td>SKU missing in dropdown</td>
+<td>List limit or inactive product</td>
+<td>Search in Products; use Find SKU on Inventory adjust</td>
+</tr>
+<tr>
+<td>Pick list shortfall (409)</td>
+<td>Insufficient free bin qty</td>
+<td>Check reserved qty; complete or cancel other picks</td>
+</tr>
+<tr>
+<td>Export button does nothing</td>
+<td>Browser blocked download</td>
+<td>Allow downloads; check console; use CSV export buttons on each page</td>
+</tr>
+<tr>
+<td>Mobile “No source bin”</td>
+<td>TO line missing fromBinId</td>
+<td>Supervisor assigns on desktop or fix replenishment config</td>
+</tr>
+</tbody></table>
+<h3>24.2 Keyboard shortcuts (desktop)</h3>
+<table>
+<thead>
+<tr>
+<th>Shortcut</th>
+<th>Action</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Ctrl+K / Ctrl+/</td>
+<td>Command Palette</td>
+</tr>
+<tr>
+<td>Ctrl+B</td>
+<td>Scanner overlay</td>
+</tr>
+<tr>
+<td>F2</td>
+<td>New invoice (Billing)</td>
+</tr>
+<tr>
+<td>F8</td>
+<td>Complete MO (Manufacturing)</td>
+</tr>
+</tbody></table>
+<h3>24.3 Related technical docs</h3>
+<table>
+<thead>
+<tr>
+<th>Document</th>
+<th>Topic</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><code>docs/manufacturing-multi-step-bom.md</code></td>
+<td>Multi-operation BOMs</td>
+</tr>
+<tr>
+<td><code>docs/soap-manufacturing-process.md</code></td>
+<td>Soap room process</td>
+</tr>
+<tr>
+<td><code>docs/warehouse-location-barcodes.md</code></td>
+<td>Barcode labels and scanning</td>
+</tr>
+<tr>
+<td><code>docs/manufacturing-inventory-storage.md</code></td>
+<td>Storage model detail</td>
+</tr>
+</tbody></table>
+<h3>24.4 Training progression (recommended)</h3>
+<ol>
+<li><strong>Week 1 — Stock:</strong> Products, Inventory locations, Warehouse tree, mobile Scan + Count  </li>
+<li><strong>Week 2 — Inbound:</strong> Procurement PO → GRN → putaway (desktop + mobile GRN)  </li>
+<li><strong>Week 3 — Moves:</strong> Transfers, mobile pick/drop, putaway rules  </li>
+<li><strong>Week 4 — Production:</strong> BOMs, MO release/issue/complete, work orders  </li>
+<li><strong>Week 5 — Outbound:</strong> Quotes, SO, pick, pack, invoice, trips  </li>
+<li><strong>Week 6 — Admin:</strong> Settings, stock rules, users, approvals</li>
+</ol>
+<hr>
+<p><em>Document maintained for PVS ERP Portal. For deployment and server setup, see <code>DEPLOYMENT.md</code> in the repository root.</em></p>
+</article>
+</body>
+</html>

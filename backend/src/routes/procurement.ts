@@ -13,13 +13,21 @@
 //   * On every GRN write, PurchaseOrderItem.received is recomputed
 //     from sum(grnItems.receivedQty - grnItems.rejectedQty) so the
 //     PO snapshot stays consistent if a later GRN is voided.
-//   * Inventory is posted into bins via pickBinForReceive; ledger
-//     rows mirror the existing manufacturing complete flow so reports
-//     stay coherent.
+//   * Inventory is posted into bins + StockLot rows; ledger rows
+//     include batch for FIFO traceability.
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { db } from "../db.js";
 import { recordChange } from "../sync/log.js";
+import { resolveBatchNo } from "../lib/stock-lots.js";
+import { getGrnReceiveHints, receiveGrnLineStock } from "../lib/grn-receive.js";
+import { nextPoNo, resolvePoLine, type ResolvedPoLine } from "../lib/po-lines.js";
+import {
+  computeVendorPerformance,
+  syncVendorRatingFromPerformance,
+} from "../lib/vendor-performance.js";
+import { getPoClosePreview } from "../lib/product-supply-outlook.js";
+import { scheduleStockRulesCheck } from "../lib/stock-rules-runner.js";
 
 // ---- Vendors ----------------------------------------------------
 
@@ -55,8 +63,11 @@ const nextVendorCode = async (): Promise<string> => {
 
 const poItemInput = z.object({
   productId: z.string().min(1),
-  qty: z.number().positive(),
-  rate: z.number().nonnegative(),
+  qty: z.number().positive().optional(),
+  rate: z.number().nonnegative().optional(),
+  vendorProductId: z.string().optional(),
+  vendorQty: z.number().positive().optional(),
+  vendorRate: z.number().nonnegative().optional(),
 });
 
 const poCreate = z.object({
@@ -74,18 +85,6 @@ const poUpdate = z.object({
   items: z.array(poItemInput).optional(),
 });
 
-const nextPoNo = async (): Promise<string> => {
-  const last = await db.purchaseOrder.findFirst({
-    where: { poNo: { startsWith: "PO-2026-" } },
-    orderBy: { poNo: "desc" },
-    select: { poNo: true },
-  });
-  const n = last
-    ? parseInt(last.poNo.split("-").pop() ?? "1100", 10) + 1
-    : 1101;
-  return `PO-2026-${String(n).padStart(4, "0")}`;
-};
-
 // ---- GRN ---------------------------------------------------------
 
 const grnLineInput = z.object({
@@ -93,6 +92,17 @@ const grnLineInput = z.object({
   receivedQty: z.number().nonnegative(),
   rejectedQty: z.number().nonnegative().default(0),
   remarks: z.string().max(500).nullable().optional(),
+  batchNo: z.string().max(60).nullable().optional(),
+  expiryDate: z.string().max(30).nullable().optional(),
+  /** Split accepted qty across bins. Must sum to receivedQty − rejectedQty. */
+  allocations: z
+    .array(
+      z.object({
+        binId: z.string().min(1),
+        qty: z.number().positive(),
+      })
+    )
+    .optional(),
 });
 
 const grnCreate = z.object({
@@ -116,34 +126,27 @@ const nextGrnNo = async (): Promise<string> => {
   return `GRN-${String(n).padStart(4, "0")}`;
 };
 
-// Find a bin to put away an incoming product into. Mirrors the
-// manufacturing FG put-away rules: prefer a bin already holding this
-// product, fall back to an empty bin in the operator-specified
-// warehouse, then anywhere.
-const pickBinForReceive = async (
-  warehouseId: string | null,
-  productId: string
-) => {
-  if (warehouseId) {
-    const matching = await db.bin.findFirst({
-      where: { warehouseId, productId },
-      orderBy: { qty: "asc" },
-    });
-    if (matching) return matching;
-    const empty = await db.bin.findFirst({
-      where: { warehouseId, productId: null, qty: 0 },
-    });
-    if (empty) return empty;
-  }
-  const matching = await db.bin.findFirst({
-    where: { productId },
-    orderBy: { qty: "asc" },
-  });
-  if (matching) return matching;
-  return db.bin.findFirst({
-    where: { productId: null, qty: 0 },
-  });
-};
+const vendorProductCreate = z.object({
+  productId: z.string().min(1),
+  variantId: z.string().nullable().optional(),
+  vendorProductCode: z.string().max(80).nullable().optional(),
+  vendorProductName: z.string().max(200).nullable().optional(),
+  vendorUom: z.string().min(1).max(40),
+  packSize: z.number().positive().default(1),
+  price: z.number().nonnegative().default(0),
+  minOrderQty: z.number().positive().default(1),
+  leadTimeDays: z.number().int().nonnegative().nullable().optional(),
+  priority: z.number().int().default(100),
+  active: z.boolean().default(true),
+  notes: z.string().max(500).nullable().optional(),
+});
+
+const vendorProductUpdate = vendorProductCreate.partial();
+
+const vendorProductInclude = {
+  product: { select: { id: true, sku: true, name: true, uom: true, type: true } },
+  variant: { select: { id: true, sku: true, size: true, color: true } },
+} as const;
 
 // Recompute PurchaseOrderItem.received from its GrnItems. Each line's
 // received is sum(receivedQty) - sum(rejectedQty). We also recompute
@@ -313,6 +316,113 @@ export const procurementRoutes = async (app: FastifyInstance) => {
     }
   );
 
+  // ============= Vendor supplier catalog =============
+
+  app.get("/vendors/:id/products", async (req, reply) => {
+    const vendorId = (req.params as { id: string }).id;
+    const vendor = await db.vendor.findUnique({ where: { id: vendorId } });
+    if (!vendor) return reply.code(404).send({ error: { code: "not_found" } });
+    const q = (req.query as Record<string, string>) ?? {};
+    return db.vendorProduct.findMany({
+      where: {
+        vendorId,
+        ...(q.active === "1" ? { active: true } : {}),
+        ...(q.productId ? { productId: q.productId } : {}),
+      },
+      include: vendorProductInclude,
+      orderBy: [{ priority: "asc" }, { product: { sku: "asc" } }],
+    });
+  });
+
+  app.post(
+    "/vendors/:id/products",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      const vendorId = (req.params as { id: string }).id;
+      const body = vendorProductCreate.parse(req.body);
+      const vendor = await db.vendor.findUnique({ where: { id: vendorId } });
+      if (!vendor) return reply.code(404).send({ error: { code: "not_found" } });
+      const product = await db.product.findUnique({ where: { id: body.productId } });
+      if (!product) {
+        return reply.code(404).send({ error: { code: "product_not_found" } });
+      }
+      if (body.variantId) {
+        const v = await db.productVariant.findUnique({ where: { id: body.variantId } });
+        if (!v || v.productId !== body.productId) {
+          return reply.code(400).send({ error: { code: "variant_product_mismatch" } });
+        }
+      }
+      const created = await db.vendorProduct.create({
+        data: { ...body, vendorId, variantId: body.variantId ?? null },
+        include: vendorProductInclude,
+      });
+      await recordChange("VendorProduct", created.id, "insert", created, req.user.sub);
+      return created;
+    }
+  );
+
+  app.patch(
+    "/vendors/:vendorId/products/:lineId",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      const { vendorId, lineId } = req.params as { vendorId: string; lineId: string };
+      const body = vendorProductUpdate.parse(req.body);
+      const existing = await db.vendorProduct.findFirst({
+        where: { id: lineId, vendorId },
+      });
+      if (!existing) return reply.code(404).send({ error: { code: "not_found" } });
+      const updated = await db.vendorProduct.update({
+        where: { id: lineId },
+        data: body,
+        include: vendorProductInclude,
+      });
+      await recordChange("VendorProduct", lineId, "update", updated, req.user.sub);
+      return updated;
+    }
+  );
+
+  app.delete(
+    "/vendors/:vendorId/products/:lineId",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      const { vendorId, lineId } = req.params as { vendorId: string; lineId: string };
+      const existing = await db.vendorProduct.findFirst({
+        where: { id: lineId, vendorId },
+      });
+      if (!existing) return reply.code(404).send({ error: { code: "not_found" } });
+      const used = await db.purchaseOrderItem.count({ where: { vendorProductId: lineId } });
+      if (used > 0) {
+        const updated = await db.vendorProduct.update({
+          where: { id: lineId },
+          data: { active: false },
+        });
+        return { softDeleted: true, line: updated };
+      }
+      await db.vendorProduct.delete({ where: { id: lineId } });
+      await recordChange("VendorProduct", lineId, "delete", existing, req.user.sub);
+      return { deleted: true };
+    }
+  );
+
+  app.get("/vendors/:id/performance", async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const vendor = await db.vendor.findUnique({ where: { id } });
+    if (!vendor) return reply.code(404).send({ error: { code: "not_found" } });
+    const days = Number((req.query as Record<string, string>)?.days ?? "365");
+    return computeVendorPerformance(id, Number.isFinite(days) ? days : 365);
+  });
+
+  app.post(
+    "/vendors/:id/sync-rating",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      const id = (req.params as { id: string }).id;
+      const vendor = await db.vendor.findUnique({ where: { id } });
+      if (!vendor) return reply.code(404).send({ error: { code: "not_found" } });
+      return syncVendorRatingFromPerformance(id);
+    }
+  );
+
   // ============= Purchase orders =============
 
   const poInclude = {
@@ -329,7 +439,24 @@ export const procurementRoutes = async (app: FastifyInstance) => {
     items: {
       include: {
         product: {
-          select: { id: true, sku: true, name: true, uom: true, hsn: true },
+          select: {
+            id: true,
+            sku: true,
+            name: true,
+            uom: true,
+            hsn: true,
+            type: true,
+            batchTracked: true,
+          },
+        },
+        vendorProduct: {
+          select: {
+            id: true,
+            vendorProductCode: true,
+            vendorProductName: true,
+            vendorUom: true,
+            packSize: true,
+          },
         },
       },
     },
@@ -391,15 +518,24 @@ export const procurementRoutes = async (app: FastifyInstance) => {
     // is the right answer but we surface the issue first so they see
     // it explicitly.
     const seen = new Set<string>();
+    const resolvedLines: ResolvedPoLine[] = [];
     for (const it of body.items) {
-      if (seen.has(it.productId)) {
+      try {
+        const line = await resolvePoLine(it, body.vendorId);
+        if (seen.has(line.productId)) {
+          return reply.code(400).send({
+            error: { code: "duplicate_line", productId: line.productId },
+          });
+        }
+        seen.add(line.productId);
+        resolvedLines.push(line);
+      } catch (e) {
         return reply.code(400).send({
-          error: { code: "duplicate_line", productId: it.productId },
+          error: { code: "invalid_line", message: (e as Error).message },
         });
       }
-      seen.add(it.productId);
     }
-    const total = body.items.reduce((s, i) => s + i.qty * i.rate, 0);
+    const total = resolvedLines.reduce((s, i) => s + i.amount, 0);
     const poNo = await nextPoNo();
     const po = await db.purchaseOrder.create({
       data: {
@@ -410,14 +546,7 @@ export const procurementRoutes = async (app: FastifyInstance) => {
         amount: total,
         status: "draft",
         notes: body.notes ?? null,
-        items: {
-          create: body.items.map((i) => ({
-            productId: i.productId,
-            qty: i.qty,
-            rate: i.rate,
-            amount: i.qty * i.rate,
-          })),
-        },
+        items: { create: resolvedLines },
       },
       include: poInclude,
     });
@@ -448,17 +577,39 @@ export const procurementRoutes = async (app: FastifyInstance) => {
       if (body.notes !== undefined) data.notes = body.notes;
       let updated;
       if (body.items) {
-        const total = body.items.reduce((s, i) => s + i.qty * i.rate, 0);
+        const seen = new Set<string>();
+        const resolvedLines: ResolvedPoLine[] = [];
+        for (const it of body.items) {
+          try {
+            const line = await resolvePoLine(it, before.vendorId);
+            if (seen.has(line.productId)) {
+              return reply.code(400).send({
+                error: { code: "duplicate_line", productId: line.productId },
+              });
+            }
+            seen.add(line.productId);
+            resolvedLines.push(line);
+          } catch (e) {
+            return reply.code(400).send({
+              error: { code: "invalid_line", message: (e as Error).message },
+            });
+          }
+        }
+        const total = resolvedLines.reduce((s, i) => s + i.amount, 0);
         data.amount = total;
         updated = await db.$transaction(async (tx) => {
           await tx.purchaseOrderItem.deleteMany({ where: { poId: id } });
           await tx.purchaseOrderItem.createMany({
-            data: body.items!.map((i) => ({
+            data: resolvedLines.map((i) => ({
               poId: id,
               productId: i.productId,
               qty: i.qty,
               rate: i.rate,
-              amount: i.qty * i.rate,
+              amount: i.amount,
+              vendorProductId: i.vendorProductId,
+              vendorQty: i.vendorQty,
+              vendorUom: i.vendorUom,
+              vendorRate: i.vendorRate,
             })),
           });
           return tx.purchaseOrder.update({
@@ -556,11 +707,35 @@ export const procurementRoutes = async (app: FastifyInstance) => {
         include: poInclude,
       });
       await recordChange("PurchaseOrder", id, "update", updated, req.user.sub);
+      scheduleStockRulesCheck("po-close", req.user.sub, req.log);
       return updated;
     }
   );
 
+  app.get(
+    "/purchase-orders/:id/close-preview",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      const id = (req.params as { id: string }).id;
+      const preview = await getPoClosePreview(id);
+      if (!preview) return reply.code(404).send({ error: { code: "not_found" } });
+      return preview;
+    }
+  );
+
   // ============= GRN =============
+
+  app.post(
+    "/grns/receive-hints",
+    { preHandler: [app.authenticate] },
+    async (req) => {
+      const body = z
+        .object({ productIds: z.array(z.string().min(1)).min(1).max(50) })
+        .parse(req.body);
+      const hints = await getGrnReceiveHints(body.productIds);
+      return { hints };
+    }
+  );
 
   app.get("/grns", async (req) => {
     const q = (req.query as Record<string, string>) ?? {};
@@ -637,9 +812,47 @@ export const procurementRoutes = async (app: FastifyInstance) => {
           },
         });
       }
+      if (line.allocations?.length) {
+        const sum = line.allocations.reduce((s, a) => s + a.qty, 0);
+        if (Math.abs(sum - net) > 0.001) {
+          return reply.code(400).send({
+            error: {
+              code: "allocation_qty_mismatch",
+              message: `Bin allocations (${sum}) must equal accepted qty (${net}) for this line.`,
+              poItemId: poi.id,
+            },
+          });
+        }
+      }
     }
 
     const grnNo = await nextGrnNo();
+
+    const productIds = [...new Set(body.items.map((l) => itemMap.get(l.poItemId)!.productId))];
+    const products = await db.product.findMany({
+      where: { id: { in: productIds } },
+      select: { id: true, sku: true, type: true, batchTracked: true },
+    });
+    const productById = new Map(products.map((p) => [p.id, p]));
+
+    const resolvedLines = body.items.map((line, idx) => {
+      const poi = itemMap.get(line.poItemId)!;
+      const product = productById.get(poi.productId)!;
+      const batchNo = resolveBatchNo({
+        provided: line.batchNo,
+        grnNo,
+        lineIndex: idx,
+        product,
+      });
+      return {
+        ...line,
+        batchNo,
+        expiryDate: line.expiryDate
+          ? new Date(line.expiryDate.includes("T") ? line.expiryDate : `${line.expiryDate}T00:00:00.000Z`)
+          : null,
+      };
+    });
+
     const grn = await db.grn.create({
       data: {
         grnNo,
@@ -650,11 +863,13 @@ export const procurementRoutes = async (app: FastifyInstance) => {
         notes: body.notes ?? null,
         receivedBy: req.user.name,
         items: {
-          create: body.items.map((line) => ({
+          create: resolvedLines.map((line) => ({
             poItemId: line.poItemId,
             receivedQty: line.receivedQty,
             rejectedQty: line.rejectedQty,
             remarks: line.remarks ?? null,
+            batchNo: line.batchNo,
+            expiryDate: line.expiryDate,
           })),
         },
       },
@@ -681,55 +896,80 @@ export const procurementRoutes = async (app: FastifyInstance) => {
       sku: string;
       qty: number;
       bin: string | null;
+      batch: string | null;
+      lotId: string | null;
     }> = [];
     if (postsInventory) {
+      const inputByPoItem = new Map(body.items.map((l) => [l.poItemId, l]));
       for (const line of grn.items) {
-        const accepted = line.receivedQty - line.rejectedQty;
+        const accepted = Math.round(line.receivedQty - line.rejectedQty);
         if (accepted <= 0) continue;
         const productId = line.poItem.productId;
-        // PO / GRN lines don't carry a variantId today, so receipts post
-        // against the parent product. If variant-level PO support lands
-        // later, propagate line.poItem.variantId through here.
-        const bin = await pickBinForReceive(null, productId);
-        let binLabel: string | null = null;
-        if (bin) {
-          await db.bin.update({
-            where: { id: bin.id },
-            data: {
-              qty: { increment: accepted },
-              productId: bin.productId ?? productId,
-            },
+        const inputLine = inputByPoItem.get(line.poItemId);
+        try {
+          const postedRows = await receiveGrnLineStock({
+            grnItemId: line.id,
+            productId,
+            batchNo: line.batchNo ?? `${grn.grnNo}-LOT`,
+            qty: accepted,
+            sourceRef: grn.grnNo,
+            expiryDate: line.expiryDate,
+            allocations: inputLine?.allocations,
           });
-          binLabel = `${bin.zone}/${bin.shelf}/${bin.bin}`;
-          await db.stockLedger.create({
-            data: {
+          await db.product.update({
+            where: { id: productId },
+            data: { stockOnHand: { increment: accepted } },
+          });
+          for (const posted of postedRows) {
+            ledgerEntries.push({
               productId,
-              warehouseId: bin.warehouseId,
-              bin: binLabel,
-              txnType: "in",
-              ref: grn.grnNo,
-              qty: accepted,
-              balance: bin.qty + accepted,
-              date: new Date(),
-            },
-          });
+              sku: line.poItem.product.sku,
+              qty: posted.lot.qtyOnHand,
+              bin: posted.binLabel,
+              batch: line.batchNo,
+              lotId: posted.lot.id,
+            });
+          }
+        } catch (e) {
+          const msg = (e as Error).message;
+          if (msg === "no_receive_bin") {
+            return reply.code(409).send({
+              error: {
+                code: "no_receive_bin",
+                message: `No bin available to receive ${line.poItem.product.sku}. Configure putaway rules or pick a bin.`,
+              },
+            });
+          }
+          if (msg === "allocation_qty_mismatch") {
+            return reply.code(400).send({
+              error: {
+                code: "allocation_qty_mismatch",
+                message: `Bin qty split does not match accepted qty for ${line.poItem.product.sku}.`,
+              },
+            });
+          }
+          if (msg === "bin_not_found") {
+            return reply.code(400).send({
+              error: { code: "bin_not_found", message: "One of the selected bins was not found." },
+            });
+          }
+          if (msg === "bin_product_mismatch") {
+            return reply.code(409).send({
+              error: {
+                code: "bin_product_mismatch",
+                message: `Selected bin already holds a different product for ${line.poItem.product.sku}.`,
+              },
+            });
+          }
+          throw e;
         }
-        await db.product.update({
-          where: { id: productId },
-          data: { stockOnHand: { increment: accepted } },
-        });
-        ledgerEntries.push({
-          productId,
-          sku: line.poItem.product.sku,
-          qty: accepted,
-          bin: binLabel,
-        });
       }
     }
 
     // Roll up PO status now that the GRN lines exist.
     const updatedPo = await recomputePoStatus(po.id, req.user.sub);
     await recordChange("Grn", grn.id, "insert", grn, req.user.sub);
+    scheduleStockRulesCheck("grn", req.user.sub, req.log);
     return { grn, postedToInventory: postsInventory, ledgerEntries, po: updatedPo };
   });
 

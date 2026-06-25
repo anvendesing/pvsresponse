@@ -142,11 +142,12 @@ export const Boms = () => {
         products={products}
         onClose={() => navigate("/manufacturing")}
         onEdit={(b) => navigate(`/manufacturing/boms/${b.id}`)}
-        onCreate={(seedProductId) => {
-          const qs = seedProductId
-            ? `?productId=${encodeURIComponent(seedProductId)}`
-            : "";
-          navigate(`/manufacturing/boms/new${qs}`);
+        onCreate={({ productId, variantId } = {}) => {
+          const params = new URLSearchParams();
+          if (productId) params.set("productId", productId);
+          if (variantId) params.set("variantId", variantId);
+          const qs = params.toString();
+          navigate(`/manufacturing/boms/new${qs ? `?${qs}` : ""}`);
         }}
         onClone={async (b) => {
           try {

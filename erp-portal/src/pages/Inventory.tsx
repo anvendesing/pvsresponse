@@ -24,9 +24,12 @@ import { CollapsibleStats } from "@/components/common/CollapsibleStats";
 import { Toolbar } from "@/components/common/Toolbar";
 import type { Bin, Product, StockLedgerEntry } from "@/data/types";
 import { dt, inr, num } from "@/lib/format";
+import { csvStamp, downloadCsv } from "@/lib/csv-export";
 import { api } from "@/lib/api";
 import { useApi } from "@/hooks/useApi";
 import { cn } from "@/lib/cn";
+import { productMatchesTerm, variantMatchesTerm } from "@/lib/productSearch";
+import { formatLocationPath } from "@/lib/locationDisplay";
 import { EmptyState } from "@/components/common/EmptyState";
 import { BulkOrderExportModal } from "@/components/sales/BulkOrderExportModal";
 import { InventoryLocationsPanel } from "@/components/inventory/InventoryLocationsPanel";
@@ -79,6 +82,7 @@ export const Inventory = () => {
     new Set()
   );
   const [exportOpen, setExportOpen] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
   // Bumped on every successful Adjust Stock post so child tabs that
   // hold their own state (Locations panel) know to refetch.
   const [locationsRefreshKey, setLocationsRefreshKey] = useState(0);
@@ -119,8 +123,9 @@ export const Inventory = () => {
   }, [searchParams, setSearchParams]);
 
   const liveLedger = useApi(() => api.ledger({ limit: 200 }), []);
-  const liveProducts = useApi(() => api.products({ limit: 500 }), []);
+  const liveProducts = useApi(() => api.products({ limit: 2000 }), []);
   const liveWarehouses = useApi(() => api.warehouses(), []);
+  const liveLots = useApi(() => (tab === "batches" ? api.stockLots({ limit: 500 }) : Promise.resolve([])), [tab]);
   const stockLedger = liveLedger.data ?? [];
   const products = liveProducts.data ?? [];
   const loading = liveLedger.loading || liveProducts.loading;
@@ -244,6 +249,14 @@ export const Inventory = () => {
       width: "130px",
     },
     {
+      key: "batch",
+      header: "Batch",
+      cell: (r) => (
+        <span className="font-mono text-caption text-ink-muted">{r.batch ?? "—"}</span>
+      ),
+      width: "120px",
+    },
+    {
       key: "qty",
       header: "Qty",
       align: "right",
@@ -265,6 +278,134 @@ export const Inventory = () => {
       width: "110px",
     },
   ];
+
+  const refreshAll = async () => {
+    await Promise.all([
+      liveLedger.refetch(),
+      liveProducts.refetch(),
+      liveWarehouses.refetch(),
+      tab === "batches" ? liveLots.refetch() : Promise.resolve(),
+    ]);
+    setLocationsRefreshKey((k) => k + 1);
+  };
+
+  const handleExport = async () => {
+    setExportBusy(true);
+    try {
+      const stamp = csvStamp();
+      if (tab === "ledger") {
+        downloadCsv(
+          `inventory-ledger-${stamp}.csv`,
+          [
+            "Date",
+            "Ref",
+            "Type",
+            "Product",
+            "SKU",
+            "Variant SKU",
+            "Variant Size",
+            "Warehouse",
+            "Bin",
+            "Batch",
+            "Qty",
+            "Balance",
+          ],
+          filtered.map((r) => [
+            dt(r.date),
+            r.ref,
+            r.txnType,
+            r.product,
+            r.sku,
+            r.variantSku ?? "",
+            r.variantSize ?? "",
+            r.warehouse,
+            r.bin ?? "",
+            r.batch ?? "",
+            r.qty,
+            r.balance,
+          ])
+        );
+      } else if (tab === "valuation") {
+        downloadCsv(
+          `inventory-valuation-${stamp}.csv`,
+          ["SKU", "Product", "Qty", "Avg Cost", "Value", "Method"],
+          products.map((p) => [
+            p.sku,
+            p.name,
+            p.stockOnHand,
+            p.costPrice,
+            p.stockOnHand * p.costPrice,
+            "FIFO",
+          ])
+        );
+      } else if (tab === "batches") {
+        const lots = liveLots.data ?? [];
+        downloadCsv(
+          `inventory-batches-${stamp}.csv`,
+          [
+            "Batch",
+            "Product",
+            "SKU",
+            "Qty",
+            "UOM",
+            "Warehouse",
+            "Bin",
+            "Source",
+            "Received",
+            "Expiry",
+          ],
+          lots.map((lot) => [
+            lot.batchNo,
+            lot.product.name,
+            lot.product.sku,
+            lot.qtyOnHand,
+            lot.product.uom,
+            lot.warehouse.code,
+            lot.bin ? `${lot.bin.zone}/${lot.bin.shelf}/${lot.bin.bin}` : "",
+            lot.sourceRef,
+            dt(lot.receivedAt),
+            lot.expiryDate ? dt(lot.expiryDate) : "",
+          ])
+        );
+      } else {
+        const matches = await api.inventoryLocations("");
+        const rows = matches.flatMap((m) =>
+          m.bins.map((b) => [
+            m.sku,
+            m.name,
+            m.uom,
+            b.variantSku ?? "",
+            b.variantSize ?? "",
+            b.warehouseCode,
+            b.zone,
+            b.shelf,
+            b.bin,
+            b.qty,
+          ])
+        );
+        downloadCsv(
+          `inventory-locations-${stamp}.csv`,
+          [
+            "Product SKU",
+            "Product",
+            "UOM",
+            "Variant SKU",
+            "Variant Size",
+            "Warehouse",
+            "Zone",
+            "Shelf",
+            "Bin",
+            "Qty",
+          ],
+          rows
+        );
+      }
+    } catch (e) {
+      window.alert((e as Error).message || "Export failed");
+    } finally {
+      setExportBusy(false);
+    }
+  };
 
   const valuationCols: Column<typeof products[number]>[] = [
     {
@@ -355,10 +496,23 @@ export const Inventory = () => {
         }
         right={
           <>
-            <Button variant="outline" size="sm" icon={<RefreshCw size={14} />}>
+            <Button
+              variant="outline"
+              size="sm"
+              icon={<RefreshCw size={14} className={loading ? "animate-spin" : undefined} />}
+              onClick={() => void refreshAll()}
+              disabled={loading}
+            >
               Refresh
             </Button>
-            <Button variant="outline" size="sm" icon={<Download size={14} />}>
+            <Button
+              variant="outline"
+              size="sm"
+              icon={<Download size={14} />}
+              onClick={() => void handleExport()}
+              disabled={exportBusy}
+              title={`Export ${tab} tab as CSV`}
+            >
               Export
             </Button>
             <Button
@@ -430,6 +584,16 @@ export const Inventory = () => {
 
       {tab === "ledger" && (
         <>
+          <div className="px-4 py-2.5 bg-info-soft border-b border-info/30 text-body-sm text-ink flex items-start gap-2">
+            <Truck size={16} className="text-info shrink-0 mt-0.5" />
+            <p>
+              This ledger shows <strong>physical movements only</strong> (GRN receipts, sales,
+              issues, production output, transfers, adjustments). Open purchase orders and
+              manufacturing orders do <strong>not</strong> appear here until goods are received
+              or production is completed — see{" "}
+              <strong>Products → Supply outlook</strong> for incoming commitments.
+            </p>
+          </div>
           <div className="px-4 py-3 bg-surface border-b border-border flex items-center gap-3 flex-wrap">
             <Input
               size="sm"
@@ -551,30 +715,61 @@ export const Inventory = () => {
       )}
 
       {tab === "batches" && (
-        <div className="flex-1 min-h-0 overflow-auto p-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
-          {products.filter((p) => p.batchTracked).slice(0, 8).map((p) => (
-            <Card key={p.id} title={p.name} subtitle={p.sku} actions={<Chip tone="info" size="sm">Batch tracked</Chip>}>
-              <div className="space-y-2">
-                {Array.from({ length: 4 }).map((_, i) => {
-                  const days = 10 + i * 12;
-                  const expDays = 90 - i * 18;
-                  const tone = expDays < 20 ? "danger" : expDays < 50 ? "warning" : "success";
-                  return (
-                    <div key={i} className="flex items-center justify-between gap-3 px-3 py-2 bg-canvas rounded-md border border-border">
-                      <div>
-                        <div className="font-mono text-caption font-semibold">BT-{2000 + i}</div>
-                        <div className="text-caption text-ink-muted">Mfg {days}d ago · Exp in {expDays}d</div>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <span className="tnum font-semibold">{num(40 + i * 22)} {p.uom}</span>
-                        <Chip tone={tone} size="sm">{tone === "success" ? "fresh" : tone === "warning" ? "expiring" : "critical"}</Chip>
-                      </div>
-                    </div>
-                  );
-                })}
+        <div className="flex-1 min-h-0 overflow-auto p-4 space-y-4">
+          {liveLots.loading && (
+            <div className="text-body-sm text-ink-muted">Loading lots…</div>
+          )}
+          {!liveLots.loading && (liveLots.data ?? []).length === 0 && (
+            <EmptyState
+              empty
+              emptyTitle="No open lots"
+              emptyDescription="Post a GRN with batch/lot numbers to see FIFO stock here."
+            />
+          )}
+          {(liveLots.data ?? []).map((lot) => {
+            const expDays = lot.expiryDate
+              ? Math.ceil(
+                  (new Date(lot.expiryDate).getTime() - Date.now()) / 86400000
+                )
+              : null;
+            const tone =
+              expDays == null
+                ? ("info" as const)
+                : expDays < 20
+                  ? ("danger" as const)
+                  : expDays < 50
+                    ? ("warning" as const)
+                    : ("success" as const);
+            const binPath = lot.bin
+              ? `${lot.warehouse.code} · ${lot.bin.zone}/${lot.bin.shelf}/${lot.bin.bin}`
+              : lot.warehouse.code;
+            return (
+              <div
+                key={lot.id}
+                className="flex items-center justify-between gap-3 px-4 py-3 bg-surface rounded-md border border-border"
+              >
+                <div>
+                  <div className="font-mono text-caption font-semibold">{lot.batchNo}</div>
+                  <div className="text-body-sm font-semibold">{lot.product.name}</div>
+                  <div className="text-caption text-ink-muted">
+                    {lot.product.sku} · {lot.sourceRef} · {binPath}
+                  </div>
+                  <div className="text-caption text-ink-muted">
+                    Received {dt(lot.receivedAt)}
+                    {expDays != null ? ` · Exp in ${expDays}d` : ""}
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  <span className="tnum font-semibold">
+                    {num(lot.qtyOnHand)} {lot.product.uom}
+                  </span>
+                  <Chip tone={tone} size="sm">
+                    {lot.product.type === "raw" ? "raw" : "lot"}
+                  </Chip>
+                </div>
               </div>
-            </Card>
-          ))}
+            );
+          })}
         </div>
       )}
 
@@ -702,6 +897,23 @@ const AdjustStockModal = ({
     "";
 
   const skuOptions = useMemo(() => buildSkuOptions(products), [products]);
+  const [skuQuery, setSkuQuery] = useState("");
+  const filteredSkuOptions = useMemo(() => {
+    const q = skuQuery.trim().toLowerCase();
+    if (!q) return skuOptions;
+    return skuOptions.filter((o) => {
+      if (o.sku.toLowerCase().includes(q) || o.label.toLowerCase().includes(q)) {
+        return true;
+      }
+      if (o.level === "variant") {
+        const parent = products.find((p) => p.id === o.productId);
+        return parent ? productMatchesTerm(parent, q) : false;
+      }
+      const parent = products.find((p) => p.id === o.productId);
+      if (!parent) return false;
+      return (parent.variants ?? []).some((v) => variantMatchesTerm(v, q));
+    });
+  }, [skuOptions, skuQuery, products]);
   const initialSkuKey = (() => {
     if (prefill?.variantId) return `v:${prefill.variantId}`;
     if (prefill?.productId) return `p:${prefill.productId}`;
@@ -808,7 +1020,7 @@ const AdjustStockModal = ({
   }, [bins, selected]);
 
   const parsed = Number(amount);
-  const countBase = binQty;
+  const countBase = binId ? binQty : whTotalInBins;
   const delta =
     mode === "count"
       ? Number.isFinite(parsed)
@@ -816,6 +1028,9 @@ const AdjustStockModal = ({
         : 0
       : parsed;
   const previewBin = binId ? binQty + (Number.isFinite(delta) ? delta : 0) : null;
+  const previewWh =
+    !binId && Number.isFinite(delta) ? whTotalInBins + delta : null;
+  const selectedWarehouse = warehouses.find((w) => w.id === warehouseId);
 
   const binChoices = useMemo(() => {
     const holding = productBins.holding;
@@ -827,19 +1042,13 @@ const AdjustStockModal = ({
     setError(null);
     if (!selected) return setError("Pick a product or variant.");
     if (!warehouseId) return setError("Pick a warehouse.");
-    if (!binId) {
-      return setError(
-        binChoices.length === 0
-          ? selected.level === "variant"
-            ? `No bins in this warehouse hold ${selected.sku}, and no empty bin is available. Create or empty a bin first.`
-            : `No bulk-parent bins for ${selected.sku} in this warehouse, and no empty bin is available.`
-          : "Select the exact bin where this stock lives."
-      );
-    }
     if (!Number.isFinite(parsed) || amount.trim() === "") return setError("Enter a quantity.");
     if (delta === 0) return setError("No change — quantity already matches.");
     if (previewBin != null && previewBin < 0) {
       return setError(`Bin would go negative (${previewBin}).`);
+    }
+    if (previewWh != null && previewWh < 0) {
+      return setError(`Warehouse total would go negative (${previewWh}).`);
     }
     setBusy(true);
     try {
@@ -848,7 +1057,7 @@ const AdjustStockModal = ({
         productId: selected.productId,
         variantId: selected.variantId,
         warehouseId,
-        binId,
+        ...(binId ? { binId } : {}),
         qty: delta,
         reason: fullReason,
       });
@@ -864,9 +1073,10 @@ const AdjustStockModal = ({
       <div className="bg-surface w-full max-w-xl rounded-lg elevation-3 flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-border flex items-start justify-between gap-3">
           <div>
-            <div className="text-h3 font-bold">Adjust bin stock</div>
+            <div className="text-h3 font-bold">Adjust stock</div>
             <div className="text-caption text-ink-muted">
-              Pick the exact bin, then enter qty. Manufacturing reads <strong>bin qty</strong>, not the product counter.
+              Pick warehouse and qty; bin is optional. Without a bin, stock lands at warehouse level.
+              Manufacturing reads <strong>bin qty</strong>, not the product counter.
             </div>
           </div>
           <button onClick={onClose} className="h-9 w-9 grid place-items-center rounded-md text-ink-muted hover:bg-canvas shrink-0">
@@ -882,6 +1092,20 @@ const AdjustStockModal = ({
 
         <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
           <label className="flex flex-col gap-1.5">
+            <span className="text-caption font-medium">Find SKU</span>
+            <Input
+              value={skuQuery}
+              onChange={(e) => setSkuQuery(e.target.value)}
+              placeholder="Type SKU or name (e.g. WSS, sesame)…"
+              icon={<Search size={14} />}
+            />
+            <span className="text-caption text-ink-muted">
+              {skuQuery.trim()
+                ? `${filteredSkuOptions.length} match${filteredSkuOptions.length === 1 ? "" : "es"}`
+                : `${skuOptions.length} SKUs loaded · type to filter`}
+            </span>
+          </label>
+          <label className="flex flex-col gap-1.5">
             <span className="text-caption font-medium">SKU (product or variant)</span>
             <select
               value={skuKey}
@@ -892,7 +1116,7 @@ const AdjustStockModal = ({
               className="h-10 px-2 rounded-md border border-border bg-surface text-body"
             >
               <option value="">Select a SKU…</option>
-              {skuOptions.map((o) => (
+              {filteredSkuOptions.map((o) => (
                 <option key={o.key} value={o.key}>
                   {o.label} · counter {o.stockOnHand}
                 </option>
@@ -935,7 +1159,7 @@ const AdjustStockModal = ({
           {selected && warehouseId && (
             <label className="flex flex-col gap-1.5">
               <span className="text-caption font-medium">
-                Bin <span className="text-danger">*</span>
+                Bin <span className="text-ink-muted font-normal">(optional)</span>
                 <span className="text-ink-muted font-normal">
                   {" "}— scoped to {selected.level === "variant" ? "variant-tagged" : "bulk-parent"} bins
                 </span>
@@ -946,52 +1170,53 @@ const AdjustStockModal = ({
                 <select
                   value={binId}
                   onChange={(e) => setBinId(e.target.value)}
-                  className={cn(
-                    "h-10 px-2 rounded-md border bg-surface text-body",
-                    !binId ? "border-warning" : "border-border"
-                  )}
+                  className="h-10 px-2 rounded-md border border-border bg-surface text-body"
                 >
-                  <option value="">Select bin (required)…</option>
+                  <option value="">Warehouse level (auto slot)…</option>
                   {productBins.holding.map((b) => (
                     <option key={b.id} value={b.id}>
-                      {b.zone}/{b.shelf}/{b.bin} — holds {b.qty ?? 0} {selected.sku} ({selected.uom})
+                      {formatLocationPath(b, selectedWarehouse?.name)} — holds {b.qty ?? 0}{" "}
+                      {selected.sku} ({selected.uom})
                     </option>
                   ))}
                   {productBins.empty.map((b) => (
                     <option key={b.id} value={b.id}>
-                      {b.zone}/{b.shelf}/{b.bin} — empty slot
+                      {formatLocationPath(b, selectedWarehouse?.name)} — empty slot
                     </option>
                   ))}
                 </select>
               )}
-              {!binsLoading && binChoices.length === 0 && (
-                <div className="text-caption text-danger">
-                  No bins in this warehouse hold {selected.sku} and no empty
-                  slots are free. Create one under <strong>Warehouse</strong>{" "}
-                  or empty an unused bin first.
+              {!binsLoading && binChoices.length === 0 && !binId && (
+                <div className="text-caption text-ink-muted">
+                  No bins yet for {selected.sku} in this warehouse. Posting without a bin
+                  creates a warehouse-level slot automatically.
                 </div>
               )}
               {!binsLoading && binChoices.length > 0 && !binId && (
-                <div className="text-caption text-[#8a6300]">
-                  Choose where the physical stock sits — MO release reads this bin qty.
+                <div className="text-caption text-ink-muted">
+                  Leave blank to post at warehouse level, or pick a specific bin for MO release.
                 </div>
               )}
             </label>
           )}
 
-          {selected && warehouseId && binId && (
+          {selected && warehouseId && (
             <div className="rounded-md border border-border bg-canvas px-3 py-2 text-body-sm space-y-1">
-              <div className="flex justify-between">
-                <span className="text-ink-muted">This bin now</span>
-                <span className="tnum font-semibold">
-                  {num(binQty)} {selected.uom}
-                </span>
-              </div>
+              {binId && (
+                <div className="flex justify-between">
+                  <span className="text-ink-muted">This bin now</span>
+                  <span className="tnum font-semibold">
+                    {num(binQty)} {selected.uom}
+                  </span>
+                </div>
+              )}
               <div className="flex justify-between text-caption">
                 <span className="text-ink-muted">
-                  All {selected.level === "variant" ? "variant" : "bulk-parent"} bins in warehouse
+                  {binId
+                    ? `All ${selected.level === "variant" ? "variant" : "bulk-parent"} bins in warehouse`
+                    : `Warehouse total (${selectedWarehouse?.code ?? "WH"})`}
                 </span>
-                <span className="tnum">
+                <span className={cn("tnum", !binId && "font-semibold")}>
                   {num(whTotalInBins)} {selected.uom}
                 </span>
               </div>
@@ -1006,7 +1231,7 @@ const AdjustStockModal = ({
             </div>
           )}
 
-          {selected && warehouseId && binId && (
+          {selected && warehouseId && (
             <>
           <div className="flex rounded-md border border-border overflow-hidden w-max">
             <button
@@ -1021,7 +1246,7 @@ const AdjustStockModal = ({
               onClick={() => setMode("count")}
               className={cn("px-3 h-8 text-body-sm", mode === "count" ? "bg-primary text-white" : "bg-surface text-ink-muted")}
             >
-              Set bin total (count)
+              {binId ? "Set bin total (count)" : "Set warehouse total (count)"}
             </button>
           </div>
 
@@ -1030,7 +1255,9 @@ const AdjustStockModal = ({
               label={
                 mode === "delta"
                   ? "Change (+ add / − remove)"
-                  : `New qty in ${selectedBin?.zone}/${selectedBin?.shelf}/${selectedBin?.bin}`
+                  : binId
+                    ? `New qty in ${formatLocationPath(selectedBin!, selectedWarehouse?.name)}`
+                    : `New total in ${selectedWarehouse?.code ?? "warehouse"}`
               }
               type="number"
               value={amount}
@@ -1054,11 +1281,23 @@ const AdjustStockModal = ({
           {Number.isFinite(delta) && delta !== 0 && (
             <div className="rounded-md bg-canvas border border-border px-3 py-2 text-body-sm">
               <span className="tnum">
-                {selectedBin?.zone}/{selectedBin?.shelf}/{selectedBin?.bin}: {binQty}{" "}
-                <span className={cn("font-semibold", delta > 0 ? "text-success" : "text-danger")}>
-                  {delta > 0 ? `+${delta}` : delta}
-                </span>{" "}
-                → <strong>{previewBin}</strong>
+                {binId ? (
+                  <>
+                    {formatLocationPath(selectedBin!, selectedWarehouse?.name)}: {binQty}{" "}
+                    <span className={cn("font-semibold", delta > 0 ? "text-success" : "text-danger")}>
+                      {delta > 0 ? `+${delta}` : delta}
+                    </span>{" "}
+                    → <strong>{previewBin}</strong>
+                  </>
+                ) : (
+                  <>
+                    {selectedWarehouse?.code ?? "Warehouse"}: {whTotalInBins}{" "}
+                    <span className={cn("font-semibold", delta > 0 ? "text-success" : "text-danger")}>
+                      {delta > 0 ? `+${delta}` : delta}
+                    </span>{" "}
+                    → <strong>{previewWh}</strong>
+                  </>
+                )}
               </span>
             </div>
           )}
@@ -1072,8 +1311,8 @@ const AdjustStockModal = ({
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button loading={busy} onClick={submit} disabled={!selected || !warehouseId || !binId}>
-            Post to selected bin
+          <Button loading={busy} onClick={submit} disabled={!selected || !warehouseId}>
+            {binId ? "Post to selected bin" : "Post to warehouse"}
           </Button>
         </div>
       </div>

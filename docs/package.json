@@ -1,0 +1,13 @@
+{
+  "name": "pvs-erp-docs",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "pdf": "node build-user-manual-pdf.mjs",
+    "pdf:multi-machine": "node build-multi-machine-pdf.mjs",
+    "html": "node build-user-manual-pdf.mjs"
+  },
+  "devDependencies": {
+    "marked": "^15.0.12"
+  }
+}

@@ -17,6 +17,7 @@ import {
   MapPin,
   MessageSquare,
   Palette,
+  Pencil,
   Plus,
   Power,
   RotateCcw,
@@ -26,6 +27,7 @@ import {
   Smartphone,
   Package as PackageIcon,
   Tags,
+  Search,
   Trash2,
   Truck,
   Users,
@@ -46,11 +48,14 @@ import {
   type StockRuleRow,
   type WarehouseRow,
 } from "@/lib/api";
+import type { Product } from "@/data/types";
 import { cn } from "@/lib/cn";
+import { productMatchesTerm, variantMatchesTerm } from "@/lib/productSearch";
 import { useBrand } from "@/hooks/useBrand";
 import { UserManager } from "@/components/settings/UserManager";
 import { CategoryManager } from "@/components/settings/CategoryManager";
 import { DispatchOptionManager } from "@/components/settings/DispatchOptionManager";
+import { ChannelMappingManager } from "@/components/settings/ChannelMappingManager";
 import { ContainerTypeManager } from "@/components/settings/ContainerTypeManager";
 import { PackingSettings } from "@/components/settings/PackingSettings";
 
@@ -76,6 +81,7 @@ const SECTION_GROUPS: { heading: string; sections: SettingsSection[] }[] = [
       { id: "dispatch", label: "Dispatch options", icon: Truck },
       { id: "packing", label: "Packing", icon: PackageIcon },
       { id: "containerTypes", label: "Container types", icon: PackageIcon },
+      { id: "channelMappings", label: "Channel mappings", icon: ScanLine },
     ],
   },
   {
@@ -178,6 +184,7 @@ export const Settings = () => {
           {active === "dispatch" && <DispatchOptionManager />}
           {active === "packing" && <PackingSettings />}
           {active === "containerTypes" && <ContainerTypeManager />}
+          {active === "channelMappings" && <ChannelMappingManager />}
 
           {active === "users" && <UserManager />}
 
@@ -1561,9 +1568,16 @@ interface FacilityRow {
   capacityPerHour: number | null;
   productionLineWarehouseId: string | null;
   productionLineWarehouse: { id: string; code: string; name: string } | null;
+  productionZone?: string | null;
+  replenishWarehouseCodes?: string | null;
   active: boolean;
   lines: ProductionLineRow[];
 }
+
+const lineRole = (description: string | null | undefined) => {
+  const m = description?.match(/\[role=(\w+)\]/);
+  return m?.[1] ?? null;
+};
 
 interface ProductionLineRow {
   id: string;
@@ -1696,6 +1710,8 @@ const FacilitiesCard = ({
     capacity: string;
     description: string;
     productionLineWarehouseId: string;
+    productionZone: string;
+    replenishWarehouseCodes: string;
     active: boolean;
   } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -1708,6 +1724,8 @@ const FacilitiesCard = ({
       capacity: r.capacityPerHour ? String(r.capacityPerHour) : "",
       description: r.description ?? "",
       productionLineWarehouseId: r.productionLineWarehouseId ?? "",
+      productionZone: r.productionZone ?? "",
+      replenishWarehouseCodes: r.replenishWarehouseCodes ?? "",
       active: r.active,
     });
   };
@@ -1744,6 +1762,8 @@ const FacilitiesCard = ({
         description: editDraft.description.trim() || null,
         capacityPerHour: editDraft.capacity ? Number(editDraft.capacity) : null,
         productionLineWarehouseId: editDraft.productionLineWarehouseId || null,
+        productionZone: editDraft.productionZone.trim() || null,
+        replenishWarehouseCodes: editDraft.replenishWarehouseCodes.trim() || null,
         active: editDraft.active,
       });
       setEditId(null);
@@ -1799,6 +1819,7 @@ const FacilitiesCard = ({
               <th className="text-left px-3 py-2">Name</th>
               <th className="text-right px-3 py-2">Capacity / hr</th>
               <th className="text-left px-3 py-2">Prod. warehouse</th>
+              <th className="text-left px-3 py-2">Replenish from</th>
               <th className="text-right px-3 py-2">Lines</th>
               <th className="text-center px-3 py-2">Status</th>
               <th className="text-right px-3 py-2 w-24"></th>
@@ -1846,6 +1867,7 @@ const FacilitiesCard = ({
                     Auto-create
                   </label>
                 </td>
+                <td className="px-3 py-2 text-ink-muted text-caption">—</td>
                 <td className="px-3 py-2 text-right text-ink-muted">—</td>
                 <td className="px-3 py-2 text-center">
                   <Chip size="sm" tone="success">
@@ -1875,14 +1897,14 @@ const FacilitiesCard = ({
             )}
             {loading && rows.length === 0 && !draft && (
               <tr>
-                <td colSpan={7} className="px-3 py-6 text-center text-ink-muted">
+                <td colSpan={8} className="px-3 py-6 text-center text-ink-muted">
                   <Loader2 size={14} className="inline animate-spin mr-1" /> Loading…
                 </td>
               </tr>
             )}
             {!loading && rows.length === 0 && !draft && (
               <tr>
-                <td colSpan={7} className="px-3 py-6 text-center text-ink-muted">
+                <td colSpan={8} className="px-3 py-6 text-center text-ink-muted">
                   No facilities yet. Click <strong>Add facility</strong> to start.
                 </td>
               </tr>
@@ -1936,6 +1958,20 @@ const FacilitiesCard = ({
                           </option>
                         ))}
                       </select>
+                    </td>
+                    <td className="px-3 py-2">
+                      <Input
+                        size="sm"
+                        placeholder="WH-GDNW,WH-STOR,WH-PROD-OIL"
+                        value={editDraft.replenishWarehouseCodes}
+                        onChange={(e) =>
+                          setEditDraft({
+                            ...editDraft,
+                            replenishWarehouseCodes: e.target.value,
+                          })
+                        }
+                        className="font-mono text-caption"
+                      />
                     </td>
                     <td className="px-3 py-2 text-right text-ink-muted">
                       {r.lines.length}
@@ -2008,6 +2044,9 @@ const FacilitiesCard = ({
                     ) : (
                       <span className="text-ink-muted text-caption">—</span>
                     )}
+                  </td>
+                  <td className="px-3 py-2 font-mono text-caption text-ink-muted max-w-[180px] truncate">
+                    {r.replenishWarehouseCodes || "—"}
                   </td>
                   <td className="px-3 py-2 text-right tnum">{r.lines.length}</td>
                   <td className="px-3 py-2 text-center">
@@ -2311,10 +2350,14 @@ const LinesCard = ({
                     {r.code}
                   </td>
                   <td className="px-3 py-2 font-medium">
-                    {r.name}
-                    {r.description && (
-                      <div className="text-caption text-ink-muted">{r.description}</div>
-                    )}
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {r.name}
+                      {lineRole(r.description) && (
+                        <Chip size="sm" tone="info">
+                          {lineRole(r.description)}
+                        </Chip>
+                      )}
+                    </div>
                   </td>
                   <td className="px-3 py-2 text-right tnum">
                     {r.capacityPerHour ?? "—"}
@@ -2715,24 +2758,118 @@ const MachinesCard = ({
 const binPath = (b: { zone: string; shelf: string; bin: string }) =>
   `${b.zone}/${b.shelf}/${b.bin}`;
 
+const matchesPutawayRule = (r: PutawayRuleRow, rawTerm: string): boolean => {
+  const term = rawTerm.trim().toLowerCase();
+  if (!term) return true;
+  const fields = [
+    r.product.sku,
+    r.product.name,
+    r.product.barcode,
+    r.variant?.sku,
+    r.variant?.barcode,
+    r.variant?.size,
+    r.toWarehouse.code,
+    r.toWarehouse.name,
+    r.tobin?.code,
+    r.tobin ? binPath(r.tobin) : null,
+    r.notes,
+  ];
+  return fields.some((s) => (s ?? "").toLowerCase().includes(term));
+};
+
+type PutawayProductPick = {
+  id: string;
+  sku: string;
+  name: string;
+  barcode: string;
+  variantId?: string;
+  variantSku?: string;
+  variantBarcode?: string | null;
+  label: string;
+};
+
+const buildPutawayProductPicks = (products: Product[], rawTerm: string): PutawayProductPick[] => {
+  const term = rawTerm.trim().toLowerCase();
+  if (term.length < 1) return [];
+  const out: PutawayProductPick[] = [];
+  for (const p of products) {
+    const baseHit = productMatchesTerm(p, term);
+    const variants = p.variants ?? [];
+    if (variants.length === 0 && baseHit) {
+      out.push({
+        id: p.id,
+        sku: p.sku,
+        name: p.name,
+        barcode: p.barcode,
+        label: p.name,
+      });
+      continue;
+    }
+    for (const v of variants) {
+      if (baseHit || variantMatchesTerm(v, term)) {
+        out.push({
+          id: p.id,
+          sku: p.sku,
+          name: p.name,
+          barcode: p.barcode,
+          variantId: v.id,
+          variantSku: v.sku,
+          variantBarcode: v.barcode,
+          label: [v.size, v.color, v.grade].filter(Boolean).join(" · ") || v.sku,
+        });
+      }
+    }
+  }
+  return out.slice(0, 12);
+};
+
 export const PutawayRulesManager = () => {
   const [rules, setRules] = useState<PutawayRuleRow[]>([]);
+  const [catalogProducts, setCatalogProducts] = useState<Product[]>([]);
   const [warehouses, setWarehouses] = useState<WarehouseRow[]>([]);
-  const [products, setProducts] = useState<Array<{ id: string; sku: string; name: string }>>([]);
-  const [variants, setVariants] = useState<Array<{ id: string; sku: string; label: string }>>([]);
+  const [variants, setVariants] = useState<
+    Array<{ id: string; sku: string; label: string; barcode: string | null }>
+  >([]);
   const [whBins, setWhBins] = useState<Array<{ id: string; label: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
+  const [listSearch, setListSearch] = useState("");
+  const [productPickerSearch, setProductPickerSearch] = useState("");
   const [draft, setDraft] = useState({
     productId: "",
     variantId: "",
     toWarehouseId: "",
+    toZone: "",
     toBinId: "",
     priority: "100",
     notes: "",
   });
   const [busy, setBusy] = useState(false);
+
+  const filteredRules = useMemo(
+    () => rules.filter((r) => matchesPutawayRule(r, listSearch)),
+    [rules, listSearch]
+  );
+
+  const productPicks = useMemo(
+    () => buildPutawayProductPicks(catalogProducts, productPickerSearch),
+    [catalogProducts, productPickerSearch]
+  );
+
+  const selectedProduct = useMemo(
+    () => catalogProducts.find((p) => p.id === draft.productId) ?? null,
+    [catalogProducts, draft.productId]
+  );
+
+  const selectedPickLabel = useMemo(() => {
+    if (!draft.productId) return "";
+    const p = selectedProduct;
+    if (!p) return draft.productId;
+    if (!draft.variantId) return `${p.sku} — ${p.name}`;
+    const v = p.variants?.find((vv) => vv.id === draft.variantId);
+    return v ? `${p.sku} / ${v.sku}` : `${p.sku} — ${p.name}`;
+  }, [draft.productId, draft.variantId, selectedProduct]);
 
   const reload = async () => {
     setLoading(true);
@@ -2741,17 +2878,11 @@ export const PutawayRulesManager = () => {
       const [r, wh, p] = await Promise.all([
         api.putawayRules(),
         api.warehouses(),
-        api.products(),
+        api.products({ limit: 2000 }),
       ]);
       setRules(r);
       setWarehouses(wh);
-      setProducts(
-        (p as unknown as Array<{ id: string; sku: string; name: string }>).map((x) => ({
-          id: x.id,
-          sku: x.sku,
-          name: x.name,
-        }))
-      );
+      setCatalogProducts(p);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -2768,16 +2899,29 @@ export const PutawayRulesManager = () => {
       setVariants([]);
       return;
     }
+    const p = catalogProducts.find((x) => x.id === draft.productId);
+    if (p?.variants?.length) {
+      setVariants(
+        p.variants.map((v) => ({
+          id: v.id,
+          sku: v.sku,
+          label: [v.size, v.color, v.grade].filter(Boolean).join(" · ") || v.sku,
+          barcode: v.barcode,
+        }))
+      );
+      return;
+    }
     void api.variantsWithBoms(draft.productId).then((res) => {
       setVariants(
         res.variants.map((v) => ({
           id: v.id,
           sku: v.sku,
           label: v.label ?? v.sku,
+          barcode: null,
         }))
       );
     }).catch(() => setVariants([]));
-  }, [draft.productId]);
+  }, [draft.productId, catalogProducts]);
 
   useEffect(() => {
     if (!draft.toWarehouseId) {
@@ -2799,8 +2943,11 @@ export const PutawayRulesManager = () => {
       alert("Product and destination warehouse are required.");
       return;
     }
-    if (!draft.toBinId) {
-      alert("Destination bin is required. Auto-pick empty bins is disabled.");
+    // Either a specific bin OR a zone (e.g. "PR" staging) is required.
+    // A zone-only rule lets the system auto-create a per-product slot
+    // inside the zone so finished goods aren't pinned to a single bin.
+    if (!draft.toBinId && !draft.toZone.trim()) {
+      alert("Pick a destination bin OR enter a destination zone (e.g. PR).");
       return;
     }
     setBusy(true);
@@ -2809,16 +2956,19 @@ export const PutawayRulesManager = () => {
         productId: draft.productId,
         variantId: draft.variantId || null,
         toWarehouseId: draft.toWarehouseId,
-        toBinId: draft.toBinId,
+        toZone: draft.toZone.trim() ? draft.toZone.trim().toUpperCase() : null,
+        toBinId: draft.toBinId || null,
         priority: Number(draft.priority) || 100,
         notes: draft.notes.trim() || null,
         active: true,
       });
       setShowAdd(false);
+      setProductPickerSearch("");
       setDraft({
         productId: "",
         variantId: "",
         toWarehouseId: "",
+        toZone: "",
         toBinId: "",
         priority: "100",
         notes: "",
@@ -2876,26 +3026,79 @@ export const PutawayRulesManager = () => {
         <div className="px-4 py-3 bg-primary-50/30 border-b border-border space-y-3">
           <p className="text-body-sm font-medium text-ink">New putaway rule</p>
           <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-caption text-ink-muted block mb-1">Product</label>
-              <select
-                className="h-8 w-full rounded border border-border bg-surface text-body-sm px-2"
-                value={draft.productId}
-                onChange={(e) =>
-                  setDraft({
-                    ...draft,
-                    productId: e.target.value,
-                    variantId: "",
-                  })
-                }
-              >
-                <option value="">— select product —</option>
-                {products.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.sku} — {p.name}
-                  </option>
-                ))}
-              </select>
+            <div className="col-span-2">
+              <label className="text-caption text-ink-muted block mb-1">Product / variant</label>
+              {draft.productId ? (
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="flex-1 rounded border border-border bg-canvas px-2 py-1.5 text-body-sm">
+                    <span className="font-mono text-caption text-primary">{selectedPickLabel}</span>
+                    {selectedProduct ? (
+                      <div className="text-caption text-ink-muted font-mono">
+                        BC {selectedProduct.barcode}
+                        {draft.variantId
+                          ? (() => {
+                              const v = selectedProduct.variants?.find(
+                                (vv) => vv.id === draft.variantId
+                              );
+                              return v?.barcode ? ` · ${v.barcode}` : "";
+                            })()
+                          : ""}
+                      </div>
+                    ) : null}
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => {
+                      setDraft({ ...draft, productId: "", variantId: "" });
+                      setProductPickerSearch("");
+                    }}
+                  >
+                    Clear
+                  </Button>
+                </div>
+              ) : null}
+              <div className="relative">
+                <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-ink-muted" />
+                <Input
+                  size="sm"
+                  className="pl-8"
+                  placeholder="Search SKU or barcode…"
+                  value={productPickerSearch}
+                  onChange={(e) => setProductPickerSearch(e.target.value)}
+                />
+              </div>
+              {productPickerSearch.trim() && !draft.productId && productPicks.length > 0 && (
+                <ul className="mt-1 max-h-40 overflow-y-auto rounded border border-border bg-surface shadow-sm">
+                  {productPicks.map((pick) => (
+                    <li key={`${pick.id}-${pick.variantId ?? "p"}`}>
+                      <button
+                        type="button"
+                        className="w-full text-left px-2 py-1.5 hover:bg-canvas border-b border-border last:border-0"
+                        onClick={() => {
+                          setDraft({
+                            ...draft,
+                            productId: pick.id,
+                            variantId: pick.variantId ?? "",
+                          });
+                          setProductPickerSearch("");
+                        }}
+                      >
+                        <div className="font-mono text-caption text-primary">
+                          {pick.variantSku ?? pick.sku}
+                        </div>
+                        <div className="text-caption text-ink-muted truncate">{pick.name}</div>
+                        <div className="text-caption font-mono text-ink-muted">
+                          {pick.variantBarcode
+                            ? pick.variantBarcode
+                            : pick.barcode}
+                          {pick.variantSku ? ` · parent ${pick.barcode}` : ""}
+                        </div>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
             <div>
               <label className="text-caption text-ink-muted block mb-1">Variant (optional)</label>
@@ -2908,7 +3111,9 @@ export const PutawayRulesManager = () => {
                 <option value="">— all variants —</option>
                 {variants.map((v) => (
                   <option key={v.id} value={v.id}>
-                    {v.sku} — {v.label}
+                    {v.sku}
+                    {v.barcode ? ` · ${v.barcode}` : ""}
+                    {v.label !== v.sku ? ` — ${v.label}` : ""}
                   </option>
                 ))}
               </select>
@@ -2931,12 +3136,33 @@ export const PutawayRulesManager = () => {
               </select>
             </div>
             <div>
-              <label className="text-caption text-ink-muted block mb-1">Destination bin *</label>
+              <label className="text-caption text-ink-muted block mb-1">
+                Destination zone (optional)
+              </label>
+              <Input
+                size="sm"
+                placeholder="e.g. PR for production staging"
+                value={draft.toZone}
+                onChange={(e) =>
+                  setDraft({ ...draft, toZone: e.target.value.toUpperCase() })
+                }
+                disabled={!draft.toWarehouseId}
+              />
+              <p className="text-caption text-ink-muted mt-1">
+                Set a zone (e.g. <code>PR</code>) instead of a fixed bin to
+                stage all finished stock for the product in that zone — one
+                slot per SKU, no bin-level pinning. Bin below stays empty.
+              </p>
+            </div>
+            <div>
+              <label className="text-caption text-ink-muted block mb-1">
+                Destination bin {draft.toZone.trim() ? "(optional)" : "*"}
+              </label>
               <select
                 className="h-8 w-full rounded border border-border bg-surface text-body-sm px-2"
                 value={draft.toBinId}
                 onChange={(e) => setDraft({ ...draft, toBinId: e.target.value })}
-                disabled={!draft.toWarehouseId}
+                disabled={!draft.toWarehouseId || !!draft.toZone.trim()}
               >
                 <option value="">— select bin —</option>
                 {whBins.map((b) => (
@@ -2977,12 +3203,31 @@ export const PutawayRulesManager = () => {
           </div>
         </div>
       )}
+      <div className="px-4 py-2 border-b border-border flex flex-wrap items-center gap-2">
+        <div className="relative flex-1 min-w-[200px] max-w-md">
+          <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-ink-muted" />
+          <Input
+            size="sm"
+            className="pl-8"
+            placeholder="Search SKU, barcode, warehouse, bin…"
+            value={listSearch}
+            onChange={(e) => setListSearch(e.target.value)}
+          />
+        </div>
+        {listSearch.trim() ? (
+          <span className="text-caption text-ink-muted">
+            {filteredRules.length} of {rules.length} rule{rules.length === 1 ? "" : "s"}
+          </span>
+        ) : null}
+      </div>
       <div className="overflow-x-auto">
         <table className="w-full text-body-sm">
           <thead className="bg-canvas text-caption uppercase font-semibold text-ink-muted">
             <tr>
               <th className="text-left px-3 py-2">Product</th>
+              <th className="text-left px-3 py-2">Barcode</th>
               <th className="text-left px-3 py-2">Variant</th>
+              <th className="text-left px-3 py-2">Variant BC</th>
               <th className="text-left px-3 py-2">Destination warehouse</th>
               <th className="text-left px-3 py-2">Bin</th>
               <th className="text-right px-3 py-2">Priority</th>
@@ -2993,37 +3238,54 @@ export const PutawayRulesManager = () => {
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={7} className="px-3 py-6 text-center text-ink-muted">
+                <td colSpan={9} className="px-3 py-6 text-center text-ink-muted">
                   <Loader2 size={14} className="inline animate-spin mr-1" /> Loading…
                 </td>
               </tr>
             )}
-            {!loading && rules.length === 0 && (
+            {!loading && filteredRules.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-3 py-6 text-center text-ink-muted">
-                  No putaway rules yet. Add a rule to auto-route finished goods from production to storage.
+                <td colSpan={9} className="px-3 py-6 text-center text-ink-muted">
+                  {rules.length === 0
+                    ? "No putaway rules yet. Add a rule to auto-route finished goods from production to storage."
+                    : `No rules match "${listSearch}".`}
                 </td>
               </tr>
             )}
-            {rules.map((r) => (
+            {filteredRules.map((r) => (
               <tr key={r.id} className="border-t border-border hover:bg-canvas/50">
                 <td className="px-3 py-2">
                   <span className="font-mono text-caption text-primary">{r.product.sku}</span>
                   <div className="text-caption text-ink-muted">{r.product.name}</div>
                 </td>
+                <td className="px-3 py-2 font-mono text-caption text-ink-muted">
+                  {r.product.barcode || "—"}
+                </td>
                 <td className="px-3 py-2 text-ink-muted">
                   {r.variant ? (
-                    <span className="font-mono text-caption">{r.variant.sku}</span>
+                    <>
+                      <span className="font-mono text-caption">{r.variant.sku}</span>
+                      {r.variant.size ? (
+                        <div className="text-caption">{r.variant.size}</div>
+                      ) : null}
+                    </>
                   ) : (
                     <span className="text-caption">all variants</span>
                   )}
+                </td>
+                <td className="px-3 py-2 font-mono text-caption text-ink-muted">
+                  {r.variant?.barcode || "—"}
                 </td>
                 <td className="px-3 py-2">
                   <span className="font-mono text-caption text-primary">{r.toWarehouse.code}</span>
                   <div className="text-caption text-ink-muted">{r.toWarehouse.name}</div>
                 </td>
                 <td className="px-3 py-2 text-caption font-mono">
-                  {r.tobin ? binPath(r.tobin) : "—"}
+                  {r.tobin
+                    ? binPath(r.tobin)
+                    : r.toZone
+                      ? `Zone ${r.toZone} · auto-slot`
+                      : "—"}
                 </td>
                 <td className="px-3 py-2 text-right tnum">{r.priority}</td>
                 <td className="px-3 py-2 text-center">
@@ -3055,40 +3317,85 @@ export const PutawayRulesManager = () => {
 // Stock Rules (min-qty → auto MO or transfer)
 // =====================================================================
 
+const emptyStockRuleDraft = () => ({
+  productId: "",
+  variantId: "",
+  monitorBinId: "",
+  minQty: "20",
+  triggerType: "mo" as "mo" | "transfer" | "po",
+  vendorId: "",
+  maxQty: "",
+  orderMultiple: "",
+  bomId: "",
+  sourceBinId: "",
+  toBinId: "",
+  tags: "",
+  notes: "",
+});
+
+const stockRuleToDraft = (r: StockRuleRow) => ({
+  productId: r.productId,
+  variantId: r.variantId ?? "",
+  monitorBinId: r.monitorBinId ?? "",
+  minQty: String(r.minQty),
+  triggerType: r.triggerType,
+  vendorId: r.vendorId ?? r.vendor?.id ?? "",
+  maxQty: r.maxQty != null ? String(r.maxQty) : "",
+  orderMultiple: r.orderMultiple != null ? String(r.orderMultiple) : "",
+  bomId: r.bomId ?? r.bom?.id ?? "",
+  sourceBinId: r.sourceBinId ?? r.sourceBin?.id ?? "",
+  toBinId: r.toBinId ?? r.toBin?.id ?? r.monitorBinId ?? "",
+  tags: r.tags ?? "",
+  notes: r.notes ?? "",
+});
+
 const StockRulesManager = () => {
   const [rules, setRules] = useState<StockRuleRow[]>([]);
   const [products, setProducts] = useState<Array<{ id: string; sku: string; name: string }>>([]);
+  const [vendors, setVendors] = useState<Array<{ id: string; code: string; name: string }>>([]);
   const [variants, setVariants] = useState<Array<{ id: string; sku: string; label: string }>>([]);
   const [boms, setBoms] = useState<Array<{ id: string; label: string }>>([]);
   const [allBins, setAllBins] = useState<Array<{ id: string; label: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [checkResult, setCheckResult] = useState<string | null>(null);
-  const [draft, setDraft] = useState({
-    productId: "",
-    variantId: "",
-    monitorBinId: "",
-    minQty: "20",
-    triggerType: "mo" as "mo" | "transfer",
-    bomId: "",
-    sourceBinId: "",
-    toBinId: "",
-    tags: "",
-    notes: "",
-  });
+  const [draft, setDraft] = useState(emptyStockRuleDraft);
+
+  const formOpen = showAdd || editingId !== null;
+
+  const closeForm = () => {
+    setShowAdd(false);
+    setEditingId(null);
+    setDraft(emptyStockRuleDraft());
+  };
+
+  const startAdd = () => {
+    setEditingId(null);
+    setShowAdd(true);
+    setDraft(emptyStockRuleDraft());
+  };
+
+  const startEdit = (rule: StockRuleRow) => {
+    setShowAdd(false);
+    setEditingId(rule.id);
+    setDraft(stockRuleToDraft(rule));
+  };
 
   const reload = async () => {
     setLoading(true);
     setError(null);
     try {
-      const [r, p, bins] = await Promise.all([
+      const [r, p, bins, v] = await Promise.all([
         api.stockRules(),
-        api.products(),
+        api.products({ limit: 2000 }),
         api.warehousesAndBins(),
+        api.vendors({ includeInactive: false }),
       ]);
       setRules(r);
+      setVendors(v.map((x) => ({ id: x.id, code: x.code, name: x.name })));
       setProducts(
         (p as unknown as Array<{ id: string; sku: string; name: string }>).map((x) => ({
           id: x.id,
@@ -3138,9 +3445,20 @@ const StockRulesManager = () => {
     }).catch(() => setBoms([]));
   }, [draft.productId]);
 
-  const submitNew = async () => {
-    if (!draft.productId || !draft.monitorBinId || !draft.minQty) {
-      alert("Product, monitored bin, and min qty are required.");
+  const parseOptionalQty = (raw: string): number | null => {
+    if (!raw.trim()) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+
+  const submitRule = async () => {
+    const minQty = Number(draft.minQty);
+    if (!draft.productId || !Number.isFinite(minQty) || minQty <= 0) {
+      alert("Product and min qty (> 0) are required.");
+      return;
+    }
+    if (draft.triggerType !== "po" && !draft.monitorBinId) {
+      alert("Monitored bin is required for MO and transfer triggers.");
       return;
     }
     if (draft.triggerType === "mo" && !draft.bomId) {
@@ -3151,25 +3469,54 @@ const StockRulesManager = () => {
       alert("Select a source bin for auto-transfer triggers.");
       return;
     }
-    setBusy(true);
-    try {
-      await api.createStockRule({
+    if (draft.triggerType === "po" && !draft.vendorId) {
+      alert("Select a vendor for auto purchase order triggers.");
+      return;
+    }
+    if (draft.triggerType === "po" && draft.vendorId) {
+      const catalog = await api.vendorProducts(draft.vendorId, {
         productId: draft.productId,
-        variantId: draft.variantId || null,
-        monitorBinId: draft.monitorBinId,
-        minQty: Number(draft.minQty),
-        triggerType: draft.triggerType,
-        bomId: draft.triggerType === "mo" ? draft.bomId : null,
-        sourceBinId: draft.triggerType === "transfer" ? draft.sourceBinId : null,
-        toBinId: draft.toBinId || draft.monitorBinId,
-        tags: draft.tags.trim() || null,
-        notes: draft.notes.trim() || null,
         active: true,
       });
-      setShowAdd(false);
+      if (catalog.length === 0) {
+        alert(
+          "This vendor has no supplier catalog line for the selected product. Add one under Procurement → Vendors → open vendor → Supplier catalog, then save the rule."
+        );
+        return;
+      }
+    }
+    const payload = {
+      productId: draft.productId,
+      variantId: draft.variantId || null,
+      monitorBinId: draft.triggerType === "po" ? null : draft.monitorBinId || null,
+      minQty,
+      maxQty: parseOptionalQty(draft.maxQty),
+      orderMultiple: parseOptionalQty(draft.orderMultiple),
+      triggerType: draft.triggerType,
+      vendorId: draft.triggerType === "po" ? draft.vendorId : null,
+      bomId: draft.triggerType === "mo" ? draft.bomId || null : null,
+      sourceBinId: draft.triggerType === "transfer" ? draft.sourceBinId || null : null,
+      toBinId:
+        draft.triggerType === "po" ? null : draft.toBinId || draft.monitorBinId || null,
+      tags: draft.tags.trim() || null,
+      notes: draft.notes.trim() || null,
+    };
+    setBusy(true);
+    try {
+      if (editingId) {
+        await api.updateStockRule(editingId, payload);
+      } else {
+        await api.createStockRule({ ...payload, active: true });
+      }
+      closeForm();
       await reload();
     } catch (e) {
-      alert((e as Error).message);
+      const err = e as Error & {
+        details?: { details?: Array<{ path: (string | number)[]; message: string }> };
+      };
+      const zodIssues = err.details?.details;
+      const detail = zodIssues?.map((d) => `${d.path.join(".")}: ${d.message}`).join("\n");
+      alert(detail ? `${err.message}\n${detail}` : err.message);
     } finally {
       setBusy(false);
     }
@@ -3180,8 +3527,26 @@ const StockRulesManager = () => {
     setCheckResult(null);
     try {
       const res = await api.checkAllStockRules();
+      const skips = res.results.filter((r) => !r.created && r.skippedReason);
+      const skipLabels: Record<string, string> = {
+        above_min: "stock above minimum",
+        no_vendor_catalog: "no supplier catalog line for vendor",
+        already_on_open_po: "already on open auto-PO",
+        no_vendor: "vendor not set on rule",
+        open_mo_exists: "open MO already exists",
+        open_transfer_exists: "open transfer already exists",
+        source_empty: "source bin empty",
+      };
+      const skipSummary =
+        skips.length > 0
+          ? ` · ${skips.length} skipped (${[
+              ...new Set(
+                skips.map((s) => skipLabels[s.skippedReason ?? ""] ?? s.skippedReason)
+              ),
+            ].join(", ")})`
+          : "";
       setCheckResult(
-        `Checked ${res.checked} evaluations · ${res.triggered} document(s) created.`
+        `Checked ${res.checked} evaluations · ${res.triggered} document(s) created${skipSummary}.`
       );
       await reload();
     } catch (e) {
@@ -3219,14 +3584,14 @@ const StockRulesManager = () => {
   return (
     <Card
       title="Stock rules"
-      subtitle="When a monitored bin falls below min qty, auto-create an MO (batch = BOM output) or a replenishment transfer (with team tags)."
+      subtitle="When supply outlook (on-hand + open PO/MO) falls below min qty, auto-create an MO, transfer, or draft PO. Rules also run automatically after GRN receipt, MO completion, PO close, and every 6 hours."
       actions={
         <div className="flex gap-2">
           <Button size="sm" variant="outline" onClick={runCheckAll} disabled={busy}>
             Check all now
           </Button>
-          {!showAdd && (
-            <Button size="sm" icon={<Plus size={14} />} onClick={() => setShowAdd(true)} disabled={busy}>
+          {!formOpen && (
+            <Button size="sm" icon={<Plus size={14} />} onClick={startAdd} disabled={busy}>
               Add rule
             </Button>
           )}
@@ -3240,9 +3605,11 @@ const StockRulesManager = () => {
         </div>
       )}
       {error && <div className="px-4 py-2 text-danger text-body-sm">{error}</div>}
-      {showAdd && (
+      {formOpen && (
         <div className="px-4 py-3 bg-primary-50/30 border-b border-border space-y-3">
-          <p className="text-body-sm font-medium text-ink">New stock rule</p>
+          <p className="text-body-sm font-medium text-ink">
+            {editingId ? "Edit stock rule" : "New stock rule"}
+          </p>
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-caption text-ink-muted block mb-1">Product</label>
@@ -3278,28 +3645,41 @@ const StockRulesManager = () => {
               </select>
             </div>
             <div className="col-span-2">
-              <label className="text-caption text-ink-muted block mb-1">Monitored bin (destination)</label>
-              <select
-                className="h-8 w-full rounded border border-border bg-surface text-body-sm px-2"
-                value={draft.monitorBinId}
-                onChange={(e) =>
-                  setDraft({ ...draft, monitorBinId: e.target.value, toBinId: e.target.value })
-                }
-              >
-                <option value="">— select bin —</option>
-                {allBins.map((b) => (
-                  <option key={b.id} value={b.id}>
-                    {b.label}
-                  </option>
-                ))}
-              </select>
+              {draft.triggerType !== "po" ? (
+                <>
+                  <label className="text-caption text-ink-muted block mb-1">Monitored bin (destination)</label>
+                  <select
+                    className="h-8 w-full rounded border border-border bg-surface text-body-sm px-2"
+                    value={draft.monitorBinId}
+                    onChange={(e) =>
+                      setDraft({ ...draft, monitorBinId: e.target.value, toBinId: e.target.value })
+                    }
+                  >
+                    <option value="">— select bin —</option>
+                    {allBins.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.label}
+                      </option>
+                    ))}
+                  </select>
+                </>
+              ) : (
+                <div className="text-body-sm text-ink-muted bg-canvas border border-border rounded px-3 py-2">
+                  Monitors <strong>total qty across all bins</strong> for this product (any warehouse).
+                </div>
+              )}
             </div>
             <div>
-              <label className="text-caption text-ink-muted block mb-1">Min qty</label>
+              <label className="text-caption text-ink-muted block mb-1">
+                {draft.triggerType === "mo" || draft.triggerType === "po"
+                  ? "Reorder point (ROP)"
+                  : "Min qty"}
+              </label>
               <Input
                 size="sm"
                 type="number"
-                min={0}
+                min={0.001}
+                step="any"
                 value={draft.minQty}
                 onChange={(e) => setDraft({ ...draft, minQty: e.target.value })}
               />
@@ -3310,29 +3690,86 @@ const StockRulesManager = () => {
                 className="h-8 w-full rounded border border-border bg-surface text-body-sm px-2"
                 value={draft.triggerType}
                 onChange={(e) =>
-                  setDraft({ ...draft, triggerType: e.target.value as "mo" | "transfer" })
+                  setDraft({
+                    ...draft,
+                    triggerType: e.target.value as "mo" | "transfer" | "po",
+                  })
                 }
               >
                 <option value="mo">Auto manufacturing order</option>
                 <option value="transfer">Auto transfer order</option>
+                <option value="po">Auto purchase order (group by vendor)</option>
               </select>
             </div>
-            {draft.triggerType === "mo" ? (
-              <div className="col-span-2">
-                <label className="text-caption text-ink-muted block mb-1">BOM (batch size = output qty)</label>
-                <select
-                  className="h-8 w-full rounded border border-border bg-surface text-body-sm px-2"
-                  value={draft.bomId}
-                  onChange={(e) => setDraft({ ...draft, bomId: e.target.value })}
-                >
-                  <option value="">— select BOM —</option>
-                  {boms.map((b) => (
-                    <option key={b.id} value={b.id}>
-                      {b.label}
-                    </option>
-                  ))}
-                </select>
-              </div>
+            {draft.triggerType === "po" ? (
+              <>
+                <div>
+                  <label className="text-caption text-ink-muted block mb-1">Vendor *</label>
+                  <select
+                    className="h-8 w-full rounded border border-border bg-surface text-body-sm px-2"
+                    value={draft.vendorId}
+                    onChange={(e) => setDraft({ ...draft, vendorId: e.target.value })}
+                  >
+                    <option value="">— select vendor —</option>
+                    {vendors.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.code} · {v.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-caption text-ink-muted block mb-1">Order up to (max qty)</label>
+                  <Input
+                    size="sm"
+                    type="number"
+                    min={0}
+                    placeholder="default 2× min"
+                    value={draft.maxQty}
+                    onChange={(e) => setDraft({ ...draft, maxQty: e.target.value })}
+                  />
+                </div>
+                <div>
+                  <label className="text-caption text-ink-muted block mb-1">Order multiple (vendor UOM)</label>
+                  <Input
+                    size="sm"
+                    type="number"
+                    min={0}
+                    placeholder="optional"
+                    value={draft.orderMultiple}
+                    onChange={(e) => setDraft({ ...draft, orderMultiple: e.target.value })}
+                  />
+                </div>
+              </>
+            ) : draft.triggerType === "mo" ? (
+              <>
+                <div className="col-span-2">
+                  <label className="text-caption text-ink-muted block mb-1">BOM (batch size = output qty)</label>
+                  <select
+                    className="h-8 w-full rounded border border-border bg-surface text-body-sm px-2"
+                    value={draft.bomId}
+                    onChange={(e) => setDraft({ ...draft, bomId: e.target.value })}
+                  >
+                    <option value="">— select BOM —</option>
+                    {boms.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="text-caption text-ink-muted block mb-1">Order up to (max qty)</label>
+                  <Input
+                    size="sm"
+                    type="number"
+                    min={0}
+                    placeholder="default 2× ROP"
+                    value={draft.maxQty}
+                    onChange={(e) => setDraft({ ...draft, maxQty: e.target.value })}
+                  />
+                </div>
+              </>
             ) : (
               <div className="col-span-2">
                 <label className="text-caption text-ink-muted block mb-1">Source bin</label>
@@ -3361,10 +3798,10 @@ const StockRulesManager = () => {
             </div>
           </div>
           <div className="flex gap-2">
-            <Button size="sm" icon={<Save size={12} />} onClick={submitNew} disabled={busy}>
-              Save rule
+            <Button size="sm" icon={<Save size={12} />} onClick={submitRule} disabled={busy}>
+              {editingId ? "Save changes" : "Save rule"}
             </Button>
-            <Button size="sm" variant="ghost" onClick={() => setShowAdd(false)} disabled={busy}>
+            <Button size="sm" variant="ghost" onClick={closeForm} disabled={busy}>
               Cancel
             </Button>
           </div>
@@ -3375,53 +3812,117 @@ const StockRulesManager = () => {
           <thead className="bg-canvas text-caption uppercase font-semibold text-ink-muted">
             <tr>
               <th className="text-left px-3 py-2">Product</th>
+              <th className="text-left px-3 py-2">Barcode</th>
+              <th className="text-left px-3 py-2">Variant</th>
+              <th className="text-left px-3 py-2">Variant BC</th>
               <th className="text-left px-3 py-2">Monitor bin</th>
               <th className="text-right px-3 py-2">Min</th>
+              <th className="text-right px-3 py-2">Supply outlook</th>
               <th className="text-left px-3 py-2">Trigger</th>
               <th className="text-left px-3 py-2">Action / tags</th>
               <th className="text-center px-3 py-2">Status</th>
-              <th className="text-right px-3 py-2 w-12" />
+              <th className="text-right px-3 py-2 w-20" />
             </tr>
           </thead>
           <tbody>
             {loading && (
               <tr>
-                <td colSpan={7} className="px-3 py-6 text-center text-ink-muted">
+                <td colSpan={11} className="px-3 py-6 text-center text-ink-muted">
                   <Loader2 size={14} className="inline animate-spin mr-1" /> Loading…
                 </td>
               </tr>
             )}
             {!loading && rules.length === 0 && (
               <tr>
-                <td colSpan={7} className="px-3 py-6 text-center text-ink-muted">
+                <td colSpan={11} className="px-3 py-6 text-center text-ink-muted">
                   No stock rules yet.
                 </td>
               </tr>
             )}
             {rules.map((r) => (
-              <tr key={r.id} className="border-t border-border hover:bg-canvas/50">
+              <tr
+                key={r.id}
+                className={cn(
+                  "border-t border-border hover:bg-canvas/50",
+                  editingId === r.id && "bg-primary-50/40"
+                )}
+              >
                 <td className="px-3 py-2">
                   <span className="font-mono text-caption text-primary">{r.product.sku}</span>
-                  {r.variant && (
-                    <div className="text-caption text-ink-muted">{r.variant.sku}</div>
+                  <div className="text-caption text-ink-muted">{r.product.name}</div>
+                </td>
+                <td className="px-3 py-2 font-mono text-caption text-ink-muted">
+                  {r.product.barcode || "—"}
+                </td>
+                <td className="px-3 py-2 text-ink-muted">
+                  {r.variant ? (
+                    <>
+                      <span className="font-mono text-caption">{r.variant.sku}</span>
+                      {r.variant.size ? (
+                        <div className="text-caption">{r.variant.size}</div>
+                      ) : null}
+                    </>
+                  ) : (
+                    <span className="text-caption">all variants</span>
                   )}
                 </td>
-                <td className="px-3 py-2 font-mono text-caption">
-                  {r.monitorBin.warehouse.code} · {binPath(r.monitorBin)}
-                  <div className="text-ink-muted tnum">now {r.monitorBin.qty}</div>
+                <td className="px-3 py-2 font-mono text-caption text-ink-muted">
+                  {r.variant?.barcode || "—"}
                 </td>
-                <td className="px-3 py-2 text-right tnum font-semibold">{r.minQty}</td>
+                <td className="px-3 py-2 font-mono text-caption">
+                  {r.monitorBin ? (
+                    <>
+                      {r.monitorBin.warehouse.code} · {binPath(r.monitorBin)}
+                      <div className="text-ink-muted tnum">now {r.monitorBin.qty}</div>
+                    </>
+                  ) : (
+                    <span className="text-ink-muted">All locations (total stock)</span>
+                  )}
+                </td>
+                <td className="px-3 py-2 text-right tnum font-semibold">
+                  {r.minQty}
+                  {r.maxQty != null && (
+                    <div className="text-caption text-ink-muted">→ {r.maxQty}</div>
+                  )}
+                </td>
+                <td className="px-3 py-2 text-right text-caption">
+                  {r.effectiveStock ? (
+                    <>
+                      <div className="tnum font-semibold">{r.effectiveStock.effective}</div>
+                      <div className="text-ink-muted">
+                        {r.effectiveStock.onHand} on hand
+                        {r.effectiveStock.poPipeline > 0 &&
+                          ` + ${r.effectiveStock.poPipeline} PO`}
+                        {r.effectiveStock.moPipeline > 0 &&
+                          ` + ${r.effectiveStock.moPipeline} MO`}
+                      </div>
+                    </>
+                  ) : (
+                    "—"
+                  )}
+                </td>
                 <td className="px-3 py-2">
-                  <Chip size="sm" tone={r.triggerType === "mo" ? "primary" : "warning"}>
-                    {r.triggerType === "mo" ? "MO" : "Transfer"}
+                  <Chip
+                    size="sm"
+                    tone={
+                      r.triggerType === "mo"
+                        ? "primary"
+                        : r.triggerType === "po"
+                          ? "success"
+                          : "warning"
+                    }
+                  >
+                    {r.triggerType === "mo" ? "MO" : r.triggerType === "po" ? "PO" : "Transfer"}
                   </Chip>
                 </td>
                 <td className="px-3 py-2 text-caption text-ink-muted">
-                  {r.triggerType === "mo" && r.bom
-                    ? `BOM ${r.bom.revision} · batch ${r.bom.outputQty}`
-                    : r.sourceBin
-                      ? `from ${r.sourceBin.warehouse.code}/${binPath(r.sourceBin)}`
-                      : "—"}
+                  {r.triggerType === "po" && r.vendor
+                    ? `${r.vendor.code} · grouped draft PO`
+                    : r.triggerType === "mo" && r.bom
+                      ? `BOM ${r.bom.revision} · batch ${r.bom.outputQty}`
+                      : r.sourceBin
+                        ? `from ${r.sourceBin.warehouse.code}/${binPath(r.sourceBin)}`
+                        : "—"}
                   {r.tags && <div className="mt-0.5 text-primary">{r.tags}</div>}
                 </td>
                 <td className="px-3 py-2 text-center">
@@ -3432,12 +3933,26 @@ const StockRulesManager = () => {
                   </button>
                 </td>
                 <td className="px-3 py-2 text-right">
-                  <button
-                    onClick={() => remove(r)}
-                    className="h-7 w-7 grid place-items-center rounded text-danger hover:bg-danger-soft"
-                  >
-                    <Trash2 size={14} />
-                  </button>
+                  <div className="flex items-center justify-end gap-0.5">
+                    <button
+                      type="button"
+                      onClick={() => startEdit(r)}
+                      disabled={busy}
+                      className="h-7 w-7 grid place-items-center rounded text-ink-muted hover:bg-canvas hover:text-primary"
+                      title="Edit rule"
+                    >
+                      <Pencil size={14} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => remove(r)}
+                      disabled={busy}
+                      className="h-7 w-7 grid place-items-center rounded text-danger hover:bg-danger-soft"
+                      title="Delete rule"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
                 </td>
               </tr>
             ))}

@@ -1,6 +1,6 @@
 {
   "appId": "com.prakruthivanam.warehouse",
-  "appName": "NovaERP Warehouse",
+  "appName": "Prakruthivanam Warehouse",
   "webDir": "www",
   "android": {
     "allowMixedContent": true,

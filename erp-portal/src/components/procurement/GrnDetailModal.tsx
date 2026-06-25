@@ -60,6 +60,8 @@ interface GrnPayload {
     id: string;
     receivedQty: number;
     rejectedQty: number;
+    batchNo?: string | null;
+    expiryDate?: string | null;
     remarks: string | null;
     poItem: {
       productId: string;
@@ -223,10 +225,11 @@ export const GrnDetailModal = ({ grn, onClose, onUpdated }: Props) => {
         <div className="flex-1 min-h-0 overflow-y-auto">
           <div className="grid grid-cols-12 grid-header-cell text-caption sticky top-0 bg-surface z-10 border-b border-border">
             <div className="col-span-2 px-3 py-2">SKU</div>
-            <div className="col-span-4 px-3 py-2">Product</div>
+            <div className="col-span-3 px-3 py-2">Product</div>
             <div className="col-span-2 px-3 py-2 text-right">Received</div>
             <div className="col-span-1 px-3 py-2 text-right">Rejected</div>
             <div className="col-span-1 px-3 py-2 text-right">Net</div>
+            <div className="col-span-1 px-3 py-2">Batch</div>
             <div className="col-span-2 px-3 py-2">Remarks</div>
           </div>
           {grn.items.map((it) => {
@@ -239,7 +242,7 @@ export const GrnDetailModal = ({ grn, onClose, onUpdated }: Props) => {
                 <div className="col-span-2 px-3 py-2 font-mono text-caption font-semibold">
                   {it.poItem.product.sku}
                 </div>
-                <div className="col-span-4 px-3 py-2 truncate">
+                <div className="col-span-3 px-3 py-2 truncate">
                   {it.poItem.product.name}
                 </div>
                 <div className="col-span-2 px-3 py-2 text-right tnum">
@@ -253,6 +256,9 @@ export const GrnDetailModal = ({ grn, onClose, onUpdated }: Props) => {
                 </div>
                 <div className="col-span-1 px-3 py-2 text-right tnum font-semibold">
                   {num(net, 3)}
+                </div>
+                <div className="col-span-1 px-3 py-2 font-mono text-caption">
+                  {it.batchNo || "—"}
                 </div>
                 <div className="col-span-2 px-3 py-2 text-caption text-ink-muted truncate">
                   {it.remarks || "—"}

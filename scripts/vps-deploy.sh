@@ -10,6 +10,8 @@
 #               Default when REGISTRY_OWNER is unset.
 #   --pull      Pull prebuilt GHCR images (requires REGISTRY_OWNER + docker login).
 #   --no-sync   Skip npm run db:sync-stock after backend is up.
+#   --no-post-migrate
+#               Skip ops:post-migrate-config:dist (facility/lot backfill).
 #   --reset-data
 #               docker compose down -v before deploy (wipes DB + uploads volumes).
 #   --replace-db <path>
@@ -27,6 +29,7 @@ cd "$REPO_DIR"
 
 MODE="auto"
 SKIP_SYNC=0
+SKIP_POST_MIGRATE=0
 RESET_DATA=0
 REPLACE_DB=""
 ARGS=()
@@ -35,6 +38,7 @@ while [ $# -gt 0 ]; do
     --build) MODE="build" ;;
     --pull)  MODE="pull" ;;
     --no-sync) SKIP_SYNC=1 ;;
+    --no-post-migrate) SKIP_POST_MIGRATE=1 ;;
     --reset-data) RESET_DATA=1 ;;
     --replace-db)
       shift
@@ -170,6 +174,14 @@ fi
 echo ""
 echo "=== Step 5b: Seed godown shelf bins (db:seed-godowns) ==="
 "${COMPOSE[@]}" exec -T "$BACKEND_SVC" npm run db:seed-godowns
+
+echo ""
+echo "=== Step 5c: Post-migrate configuration (ops:post-migrate-config:dist) ==="
+if [ "$SKIP_POST_MIGRATE" -eq 1 ]; then
+  echo "Skipped (--no-post-migrate)."
+else
+  "${COMPOSE[@]}" exec -T "$BACKEND_SVC" npm run ops:post-migrate-config:dist
+fi
 
 echo ""
 echo "=== Step 6: Reconcile product stock from bins (db:sync-stock) ==="

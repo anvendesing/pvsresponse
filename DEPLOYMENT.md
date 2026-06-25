@@ -220,6 +220,11 @@ docker compose exec backend npm run db:sync-stock
 This runs `dist/scripts/sync-stock-from-bins.js` inside the container — safe
 to re-run; aligns product/variant counters with summed `Bin.qty`.
 
+**Recent migrations & facility configuration:** see
+[`docs/vps-pending-migrations.md`](docs/vps-pending-migrations.md) for the
+living checklist (stock lots, vacuum STR zone, oil extraction lines) and
+`ops:post-migrate-config:dist`, which `vps-deploy.sh` runs after godown seeding.
+
 ### Manual steps
 
 ```bash

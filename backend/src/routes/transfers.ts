@@ -22,6 +22,8 @@ import { z } from "zod";
 import { db } from "../db.js";
 import { recordChange } from "../sync/log.js";
 import { checkStockRules } from "../lib/stock-rules.js";
+import { pickBestBin } from "../lib/putaway.js";
+import { resolveReceiveBinForProduct } from "../lib/location-bin.js";
 
 // ------------------------------------------------------------------ helpers
 
@@ -102,6 +104,10 @@ const putawayRuleCreate = z.object({
   productId: z.string().min(1),
   variantId: z.string().min(1).nullable().optional(),
   toWarehouseId: z.string().min(1),
+  // Zone-only destination (e.g. STR "PR" for the production staging
+  // zone). When set without toBinId the resolver picks/creates a
+  // per-product slot inside the zone instead of pinning a bin.
+  toZone: z.string().trim().min(1).max(32).nullable().optional(),
   toBinId: z.string().min(1).nullable().optional(),
   priority: z.number().int().min(1).max(999).default(100),
   active: z.boolean().default(true),
@@ -144,8 +150,8 @@ export const transfersRoutes = async (app: FastifyInstance) => {
         ...(q.active === "0" ? { active: false } : {}),
       },
       include: {
-        product: { select: { id: true, sku: true, name: true, uom: true } },
-        variant: { select: { id: true, sku: true, size: true } },
+        product: { select: { id: true, sku: true, name: true, uom: true, barcode: true } },
+        variant: { select: { id: true, sku: true, size: true, barcode: true } },
         toWarehouse: { select: { id: true, code: true, name: true, kind: true } },
         tobin: { select: { id: true, code: true, zone: true, shelf: true, bin: true } },
       },
@@ -185,6 +191,7 @@ export const transfersRoutes = async (app: FastifyInstance) => {
         productId: body.productId,
         variantId: body.variantId ?? null,
         toWarehouseId: body.toWarehouseId,
+        toZone: body.toZone ? body.toZone.trim().toUpperCase() : null,
         toBinId: body.toBinId ?? null,
         priority: body.priority,
         active: body.active,
@@ -219,6 +226,9 @@ export const transfersRoutes = async (app: FastifyInstance) => {
       where: { id },
       data: {
         ...(body.toWarehouseId !== undefined && { toWarehouseId: body.toWarehouseId }),
+        ...(body.toZone !== undefined && {
+          toZone: body.toZone ? body.toZone.trim().toUpperCase() : null,
+        }),
         ...(body.toBinId !== undefined && { toBinId: body.toBinId }),
         ...(body.priority !== undefined && { priority: body.priority }),
         ...(body.active !== undefined && { active: body.active }),
@@ -585,6 +595,159 @@ export const transfersRoutes = async (app: FastifyInstance) => {
     return updated;
   });
 
+  // POST /transfer-orders/:id/release
+  // Worker releases their claim so another worker can pick up the TO.
+  // Only the current assignee, or an admin/supervisor, can release.
+  // Permitted while the TO is still 'ready' (pre-pick) - once picking
+  // has started the TO is in_transit and is owned by the picker until
+  // drop or cancel.
+  app.post(
+    "/transfer-orders/:id/release",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      const id = (req.params as { id: string }).id;
+      const to = await db.transferOrder.findUnique({ where: { id } });
+      if (!to) return reply.code(404).send({ error: { code: "not_found" } });
+      if (to.status !== "ready") {
+        return reply.code(409).send({
+          error: {
+            code: "invalid_status",
+            message: `TO is ${to.status}; only ready TOs can be released.`,
+          },
+        });
+      }
+      if (!to.assignedToId) {
+        return reply.code(409).send({
+          error: {
+            code: "not_claimed",
+            message: "Nothing to release - this TO is not currently claimed.",
+          },
+        });
+      }
+      const isOwner = to.assignedToId === req.user.sub;
+      const isAdmin = req.user.role === "admin" || req.user.role === "supervisor";
+      if (!isOwner && !isAdmin) {
+        return reply.code(403).send({
+          error: {
+            code: "forbidden",
+            message: "Only the assignee or a supervisor can release this TO.",
+          },
+        });
+      }
+      const updated = await db.transferOrder.update({
+        where: { id },
+        data: { assignedToId: null, claimedAt: null },
+        include: toInclude,
+      });
+      await recordChange("TransferOrder" as never, id, "update", updated, req.user.sub);
+      return updated;
+    }
+  );
+
+  // POST /transfer-orders/:id/resolve-source-bins
+  // Re-runs source-bin discovery for every item whose fromBinId is
+  // still null. Use case: the TO was created before any stock landed
+  // in the source warehouse; stock has since been adjusted in and the
+  // worker wants the system to re-pick the source slot rather than
+  // bouncing the TO back to a supervisor.
+  //
+  // Picks the bin in the source warehouse that holds the product
+  // (matching variant when applicable) with sufficient remaining qty
+  // (qtyRequested - qtyPicked). When several bins qualify, prefers the
+  // smallest qty that covers the need so larger holdings are kept
+  // intact for future picks.
+  app.post(
+    "/transfer-orders/:id/resolve-source-bins",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      const id = (req.params as { id: string }).id;
+      const to = await db.transferOrder.findUnique({
+        where: { id },
+        include: {
+          items: {
+            include: { product: { select: { sku: true } } },
+          },
+        },
+      });
+      if (!to) return reply.code(404).send({ error: { code: "not_found" } });
+      if (to.status !== "ready") {
+        return reply.code(409).send({
+          error: {
+            code: "invalid_status",
+            message: `Source bins can only be resolved while the TO is ready (currently ${to.status}).`,
+          },
+        });
+      }
+
+      const updates: Array<{
+        itemId: string;
+        sku: string;
+        binCode: string;
+        qtyAvailable: number;
+      }> = [];
+      const stillMissing: Array<{ itemId: string; sku: string; needed: number }> = [];
+
+      for (const item of to.items) {
+        if (item.fromBinId) continue;
+        const needed = Math.max(0, item.qtyRequested - item.qtyPicked);
+        if (needed <= 0) continue;
+
+        // Find candidate bins in the source warehouse that hold the
+        // product / variant with enough qty. Order: smallest qty
+        // covering the need first (consolidate), else largest.
+        const variantClause = item.variantId
+          ? { variantId: item.variantId }
+          : { variantId: null };
+        const candidate =
+          (await db.bin.findFirst({
+            where: {
+              warehouseId: to.fromWarehouseId,
+              productId: item.productId,
+              ...variantClause,
+              qty: { gte: needed },
+            },
+            orderBy: { qty: "asc" },
+          })) ??
+          (await db.bin.findFirst({
+            where: {
+              warehouseId: to.fromWarehouseId,
+              productId: item.productId,
+              ...variantClause,
+              qty: { gt: 0 },
+            },
+            orderBy: { qty: "desc" },
+          }));
+
+        if (!candidate) {
+          stillMissing.push({ itemId: item.id, sku: item.product.sku, needed });
+          continue;
+        }
+
+        await db.transferOrderItem.update({
+          where: { id: item.id },
+          data: { fromBinId: candidate.id },
+        });
+        updates.push({
+          itemId: item.id,
+          sku: item.product.sku,
+          binCode: candidate.code ?? `${candidate.zone}/${candidate.shelf}/${candidate.bin}`,
+          qtyAvailable: candidate.qty,
+        });
+      }
+
+      const refreshed = await db.transferOrder.findUnique({
+        where: { id },
+        include: toInclude,
+      });
+      await recordChange("TransferOrder" as never, id, "update", refreshed, req.user.sub);
+      return {
+        transferOrder: refreshed,
+        resolved: updates,
+        stillMissing,
+      };
+    }
+  );
+
   // POST /transfer-orders/:id/pick
   // Worker confirms picking items from source bins.
   // Body: { lines: [{ itemId, qtyPicked, fromBinId }] }
@@ -706,9 +869,9 @@ export const transfersRoutes = async (app: FastifyInstance) => {
   //   1. The bin that was reserved for the line on /pick (item.toBinId)
   //   2. An existing bin that already holds the same product (consolidate)
   //   3. The least-occupied empty bin (productId IS NULL, qty = 0)
-  //   4. The least-occupied bin in the warehouse (last-resort fallback)
-  // If the destination warehouse has zero bins, a 409 is returned with a
-  // clear message naming the warehouse so the user knows what to fix.
+  //   4. Auto-create warehouse-level row when no layout exists (displayed as warehouse name only)
+  // If the destination warehouse has zero bins, a warehouse-level slot is
+  // created automatically — bins are not required upfront.
   app.post("/transfer-orders/:id/drop", { preHandler: [app.authenticate] }, async (req, reply) => {
     const id = (req.params as { id: string }).id;
     const body = z.object({
@@ -721,7 +884,10 @@ export const transfersRoutes = async (app: FastifyInstance) => {
 
     const to = await db.transferOrder.findUnique({
       where: { id },
-      include: { items: true, toWarehouse: { select: { id: true, code: true, name: true } } },
+      include: {
+        items: { include: { product: { select: { id: true, sku: true } } } },
+        toWarehouse: { select: { id: true, code: true, name: true, scanPrefix: true } },
+      },
     });
     if (!to) return reply.code(404).send({ error: { code: "not_found" } });
     if (to.status !== "in_transit") {
@@ -731,14 +897,6 @@ export const transfersRoutes = async (app: FastifyInstance) => {
     }
 
     // Pre-resolve destination bins for every line (including auto-pick).
-    // We do this outside the transaction so the error response (when the
-    // destination warehouse has no bins) doesn't roll back anything else
-    // and carries a clear message.
-    const destBinsInWh = await db.bin.findMany({
-      where: { warehouseId: to.toWarehouseId },
-      orderBy: [{ qty: "asc" }, { createdAt: "asc" }],
-    });
-
     type Resolved = { itemId: string; qtyDropped: number; toBinId: string };
     const resolved: Resolved[] = [];
     for (const line of body.lines) {
@@ -747,27 +905,11 @@ export const transfersRoutes = async (app: FastifyInstance) => {
 
       let toBinId = line.toBinId ?? item.toBinId ?? null;
 
-      // Auto-pick if the worker (or pick step) didn't choose a bin.
-      if (!toBinId) {
-        if (destBinsInWh.length === 0) {
-          return reply.code(409).send({
-            error: {
-              code: "no_destination_bins",
-              message:
-                `Destination warehouse ${to.toWarehouse.code} (${to.toWarehouse.name}) has no bins. ` +
-                `Create at least one bin for this warehouse in Warehouse → Bins before dropping.`,
-            },
-          });
-        }
-        // 1. Consolidate to an existing bin holding the same product.
-        const sameProduct = destBinsInWh.find((b) => b.productId === item.productId);
-        // 2. Otherwise pick the least-occupied empty bin.
-        const emptyBin = destBinsInWh.find((b) => !b.productId && b.qty === 0);
-        // 3. Fall back to the first bin (sorted by qty asc above).
-        toBinId = (sameProduct ?? emptyBin ?? destBinsInWh[0]).id;
-      } else {
-        // If the caller passed a bin, validate it belongs to the dest WH.
-        const supplied = destBinsInWh.find((b) => b.id === toBinId);
+      if (toBinId) {
+        const supplied = await db.bin.findFirst({
+          where: { id: toBinId, warehouseId: to.toWarehouseId },
+          include: { product: { select: { sku: true } } },
+        });
         if (!supplied) {
           return reply.code(400).send({
             error: {
@@ -776,6 +918,29 @@ export const transfersRoutes = async (app: FastifyInstance) => {
             },
           });
         }
+        if (
+          supplied.productId &&
+          supplied.productId !== item.productId &&
+          supplied.qty > 0
+        ) {
+          return reply.code(409).send({
+            error: {
+              code: "bin_product_mismatch",
+              message:
+                `Bin ${supplied.zone}/${supplied.shelf}/${supplied.bin} holds ${supplied.product?.sku ?? "another product"}. ` +
+                `Choose an empty bin or a bin that already holds ${item.product.sku}.`,
+            },
+          });
+        }
+      } else {
+        const picked = await resolveReceiveBinForProduct(
+          db,
+          to.toWarehouse,
+          item.productId,
+          item.product.sku,
+          { variantId: item.variantId ?? null }
+        );
+        toBinId = picked.id;
       }
       resolved.push({ itemId: item.id, qtyDropped: line.qtyDropped, toBinId });
     }
@@ -815,8 +980,8 @@ export const transfersRoutes = async (app: FastifyInstance) => {
           where: { id: line.toBinId },
           data: {
             qty: { increment: line.qtyDropped },
-            productId: dstBin.productId ?? item.productId,
-            variantId: dstBin.variantId ?? item.variantId ?? null,
+            productId: item.productId,
+            variantId: item.variantId ?? null,
           },
         });
 

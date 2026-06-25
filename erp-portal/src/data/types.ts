@@ -95,6 +95,61 @@ export interface Product {
   /** Listed in price lists and bulk-order export when true. */
   priceListEnabled?: boolean;
   variants?: ProductVariant[];
+  /** Open PO/MO qty not yet in bins — included on GET /products. */
+  pipeline?: {
+    poPipeline: number;
+    moPipeline: number;
+    effective: number;
+  };
+}
+
+export interface ProductSupplyOutlook {
+  productId: string;
+  uom: string;
+  onHand: number;
+  incomingPo: number;
+  incomingMo: number;
+  outgoingSo: number;
+  supplyOutlook: number;
+  forecasted: number;
+  purchaseOrders: Array<{
+    poId: string;
+    poNo: string;
+    status: string;
+    vendorCode: string;
+    vendorName: string;
+    ordered: number;
+    received: number;
+    remaining: number;
+    isDraft: boolean;
+  }>;
+  manufacturingOrders: Array<{
+    moId: string;
+    orderNo: string;
+    status: string;
+    plannedQty: number;
+    actualQty: number;
+    remaining: number;
+    variantId: string | null;
+    variantSku: string | null;
+  }>;
+}
+
+export interface PoClosePreview {
+  poId: string;
+  poNo: string;
+  status: string;
+  lines: Array<{
+    productId: string;
+    sku: string;
+    name: string;
+    uom: string;
+    ordered: number;
+    received: number;
+    remaining: number;
+  }>;
+  totalRemaining: number;
+  dropsFromSupplyOutlook: number;
 }
 
 // Selects the right UoM to display / use for line-item logic. Variant
@@ -161,6 +216,40 @@ export interface Vendor {
   totalSpend: number;
 }
 
+/** Vendor-specific product line (Odoo supplierinfo). */
+export interface VendorProduct {
+  id: string;
+  vendorId: string;
+  productId: string;
+  variantId: string | null;
+  vendorProductCode: string | null;
+  vendorProductName: string | null;
+  vendorUom: string;
+  packSize: number;
+  price: number;
+  minOrderQty: number;
+  leadTimeDays: number | null;
+  priority: number;
+  active: boolean;
+  notes: string | null;
+  product: { id: string; sku: string; name: string; uom: string; type: string };
+  variant: { id: string; sku: string; size: string | null; color: string | null } | null;
+}
+
+export interface VendorPerformance {
+  vendorId: string;
+  periodDays: number;
+  poCount: number;
+  grnCount: number;
+  onTimePct: number | null;
+  qualityPct: number | null;
+  fillPct: number | null;
+  computedRating: number;
+  manualRating: number;
+  totalSpend: number;
+  openPoCount: number;
+}
+
 export interface PurchaseOrder {
   id: string;
   poNo: string;
@@ -195,6 +284,8 @@ export interface ProductionFacility {
   description?: string | null;
   capacityPerHour?: number | null;
   productionLineWarehouseId?: string | null;
+  productionZone?: string | null;
+  replenishWarehouseCodes?: string | null;
   productionLineWarehouse?: { id: string; code: string; name: string; kind: string } | null;
   active: boolean;
   lines?: ProductionLine[];
@@ -238,11 +329,16 @@ export interface ProductionOrder {
   bomId?: string;
   product: string;
   sku: string;
+  /** Set when the MO BOM is variant-scoped (e.g. Bath Soap → Jasmine 100 g). */
+  variantId?: string | null;
+  variantSku?: string | null;
+  variantSize?: string | null;
+  variantColor?: string | null;
   plannedQty: number;
   actualQty: number;
   scrapQty: number;
   reworkQty: number;
-  status: "planned" | "in-progress" | "qc" | "completed" | "delayed";
+  status: "planned" | "in-progress" | "qc" | "completed" | "delayed" | "cancelled";
   // Legacy text field — kept for backwards compat; new UI uses facility.name.
   station: string;
   // New FK fields. facilityId is required for all new MOs.
@@ -267,10 +363,48 @@ export interface WorkOrder {
   endTime?: string;
   output: number;
   target: number;
-  status: "queued" | "running" | "paused" | "complete";
+  status:
+    | "waiting"
+    | "ready"
+    | "queued"
+    | "running"
+    | "paused"
+    | "complete"
+    | "rework";
+  bomOperationId?: string | null;
+  bomOperation?: { id: string; seq: number; name: string; requiresQa?: boolean } | null;
+  splitSeq?: number;
+  plannedSplitQty?: number | null;
+  qaStatus?: "pending" | "pass" | "fail" | null;
+  qaNotes?: string | null;
+  line?: { id: string; code: string; name: string } | null;
+  machineRef?: { id: string; code: string; name: string } | null;
   // New FK fields set when the supervisor assigns the parent MO to a line.
   lineId?: string | null;
   machineId?: string | null;
+  // Multi-machine parallel runs inside this WO. Empty -> legacy
+  // single-machine WO (output is operator-typed). >=1 run -> WO.output
+  // is the rollup of sum(runs.goodQty).
+  runs?: WorkOrderRun[];
+}
+
+export interface WorkOrderRun {
+  id: string;
+  workOrderId: string;
+  machineId: string;
+  lineId?: string | null;
+  plannedQty?: number | null;
+  inputQty: number;
+  goodQty: number;
+  scrapQty: number;
+  status: "queued" | "running" | "complete" | "abandoned";
+  startTime?: string | null;
+  endTime?: string | null;
+  operator?: string | null;
+  notes?: string | null;
+  createdAt?: string;
+  machine: { id: string; code: string; name: string };
+  line?: { id: string; code: string; name: string } | null;
 }
 
 export interface Worker {
@@ -337,12 +471,32 @@ export interface BomItem {
   name: string;
   // Component product id; required for any backend mutation.
   productId?: string;
+  bomOperationId?: string | null;
+  // Odoo: consume at operation seq (editor convenience).
+  operationSeq?: number;
   // True if the component itself has its own active BOM (i.e. it's a
   // sub-assembly and the editor should let the user drill in).
   hasSubAssembly?: boolean;
   qty: number;
   uom: string;
   scrapPct: number;
+}
+
+export interface BomOperation {
+  id?: string;
+  seq: number;
+  name: string;
+  description?: string | null;
+  facilityId?: string | null;
+  lineId?: string | null;
+  machineId?: string | null;
+  durationMinutes?: number | null;
+  requiresQa: boolean;
+  blockedByOperationId?: string | null;
+  blockedBySeq?: number | null;
+  eligibleLineIds?: string[];
+  line?: { id: string; code: string; name: string } | null;
+  eligibleLines?: Array<{ line: { id: string; code: string; name: string } }>;
 }
 
 export interface Bom {
@@ -361,6 +515,8 @@ export interface Bom {
   revision: string;
   items: BomItem[];
   byproducts?: BomByproductRow[];
+  operations?: BomOperation[];
+  operationDependencies?: boolean;
   outputQty: number;
   active: boolean;
   // New two-level production defaults:
@@ -391,6 +547,7 @@ export interface StockLedgerEntry {
   qty: number;
   warehouse: string;
   bin?: string;
+  batch?: string;
   balance: number;
 }
 

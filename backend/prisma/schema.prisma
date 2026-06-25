@@ -141,6 +141,7 @@ model Warehouse {
   stockRulesTo       StockRule[]         @relation("StockRuleToWarehouse")
   transferOrdersFrom TransferOrder[]     @relation("TransferOrderFromWarehouse")
   transferOrdersTo   TransferOrder[]     @relation("TransferOrderToWarehouse")
+  stockLots          StockLot[]
 }
 
 model Bin {
@@ -185,6 +186,7 @@ model Bin {
   salesOrderReservations SalesOrderReservation[]
   transferItemsFrom      TransferOrderItem[]     @relation("TransferItemFromBin")
   transferItemsTo        TransferOrderItem[]     @relation("TransferItemToBin")
+  stockLots              StockLot[]
 
   @@unique([warehouseId, zone, shelf, bin])
   @@index([productId])
@@ -256,6 +258,8 @@ model Product {
   stockRules         StockRule[]
   transferOrderItems TransferOrderItem[]
   enquiryItems       EnquiryItem[]
+  stockLots          StockLot[]
+  vendorProducts     VendorProduct[]
 }
 
 model ProductVariant {
@@ -318,6 +322,8 @@ model ProductVariant {
   enquiryItems         EnquiryItem[]
   ledger               StockLedger[]
   bins                 Bin[]
+  stockLots            StockLot[]
+  vendorProducts       VendorProduct[]
 
   @@index([productId])
 }
@@ -344,6 +350,46 @@ model Vendor {
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
   pos          PurchaseOrder[]
+  catalog      VendorProduct[]
+  stockRules   StockRule[]
+}
+
+// Odoo-style supplierinfo: vendor-specific product code, name, UoM,
+// price, and conversion into our internal product UoM.
+model VendorProduct {
+  id                String          @id @default(cuid())
+  vendorId          String
+  productId         String
+  variantId         String?
+  // Vendor's own SKU / item code on their price list.
+  vendorProductCode String?
+  // Vendor's product name (may differ from our catalog name).
+  vendorProductName String?
+  // Unit the vendor quotes and ships in (e.g. "bag", "drum", "MT").
+  vendorUom         String
+  // How many internal product.uom units one vendorUom represents.
+  // Example: product uom=kg, vendor sells 50 kg bags → packSize=50.
+  packSize          Float           @default(1)
+  // Price per 1 vendorUom (not per internal uom).
+  price             Float           @default(0)
+  minOrderQty       Float           @default(1)
+  // Override vendor.leadTimeDays when set.
+  leadTimeDays      Int?
+  // Lower = preferred when multiple vendors supply the same product.
+  priority          Int             @default(100)
+  active            Boolean         @default(true)
+  notes             String?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  vendor            Vendor          @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  product           Product         @relation(fields: [productId], references: [id])
+  variant           ProductVariant? @relation(fields: [variantId], references: [id])
+  poItems           PurchaseOrderItem[]
+
+  @@unique([vendorId, productId, variantId])
+  @@index([vendorId])
+  @@index([productId])
+  @@index([variantId])
 }
 
 model Customer {
@@ -616,19 +662,26 @@ model PurchaseOrder {
 }
 
 model PurchaseOrderItem {
-  id        String        @id @default(cuid())
-  poId      String
-  productId String
-  qty       Float
-  rate      Float
-  amount    Float
-  received  Float         @default(0)
-  po        PurchaseOrder @relation(fields: [poId], references: [id], onDelete: Cascade)
-  product   Product       @relation(fields: [productId], references: [id])
-  grnItems  GrnItem[]
+  id              String         @id @default(cuid())
+  poId            String
+  productId       String
+  qty             Float
+  rate            Float
+  amount          Float
+  received        Float          @default(0)
+  // Link to vendor catalog line + snapshot of vendor-side ordering terms.
+  vendorProductId String?
+  vendorQty       Float?
+  vendorUom       String?
+  vendorRate      Float?
+  po              PurchaseOrder  @relation(fields: [poId], references: [id], onDelete: Cascade)
+  product         Product        @relation(fields: [productId], references: [id])
+  vendorProduct   VendorProduct? @relation(fields: [vendorProductId], references: [id], onDelete: SetNull)
+  grnItems        GrnItem[]
 
   @@index([poId])
   @@index([productId])
+  @@index([vendorProductId])
 }
 
 model Grn {
@@ -669,11 +722,49 @@ model GrnItem {
   // return-to-vendor on the GRN report.
   rejectedQty Float             @default(0)
   remarks     String?
+  // Supplier / internal lot captured at receipt. When omitted the
+  // server mints `{grnNo}-L{seq}` for raw or batch-tracked products.
+  batchNo     String?
+  expiryDate  DateTime?
   grn         Grn               @relation(fields: [grnId], references: [id], onDelete: Cascade)
   poItem      PurchaseOrderItem @relation(fields: [poItemId], references: [id])
+  stockLots   StockLot[]
 
   @@index([grnId])
   @@index([poItemId])
+}
+
+// Traceable inventory lot. One GRN line typically creates one lot;
+// MO issue consumes lots in FIFO order (receivedAt ascending).
+model StockLot {
+  id          String    @id @default(cuid())
+  productId   String
+  variantId   String?
+  batchNo     String
+  // grn | production | adjustment
+  sourceType  String
+  sourceRef   String
+  receivedAt  DateTime  @default(now())
+  expiryDate  DateTime?
+  qtyOnHand   Int       @default(0)
+  warehouseId String
+  binId       String?
+  grnItemId   String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  product     Product         @relation(fields: [productId], references: [id])
+  variant     ProductVariant? @relation(fields: [variantId], references: [id])
+  warehouse   Warehouse       @relation(fields: [warehouseId], references: [id])
+  bin         Bin?            @relation(fields: [binId], references: [id])
+  grnItem     GrnItem?        @relation(fields: [grnItemId], references: [id])
+  ledger      StockLedger[]
+
+  @@index([grnItemId])
+  @@index([productId, receivedAt])
+  @@index([productId, qtyOnHand])
+  @@index([warehouseId])
+  @@index([binId])
+  @@index([batchNo])
 }
 
 // =====================================================================
@@ -712,8 +803,11 @@ model Bom {
   defaultMachine      Machine?            @relation(fields: [defaultMachineId], references: [id])
   items               BomItem[]
   byproducts          BomByproduct[]
+  operations          BomOperation[]
   productionOrders    ProductionOrder[]
   stockRules          StockRule[]
+  // Odoo BoM Miscellaneous → Operation Dependencies
+  operationDependencies Boolean           @default(false)
 
   @@index([productId])
   @@index([variantId])
@@ -724,16 +818,62 @@ model Bom {
 }
 
 model BomItem {
-  id        String  @id @default(cuid())
-  bomId     String
-  productId String
-  qty       Float
-  uom       String
-  scrapPct  Float   @default(0)
-  bom       Bom     @relation(fields: [bomId], references: [id], onDelete: Cascade)
-  product   Product @relation(fields: [productId], references: [id])
+  id             String        @id @default(cuid())
+  bomId          String
+  // Odoo mrp.bom.line.operation_id — consume at this routing step.
+  bomOperationId String?
+  productId      String
+  qty            Float
+  uom            String
+  scrapPct       Float         @default(0)
+  bom            Bom           @relation(fields: [bomId], references: [id], onDelete: Cascade)
+  bomOperation   BomOperation? @relation(fields: [bomOperationId], references: [id], onDelete: SetNull)
+  product        Product       @relation(fields: [productId], references: [id])
 
   @@index([bomId])
+  @@index([bomOperationId])
+}
+
+// Odoo mrp.bom.operation — one row per manufacturing step on the BOM.
+model BomOperation {
+  id                   String              @id @default(cuid())
+  bomId                String
+  seq                  Int
+  name                 String
+  description          String?
+  // Default work center (Odoo Work Center → facility + line + machine).
+  facilityId           String?
+  lineId               String?
+  machineId            String?
+  durationMinutes      Float?
+  requiresQa           Boolean             @default(true)
+  // Odoo Blocked By — predecessor operation on the same BOM.
+  blockedByOperationId String?
+  bom                  Bom                 @relation(fields: [bomId], references: [id], onDelete: Cascade)
+  facility             ProductionFacility? @relation(fields: [facilityId], references: [id])
+  line                 ProductionLine?     @relation("BomOperationLine", fields: [lineId], references: [id])
+  machine              Machine?            @relation("BomOperationMachine", fields: [machineId], references: [id])
+  blockedBy            BomOperation?       @relation("OperationDependency", fields: [blockedByOperationId], references: [id], onDelete: SetNull)
+  blocking             BomOperation[]      @relation("OperationDependency")
+  items                BomItem[]
+  eligibleLines        BomOperationLine[]
+  workOrders           WorkOrder[]
+
+  @@unique([bomId, seq])
+  @@index([bomId])
+  @@index([blockedByOperationId])
+}
+
+// Lines allowed to run an operation (parallel extraction on EXT-01 + EXT-03).
+model BomOperationLine {
+  id             String       @id @default(cuid())
+  bomOperationId String
+  lineId         String
+  bomOperation   BomOperation @relation(fields: [bomOperationId], references: [id], onDelete: Cascade)
+  line           ProductionLine @relation(fields: [lineId], references: [id])
+
+  @@unique([bomOperationId, lineId])
+  @@index([lineId])
 }
 
 // Secondary outputs produced alongside the main finished good when an
@@ -799,19 +939,68 @@ model WorkOrder {
   target            Float
   startTime         DateTime?
   endTime           DateTime?
-  status            String          @default("queued") // queued | running | paused | complete
+  status            String          @default("queued") // waiting | ready | queued | running | paused | complete | rework
+  // Odoo mrp.workorder ↔ mrp.bom.operation
+  bomOperationId    String?
+  splitSeq          Int             @default(0)
+  plannedSplitQty   Float?
+  // Odoo Blocked By (work order level)
+  blockedByWorkOrderId String?
+  qaStatus          String?         // pending | pass | fail
+  qaNotes           String?
   // Set by supervisor when assigning the parent MO to a specific line/machine.
   lineId            String?
   machineId         String?
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
   productionOrder   ProductionOrder @relation(fields: [productionOrderId], references: [id], onDelete: Cascade)
+  bomOperation      BomOperation?   @relation(fields: [bomOperationId], references: [id], onDelete: SetNull)
+  blockedByWorkOrder WorkOrder?     @relation("WoDependency", fields: [blockedByWorkOrderId], references: [id], onDelete: SetNull)
+  blockingWorkOrders WorkOrder[]    @relation("WoDependency")
   line              ProductionLine? @relation("WoLine", fields: [lineId], references: [id])
   machineRef        Machine?        @relation("WoMachine", fields: [machineId], references: [id])
+  runs              WorkOrderRun[]
 
   @@index([productionOrderId])
   @@index([status])
   @@index([lineId])
+  @@index([bomOperationId])
+  @@index([blockedByWorkOrderId])
+}
+
+// One physical machine "run" inside a WorkOrder. A WO without runs
+// keeps the legacy single-machine behavior (output is the scalar on
+// WorkOrder). When ≥1 run exists, the WO output is rolled up from
+// sum(runs.goodQty) and the WO can be done in parallel across many
+// machines (e.g. unrefined oil extraction across two screw presses).
+// Each run captures the partial input consumed at that machine and
+// the partial good/scrap qty it produced, plus the time window.
+model WorkOrderRun {
+  id           String    @id @default(cuid())
+  workOrderId  String
+  machineId    String
+  lineId       String?
+  // Planner-set qty allocated to this machine (optional — used to show
+  // a per-run progress bar; rollup uses goodQty regardless).
+  plannedQty   Float?
+  // Actuals.
+  inputQty     Float     @default(0)
+  goodQty      Float     @default(0)
+  scrapQty     Float     @default(0)
+  status       String    @default("queued") // queued | running | complete | abandoned
+  startTime    DateTime?
+  endTime      DateTime?
+  operator     String?
+  notes        String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  workOrder    WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
+  machine      Machine   @relation(fields: [machineId], references: [id])
+  line         ProductionLine? @relation(fields: [lineId], references: [id])
+
+  @@index([workOrderId])
+  @@index([machineId])
+  @@index([status])
 }
 
 // =====================================================================
@@ -845,7 +1034,16 @@ model ProductionFacility {
   capacityPerHour           Float?
   // One shared production-line warehouse per facility. MO release creates
   // replenishment TOs into this WH; MO complete lands FG here before putaway.
+  // For in-situ lines (e.g. vacuum packing in Stock Room zone A) this may
+  // point at the same storage warehouse as putaway — no separate prod WH.
   productionLineWarehouseId String?           @unique
+  // When set, MO complete / receive auto-pick prefers bins in this zone
+  // within the production-line warehouse (e.g. "A" in STR).
+  productionZone            String?
+  // Comma-separated warehouse codes to pull replenishment from on MO
+  // release (e.g. WH-GDNW,WH-STOR,WH-PROD-OIL). Falls back to [ops]
+  // replenish= tag in description when null.
+  replenishWarehouseCodes   String?
   active                    Boolean           @default(true)
   createdAt                 DateTime          @default(now())
   updatedAt                 DateTime          @updatedAt
@@ -855,6 +1053,7 @@ model ProductionFacility {
   legacyMachines            Machine[]         @relation("MachineLegacyWorkCenter")
   // New back-relations.
   defaultedByBoms           Bom[]             @relation("BomDefaultFacility")
+  bomOperations             BomOperation[]
   productionOrders          ProductionOrder[]
   productionLineWarehouse   Warehouse?        @relation("FacilityProductionWarehouse", fields: [productionLineWarehouseId], references: [id])
 
@@ -875,8 +1074,11 @@ model ProductionLine {
   facility         ProductionFacility @relation(fields: [facilityId], references: [id])
   machines         Machine[]
   defaultedByBoms  Bom[]              @relation("BomDefaultLine")
+  bomOperations    BomOperation[]     @relation("BomOperationLine")
+  operationEligibility BomOperationLine[]
   productionOrders ProductionOrder[]  @relation("MoLine")
   workOrders       WorkOrder[]        @relation("WoLine")
+  workOrderRuns    WorkOrderRun[]
 
   @@index([facilityId])
   @@index([active])
@@ -903,7 +1105,9 @@ model Machine {
   workCenter       ProductionFacility? @relation("MachineLegacyWorkCenter", fields: [workCenterId], references: [id])
   productionLine   ProductionLine?     @relation(fields: [productionLineId], references: [id])
   defaultedByBoms  Bom[]
+  bomOperations    BomOperation[]     @relation("BomOperationMachine")
   workOrders       WorkOrder[]         @relation("WoMachine")
+  workOrderRuns    WorkOrderRun[]
 
   @@index([workCenterId])
   @@index([productionLineId])
@@ -964,8 +1168,16 @@ model PutawayRule {
   productId     String
   variantId     String?
   toWarehouseId String
+  // Optional preferred zone within toWarehouse. When set (and toBinId
+  // is null), MO complete / putaway resolution will land stock in a
+  // zone-level slot for the product (one bin per product inside the
+  // zone, displayed as `<warehouse> → Zone <z> → <SKU>`). Useful when
+  // you want all finished goods staged in one staging zone (e.g.
+  // STR.PR for vacuum-pack staging) without pinning a fixed bin.
+  toZone        String?
   // Optional preferred bin within toWarehouse. When null the system
-  // auto-picks the best available bin via pickBinForReceive().
+  // auto-picks the best available bin via pickBinForReceive(), or a
+  // zone slot when toZone is set.
   toBinId       String?
   // Lower = higher priority when multiple rules match.
   priority      Int             @default(100)
@@ -983,15 +1195,23 @@ model PutawayRule {
   @@index([toWarehouseId])
 }
 
-// Monitors a bin's qty; when below minQty, auto-creates an MO or transfer.
+// Monitors a bin's qty (or company-wide total when monitorBinId is null);
+// when below minQty, auto-creates an MO, transfer, or draft PO.
 model StockRule {
   id            String          @id @default(cuid())
   productId     String
   variantId     String?
-  monitorBinId  String
+  // Null = monitor total qty across all bins (used with triggerType=po).
+  monitorBinId  String?
   minQty        Float
-  // mo = create ProductionOrder; transfer = create TransferOrder
+  // Target stock level to order up to (po triggers). Defaults to 2× minQty.
+  maxQty        Float?
+  // Round vendor order qty up to this multiple (po triggers).
+  orderMultiple Float?
+  // mo | transfer | po
   triggerType   String
+  // Required for po triggers — lines group into one draft PO per vendor.
+  vendorId      String?
   bomId         String?
   sourceBinId   String?
   toWarehouseId String?
@@ -1003,17 +1223,19 @@ model StockRule {
   updatedAt     DateTime        @updatedAt
   product       Product         @relation(fields: [productId], references: [id])
   variant       ProductVariant? @relation(fields: [variantId], references: [id])
-  monitorBin    Bin             @relation("StockRuleMonitor", fields: [monitorBinId], references: [id])
+  monitorBin    Bin?            @relation("StockRuleMonitor", fields: [monitorBinId], references: [id])
   bom           Bom?            @relation(fields: [bomId], references: [id])
   sourceBin     Bin?            @relation("StockRuleSource", fields: [sourceBinId], references: [id])
   toBin         Bin?            @relation("StockRuleDest", fields: [toBinId], references: [id])
   toWarehouse   Warehouse?      @relation("StockRuleToWarehouse", fields: [toWarehouseId], references: [id])
+  vendor        Vendor?         @relation(fields: [vendorId], references: [id])
 
   @@index([productId])
   @@index([variantId])
   @@index([monitorBinId])
   @@index([active])
   @@index([triggerType])
+  @@index([vendorId])
 }
 
 // A first-class internal movement document. Three kinds:
@@ -1106,16 +1328,23 @@ model StockLedger {
   qty         Float
   warehouseId String
   bin         String?
+  // Lot / batch consumed or received on this movement (denormalized
+  // from StockLot.batchNo for fast ledger reads).
+  batch       String?
+  lotId       String?
   balance     Float           @default(0)
   product     Product         @relation(fields: [productId], references: [id])
   variant     ProductVariant? @relation(fields: [variantId], references: [id])
   warehouse   Warehouse       @relation(fields: [warehouseId], references: [id])
+  lot         StockLot?       @relation(fields: [lotId], references: [id])
 
   @@index([productId])
   @@index([variantId])
   @@index([warehouseId])
   @@index([txnType])
   @@index([date])
+  @@index([lotId])
+  @@index([batch])
 }
 
 // =====================================================================
@@ -1299,6 +1528,35 @@ model DispatchOption {
   @@index([active])
 }
 
+// =============================================================
+// External sales-channel barcode / SKU mapping
+// =============================================================
+// When orders flow in from outside systems (DTDC shipping labels,
+// Amazon, Flipkart, marketplace exports, …) their item codes do NOT
+// match our internal SKUs. This table is the per-channel translation:
+//   { channel: "DTDC", externalCode: "I100", internalSku: "ML401" }
+//
+// Maintained from Settings → Channel mappings (CSV upload + inline
+// edits). Imported orders look up each PDF row by (channel, externalCode)
+// to resolve to a Product/ProductVariant we actually stock.
+//
+// internalSku may match either ProductVariant.sku or (legacy) Product.sku;
+// the import resolver tries variant first, then product.
+model ChannelMapping {
+  id           String   @id @default(cuid())
+  channel      String   // e.g. "DTDC", "Amazon", "Flipkart"
+  externalCode String   // courier/marketplace item code, e.g. "I100"
+  internalSku  String   // our ProductVariant.sku (preferred) or Product.sku
+  notes        String?
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([channel, externalCode])
+  @@index([internalSku])
+  @@index([channel])
+}
+
 model Quote {
   id                    String          @id @default(cuid())
   quoteNo               String          @unique
@@ -1392,10 +1650,20 @@ model SalesOrder {
   customerId       String
   status           String           @default("confirmed") // confirmed | partially_invoiced | invoiced | closed | cancelled | on_hold
   // Where the order originated. "internal" = desktop/B2B (default),
-  // "ecommerce" = prepaid storefront mock. Read by the pack-complete
-  // hook to decide whether to stamp a mock AWB, and by reports that
-  // want to break down channel revenue.
+  // "ecommerce" = prepaid storefront mock, "imported" = uploaded
+  // shipping-label PDF from an external sales channel (DTDC, etc.).
+  // Read by the pack-complete hook to decide whether to stamp a mock
+  // AWB, by the invoice helper to pick the right number series, and
+  // by reports that break down channel revenue.
   source           String           @default("internal")
+  // External-channel identifiers, populated only when source="imported".
+  // externalChannel = the channel name (e.g. "DTDC"), externalRef =
+  // their order # (SO12627100436), externalAwb = waybill, and
+  // externalInvoiceNo = the courier-printed invoice no for reference.
+  externalChannel    String?
+  externalRef        String?
+  externalAwb        String?
+  externalInvoiceNo  String?
   orderDate        DateTime         @default(now())
   subTotal         Float            @default(0)
   tax              Float            @default(0)
@@ -1422,6 +1690,7 @@ model SalesOrder {
   @@index([customerId])
   @@index([source])
   @@index([dispatchOptionId])
+  @@index([externalRef])
 }
 
 model SalesOrderItem {

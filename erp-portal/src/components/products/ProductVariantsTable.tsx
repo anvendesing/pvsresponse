@@ -183,18 +183,32 @@ export const ProductVariantsTable = ({
       key: "stock",
       header: "On hand",
       align: "right",
-      width: "90px",
+      width: "110px",
       sortable: true,
       sortValue: (r) => r.variant.stockOnHand,
-      cell: (r) => (
-        <span
-          className={`tnum font-semibold ${
-            r.variant.stockOnHand < 0 ? "text-danger" : "text-ink"
-          }`}
-        >
-          {num(r.variant.stockOnHand)}
-        </span>
-      ),
+      cell: (r) => {
+        const incoming =
+          (r.product.pipeline?.poPipeline ?? 0) + (r.product.pipeline?.moPipeline ?? 0);
+        return (
+          <div className="text-right">
+            <span
+              className={`tnum font-semibold ${
+                r.variant.stockOnHand < 0 ? "text-danger" : "text-ink"
+              }`}
+            >
+              {num(r.variant.stockOnHand)}
+            </span>
+            {incoming > 0 && (
+              <div
+                className="text-caption text-info tnum"
+                title="Parent product — open PO / MO qty (shared across variants)"
+              >
+                +{num(incoming)} exp.
+              </div>
+            )}
+          </div>
+        );
+      },
     },
     {
       key: "cost",

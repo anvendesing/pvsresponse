@@ -2,13 +2,22 @@
  * Remove bins in zones that are not part of the official warehouse layout.
  *
  *   Farm Shop (WH-FARM): zone A only
- *   Stock Room (STR):    zones A, B, C, D only (D is reserved / may be empty)
+ *   Stock Room (STR):    zones A, B, C only
  *
- * Also drops bins whose location is not in the canonical layout file
- * (orphan shelves/bins within allowed zones).
+ * SAFE BY DEFAULT — runs as a dry-run unless `--apply` is passed.
+ * The legacy `--dry-run` flag is still accepted but redundant.
  *
- *   npm run db:prune-warehouse-zones:dev
- *   npm run db:prune-warehouse-zones:dev -- --dry-run
+ * Two passes:
+ *   1. Disallowed-zone pass — always on. Deletes bins whose zone is
+ *      outside the keep-list.
+ *   2. Orphan-bin pass — opt-in with `--prune-orphans`. Deletes bins
+ *      that are inside an allowed zone but not at a canonical address
+ *      from the layout file. DANGEROUS: these bins may still hold
+ *      stock that operators care about.
+ *
+ *   npx tsx src/scripts/prune-warehouse-zones.ts            # dry run
+ *   npx tsx src/scripts/prune-warehouse-zones.ts --apply    # do it
+ *   npx tsx src/scripts/prune-warehouse-zones.ts --apply --prune-orphans
  */
 
 import { PrismaClient } from "@prisma/client";
@@ -21,12 +30,19 @@ import {
   stockRoomBinRows,
 } from "../lib/stock-room-layout.js";
 
-const dryRun = process.argv.includes("--dry-run");
+// SAFE BY DEFAULT: any invocation without --apply is a preview.
+// (--dry-run is also accepted for backward compat with old runbooks
+// and the env var DRY_RUN=1 works too — belt-and-braces because
+// `npm run X -- --dry-run` does not always forward the flag.)
+const apply =
+  process.argv.includes("--apply") && process.env.DRY_RUN !== "1";
+const dryRun = !apply;
+const pruneOrphans = process.argv.includes("--prune-orphans");
 const db = new PrismaClient();
 
 const ALLOWED_ZONES: Record<string, Set<string>> = {
   [FARM_SHOP_WAREHOUSE_CODE]: new Set(["A"]),
-  [STOCK_ROOM_WAREHOUSE_CODE]: new Set(["A", "B", "C", "D"]),
+  [STOCK_ROOM_WAREHOUSE_CODE]: new Set(["A", "B", "C"]),
 };
 
 /** Zones where orphan bins (not in layout file) should be removed. D is reserved. */
@@ -160,7 +176,20 @@ async function pruneWarehouse(whCode: string) {
 
   // Normalize zone letter casing in report only; DB may store "a" vs "A"
   await deleteBins(whCode, wrongZone, "disallowed zone");
-  await deleteBins(whCode, orphanInZone, "not in layout");
+  if (pruneOrphans) {
+    await deleteBins(whCode, orphanInZone, "not in layout");
+  } else if (orphanInZone.length > 0) {
+    const withStock = orphanInZone.filter((b) => b.qty > 0);
+    console.log(
+      `  ${whCode}: ${orphanInZone.length} bin(s) inside allowed zones are NOT in the canonical layout` +
+        (withStock.length > 0
+          ? ` (${withStock.length} still hold stock).`
+          : ".")
+    );
+    console.log(
+      `    Skipped (orphan-bin pruning is opt-in; pass --prune-orphans to delete them).`
+    );
+  }
 
   const remaining = await db.bin.groupBy({
     by: ["zone"],
@@ -174,7 +203,16 @@ async function pruneWarehouse(whCode: string) {
 }
 
 async function main() {
-  console.log(dryRun ? "=== DRY RUN ===" : "=== Prune warehouse zones ===");
+  console.log(
+    dryRun
+      ? "=== DRY RUN === (pass --apply to actually delete)"
+      : "=== Prune warehouse zones ===   APPLYING"
+  );
+  console.log(
+    pruneOrphans
+      ? "Orphan-bin pruning: ON (--prune-orphans)"
+      : "Orphan-bin pruning: OFF (pass --prune-orphans to include)"
+  );
   await pruneWarehouse(FARM_SHOP_WAREHOUSE_CODE);
   console.log("");
   await pruneWarehouse(STOCK_ROOM_WAREHOUSE_CODE);

@@ -346,6 +346,7 @@ export const Productivity = () => {
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
               {lines.map((line) => {
+                const machines = line.machines ?? [];
                 const utilTone =
                   line.utilisationPct === null
                     ? "neutral"
@@ -354,7 +355,7 @@ export const Productivity = () => {
                       : line.utilisationPct >= 30
                         ? "warning"
                         : "neutral";
-                const running = line.machines.filter(
+                const running = machines.filter(
                   (m) => m.status === "running" || m.busy
                 ).length;
                 return (
@@ -424,12 +425,12 @@ export const Productivity = () => {
                       </div>
                     )}
                     <div className="mt-2 grid grid-cols-2 gap-1.5">
-                      {line.machines.length === 0 ? (
+                      {machines.length === 0 ? (
                         <div className="col-span-2 text-caption text-ink-muted">
                           No machines yet.
                         </div>
                       ) : (
-                        line.machines.map((m) => {
+                        machines.map((m) => {
                           const tone =
                             m.status === "running"
                               ? "success"

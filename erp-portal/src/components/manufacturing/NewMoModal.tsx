@@ -328,7 +328,7 @@ export const NewMoModal = ({ boms, onClose, onCreated }: Props) => {
           {/* Explosion preview */}
           <div className="border border-border rounded-md overflow-hidden">
             <div className="px-3 py-2 bg-canvas border-b border-border text-caption text-ink-muted uppercase font-semibold">
-              Raw materials needed (multi-level explosion)
+              Raw materials needed (this BOM)
             </div>
             {loading ? (
               <div className="p-4 text-center text-body-sm text-ink-muted">

@@ -16,6 +16,10 @@ import {
   decodeLocation,
   encodeBin,
   encodeShelf,
+  encodeShelfCompact,
+  encodeZoneCompact,
+  shelfCodeFromRow,
+  zoneCodeFromRow,
 } from "../lib/codes.js";
 
 const variantSelect = {
@@ -211,38 +215,96 @@ export const locationsRoutes = async (app: FastifyInstance) => {
         if (loc.kind === "zone") {
           const bins = await db.bin.findMany({
             where: { warehouseId: wh.id, zone: loc.zone },
-            select: { shelf: true, qty: true, productId: true },
+            select: {
+              shelf: true,
+              bin: true,
+              qty: true,
+              reservedQty: true,
+              productId: true,
+              product: { select: { id: true, sku: true, name: true, uom: true } },
+              variant: {
+                select: {
+                  id: true,
+                  sku: true,
+                  size: true,
+                  uom: true,
+                },
+              },
+            },
           });
-          if (bins.length === 0) {
-            return reply
-              .code(404)
-              .send({ error: { code: "zone_empty", message: "No bins in this zone." } });
-          }
+
           const shelves = new Map<
             string,
-            { shelf: string; bins: number; qty: number }
+            { shelf: string; bins: number; qty: number; stockedBins: number }
           >();
+          const products = new Map<
+            string,
+            {
+              productId: string;
+              variantId: string | null;
+              sku: string;
+              name: string;
+              uom: string | null;
+              qty: number;
+            }
+          >();
+
+          let totalQty = 0;
+          let stockedBins = 0;
+
           for (const b of bins) {
-            const key = b.shelf;
-            const cur = shelves.get(key) ?? {
+            const qty = b.qty ?? 0;
+            totalQty += qty;
+            if (qty > 0) stockedBins += 1;
+
+            const shelfRow = shelves.get(b.shelf) ?? {
               shelf: b.shelf,
               bins: 0,
               qty: 0,
+              stockedBins: 0,
             };
-            cur.bins += 1;
-            cur.qty += b.qty ?? 0;
-            shelves.set(key, cur);
+            shelfRow.bins += 1;
+            shelfRow.qty += qty;
+            if (qty > 0) shelfRow.stockedBins += 1;
+            shelves.set(b.shelf, shelfRow);
+
+            if (b.productId && qty > 0 && b.product) {
+              const key = b.variant?.id ?? b.productId;
+              const cur = products.get(key) ?? {
+                productId: b.productId,
+                variantId: b.variant?.id ?? null,
+                sku: b.variant?.sku ?? b.product.sku,
+                name: b.product.name,
+                uom: b.variant?.uom ?? b.product.uom ?? null,
+                qty: 0,
+              };
+              cur.qty += qty;
+              products.set(key, cur);
+            }
           }
+
           return {
             kind: "zone",
             warehouse: wh,
             zone: loc.zone,
+            totalQty,
+            totalBins: bins.length,
+            stockedBins,
+            code: wh.scanPrefix
+              ? encodeZoneCompact(wh.scanPrefix, loc.zone)
+              : zoneCodeFromRow(loc.zone, wh),
+            products: Array.from(products.values()).sort((a, b) =>
+              a.sku.localeCompare(b.sku)
+            ),
             shelves: Array.from(shelves.values())
               .map((s) => ({
                 shelf: s.shelf,
                 totalBins: s.bins,
+                stockedBins: s.stockedBins,
                 totalQty: s.qty,
-                code: encodeShelf(wh.code, loc.zone, s.shelf),
+                code: wh.scanPrefix
+                  ? encodeShelfCompact(wh.scanPrefix, loc.zone, s.shelf)
+                  : encodeShelf(wh.code, loc.zone, s.shelf),
               }))
               .sort((a, b) => a.shelf.localeCompare(b.shelf)),
           };
@@ -261,16 +323,37 @@ export const locationsRoutes = async (app: FastifyInstance) => {
             },
             orderBy: { bin: "asc" },
           });
+          const totalQty = bins.reduce((sum, b) => sum + (b.qty ?? 0), 0);
+          const stockedBins = bins.filter((b) => (b.qty ?? 0) > 0).length;
+
           if (bins.length === 0) {
-            return reply
-              .code(404)
-              .send({ error: { code: "shelf_empty", message: "No bins on this shelf." } });
+            return {
+              kind: "shelf",
+              warehouse: wh,
+              zone: loc.zone,
+              shelf: loc.shelf,
+              totalQty: 0,
+              totalBins: 0,
+              stockedBins: 0,
+              code: shelfCodeFromRow(
+                { zone: loc.zone, shelf: loc.shelf! },
+                wh
+              ),
+              bins: [],
+            };
           }
           return {
             kind: "shelf",
             warehouse: wh,
             zone: loc.zone,
             shelf: loc.shelf,
+            totalQty,
+            totalBins: bins.length,
+            stockedBins,
+            code: shelfCodeFromRow(
+              { zone: loc.zone, shelf: loc.shelf! },
+              wh
+            ),
             bins: bins.map((b) => ({
               id: b.id,
               code: b.code ?? binCodeFromRow(b, wh),
@@ -309,9 +392,45 @@ export const locationsRoutes = async (app: FastifyInstance) => {
           },
         });
         if (!bin) {
-          return reply
-            .code(404)
-            .send({ error: { code: "bin_not_found", message: "Bin does not exist." } });
+          const binsOnShelf = await db.bin.findMany({
+            where: {
+              warehouseId: wh.id,
+              zone: loc.zone,
+              shelf: loc.shelf!,
+            },
+            include: {
+              product: { select: { id: true, sku: true, name: true, uom: true } },
+              variant: { select: variantSelect },
+            },
+            orderBy: { bin: "asc" },
+          });
+          const totalQty = binsOnShelf.reduce((sum, b) => sum + (b.qty ?? 0), 0);
+          const stockedBins = binsOnShelf.filter((b) => (b.qty ?? 0) > 0).length;
+          return {
+            kind: "shelf",
+            warehouse: wh,
+            zone: loc.zone,
+            shelf: loc.shelf!,
+            totalQty,
+            totalBins: binsOnShelf.length,
+            stockedBins,
+            code: shelfCodeFromRow(
+              { zone: loc.zone, shelf: loc.shelf! },
+              wh
+            ),
+            bins: binsOnShelf.map((b) => ({
+              id: b.id,
+              code: b.code ?? binCodeFromRow(b, wh),
+              bin: b.bin,
+              qty: b.qty,
+              reservedQty: b.reservedQty,
+              capacity: b.capacity,
+              batch: b.batch,
+              variantId: b.variantId,
+              product: b.product,
+              variant: b.variant,
+            })),
+          };
         }
         const recentMoves = await db.stockLedger.findMany({
           where: {

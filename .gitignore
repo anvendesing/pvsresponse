@@ -17,6 +17,7 @@ out/
 .env.local
 .env.*.local
 .env.mobile
+.env.mfg
 # Keep example files (no real secrets) so new team members can copy them
 !.env.example
 !.env.*.example

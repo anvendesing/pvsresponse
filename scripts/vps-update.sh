@@ -13,7 +13,10 @@
 #   bash scripts/vps-update.sh build
 #   bash scripts/vps-update.sh sync
 #   bash scripts/vps-update.sh site-setup
+#   bash scripts/vps-update.sh post-migrate
 #   bash scripts/vps-update.sh warehouse-layout
+#
+# See docs/vps-pending-migrations.md for migration checklist.
 #
 # Options (full update only — passed to vps-deploy.sh):
 #   bash scripts/vps-update.sh --no-sync          # skip db:sync-stock
@@ -83,6 +86,11 @@ case "$cmd" in
   site-setup)
     echo "=== ops:site-setup (warehouses + production lines + putaway) ==="
     "${COMPOSE[@]}" exec -T backend npm run ops:site-setup:dist
+    ;;
+
+  post-migrate)
+    echo "=== ops:post-migrate-config (production lines + vacuum + oil + lot backfill) ==="
+    "${COMPOSE[@]}" exec -T backend npm run ops:post-migrate-config:dist "$@"
     ;;
 
   warehouse-layout)

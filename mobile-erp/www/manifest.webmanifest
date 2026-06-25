@@ -1,7 +1,7 @@
 {
-  "name": "NovaERP Warehouse",
-  "short_name": "NovaWH",
-  "description": "Mobile pick / pack / verify for NovaERP warehouse workers.",
+  "name": "Prakruthivanam Warehouse",
+  "short_name": "PV-WH",
+  "description": "Mobile pick / pack / verify for Prakruthivanam warehouse workers.",
   "start_url": "/m/tasks",
   "scope": "/m/",
   "display": "standalone",

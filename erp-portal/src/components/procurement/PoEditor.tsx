@@ -1,14 +1,8 @@
 // Purchase order editor.
 //
-// Two modes:
-//   * Create  - pick a vendor, expected date, and add line items by
-//               searching the product catalog. Submit creates a draft.
-//   * Edit    - update notes / expected date / lines (lines only while
-//               the PO is still 'draft'; backend rejects later edits).
-//
-// The flow is intentionally minimal in this first cut: no GST split,
-// no MRP/dealer rate auto-fill - the operator types the rate that
-// the supplier quoted. The backend computes line and PO totals.
+// When a vendor is selected, line items are picked from that vendor's
+// supplier catalog (vendor code, UOM, pack-size conversion). Falls back
+// to the full product catalog if the vendor has no catalog lines yet.
 
 import { useEffect, useMemo, useState } from "react";
 import {
@@ -25,13 +19,11 @@ import { Chip } from "@/components/common/Chip";
 import { Input } from "@/components/common/Input";
 import { api } from "@/lib/api";
 import { useApi } from "@/hooks/useApi";
-import type { Product, Vendor } from "@/data/types";
+import type { Product, Vendor, VendorProduct } from "@/data/types";
 import { inr, num } from "@/lib/format";
 import { cn } from "@/lib/cn";
 
 interface PoLineDraft {
-  // tempKey is local-only - we rebuild it on every render so adding
-  // and removing rows mid-edit doesn't lose focus or scroll position.
   tempKey: string;
   productId: string;
   sku: string;
@@ -39,6 +31,12 @@ interface PoLineDraft {
   uom: string;
   qty: number;
   rate: number;
+  vendorProductId?: string;
+  vendorQty?: number;
+  vendorRate?: number;
+  vendorUom?: string;
+  packSize?: number;
+  vendorLabel?: string;
 }
 
 interface ExistingPoSnapshot {
@@ -52,12 +50,20 @@ interface ExistingPoSnapshot {
     productId: string;
     qty: number;
     rate: number;
+    vendorProductId?: string | null;
+    vendorQty?: number | null;
+    vendorUom?: string | null;
+    vendorRate?: number | null;
     product: { sku: string; name: string; uom: string };
+    vendorProduct?: {
+      vendorProductName: string | null;
+      vendorProductCode: string | null;
+      packSize: number;
+    } | null;
   }>;
 }
 
 interface Props {
-  // Existing PO snapshot (in edit mode). Pass null to create a new one.
   po: ExistingPoSnapshot | null;
   onClose: () => void;
   onSaved: (poId: string, message: string) => void;
@@ -80,33 +86,59 @@ export const PoEditor = ({ po, onClose, onSaved }: Props) => {
   const products: Product[] = liveProducts.data ?? [];
 
   const [vendorId, setVendorId] = useState<string>(po?.vendorId ?? "");
+  const [catalog, setCatalog] = useState<VendorProduct[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(false);
   const [expectedDate, setExpectedDate] = useState<string>(
     po?.expectedDate ? po.expectedDate.slice(0, 10) : isoDate(7)
   );
   const [notes, setNotes] = useState<string>(po?.notes ?? "");
   const [items, setItems] = useState<PoLineDraft[]>(
-    (po?.items ?? []).map((i) => ({
-      tempKey: Math.random().toString(36).slice(2),
-      productId: i.productId,
-      sku: i.product.sku,
-      name: i.product.name,
-      uom: i.product.uom,
-      qty: i.qty,
-      rate: i.rate,
-    }))
+    (po?.items ?? []).map((i) => {
+      const vp = i.vendorProduct;
+      const vendorLabel = vp
+        ? [vp.vendorProductName, vp.vendorProductCode].filter(Boolean).join(" · ")
+        : undefined;
+      return {
+        tempKey: Math.random().toString(36).slice(2),
+        productId: i.productId,
+        sku: i.product.sku,
+        name: i.product.name,
+        uom: i.product.uom,
+        qty: i.qty,
+        rate: i.rate,
+        vendorProductId: i.vendorProductId ?? undefined,
+        vendorQty: i.vendorQty ?? undefined,
+        vendorRate: i.vendorRate ?? undefined,
+        vendorUom: i.vendorUom ?? undefined,
+        packSize: vp?.packSize,
+        vendorLabel: vendorLabel || undefined,
+      };
+    })
   );
   const [pickerOpen, setPickerOpen] = useState(false);
   const [search, setSearch] = useState("");
+  const [useFullCatalog, setUseFullCatalog] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Default vendor to the first one when creating and no vendor was
-  // pre-set.
   useEffect(() => {
     if (isNew && !vendorId && vendors.length > 0) {
       setVendorId(vendors[0].id);
     }
   }, [isNew, vendorId, vendors]);
+
+  useEffect(() => {
+    if (!vendorId) {
+      setCatalog([]);
+      return;
+    }
+    setCatalogLoading(true);
+    void api
+      .vendorProducts(vendorId, { active: true })
+      .then(setCatalog)
+      .catch(() => setCatalog([]))
+      .finally(() => setCatalogLoading(false));
+  }, [vendorId]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -116,8 +148,41 @@ export const PoEditor = ({ po, onClose, onSaved }: Props) => {
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  const catalogMode = catalog.length > 0 && !useFullCatalog;
+
+  const addFromCatalog = (line: VendorProduct) => {
+    if (items.some((i) => i.vendorProductId === line.id || i.productId === line.productId)) {
+      setError(`${line.product.sku} is already on this PO.`);
+      return;
+    }
+    const internalQty = line.minOrderQty * line.packSize;
+    const internalRate = line.packSize > 0 ? line.price / line.packSize : line.price;
+    const label = [line.vendorProductName, line.vendorProductCode].filter(Boolean).join(" · ");
+    setItems((prev) => [
+      ...prev,
+      {
+        tempKey: Math.random().toString(36).slice(2),
+        productId: line.productId,
+        sku: line.variant?.sku ?? line.product.sku,
+        name: line.vendorProductName ?? line.product.name,
+        uom: line.product.uom,
+        qty: internalQty,
+        rate: internalRate,
+        vendorProductId: line.id,
+        vendorQty: line.minOrderQty,
+        vendorRate: line.price,
+        vendorUom: line.vendorUom,
+        packSize: line.packSize,
+        vendorLabel: label || undefined,
+      },
+    ]);
+    setPickerOpen(false);
+    setSearch("");
+    setError(null);
+  };
+
   const addLine = (p: Product) => {
-    if (items.some((i) => i.productId === p.id)) {
+    if (items.some((i) => i.productId === p.id && !i.vendorProductId)) {
       setError(`${p.sku} is already on this PO. Update its qty instead.`);
       return;
     }
@@ -141,6 +206,27 @@ export const PoEditor = ({ po, onClose, onSaved }: Props) => {
   const removeLine = (tempKey: string) =>
     setItems((prev) => prev.filter((i) => i.tempKey !== tempKey));
 
+  const setVendorQty = (tempKey: string, vendorQty: number) =>
+    setItems((prev) =>
+      prev.map((i) => {
+        if (i.tempKey !== tempKey || !i.vendorProductId) return i;
+        const pack = i.packSize ?? 1;
+        const qty = vendorQty * pack;
+        const rate = i.vendorRate != null && pack > 0 ? i.vendorRate / pack : i.rate;
+        return { ...i, vendorQty, qty, rate };
+      })
+    );
+
+  const setVendorRate = (tempKey: string, vendorRate: number) =>
+    setItems((prev) =>
+      prev.map((i) => {
+        if (i.tempKey !== tempKey || !i.vendorProductId) return i;
+        const pack = i.packSize ?? 1;
+        const rate = pack > 0 ? vendorRate / pack : vendorRate;
+        return { ...i, vendorRate, rate };
+      })
+    );
+
   const setQty = (tempKey: string, qty: number) =>
     setItems((prev) =>
       prev.map((i) => (i.tempKey === tempKey ? { ...i, qty } : i))
@@ -156,7 +242,9 @@ export const PoEditor = ({ po, onClose, onSaved }: Props) => {
     if (!vendorId) return "Pick a vendor.";
     if (items.length === 0) return "Add at least one line item.";
     for (const i of items) {
-      if (i.qty <= 0) return `Qty must be > 0 for ${i.sku}.`;
+      if (i.vendorProductId) {
+        if ((i.vendorQty ?? 0) <= 0) return `Vendor qty must be > 0 for ${i.sku}.`;
+      } else if (i.qty <= 0) return `Qty must be > 0 for ${i.sku}.`;
       if (i.rate < 0) return `Rate cannot be negative for ${i.sku}.`;
     }
     return null;
@@ -172,11 +260,20 @@ export const PoEditor = ({ po, onClose, onSaved }: Props) => {
         vendorId,
         expectedDate: new Date(expectedDate).toISOString(),
         notes: notes.trim() || null,
-        items: items.map((i) => ({
-          productId: i.productId,
-          qty: i.qty,
-          rate: i.rate,
-        })),
+        items: items.map((i) =>
+          i.vendorProductId
+            ? {
+                productId: i.productId,
+                vendorProductId: i.vendorProductId,
+                vendorQty: i.vendorQty ?? 1,
+                vendorRate: i.vendorRate ?? 0,
+              }
+            : {
+                productId: i.productId,
+                qty: i.qty,
+                rate: i.rate,
+              }
+        ),
       };
       if (isNew) {
         const created = (await api.createPurchaseOrder(payload)) as {
@@ -188,7 +285,6 @@ export const PoEditor = ({ po, onClose, onSaved }: Props) => {
         const updated = (await api.updatePurchaseOrder(po!.id, {
           expectedDate: payload.expectedDate,
           notes: payload.notes,
-          // Only send items when editable to avoid backend 409.
           ...(editable ? { items: payload.items } : {}),
         })) as { id: string; poNo: string };
         onSaved(updated.id, `${updated.poNo} updated.`);
@@ -198,6 +294,20 @@ export const PoEditor = ({ po, onClose, onSaved }: Props) => {
       setBusy(false);
     }
   };
+
+  const filteredCatalog = useMemo(() => {
+    if (!search) return catalog.slice(0, 40);
+    const t = search.toLowerCase();
+    return catalog
+      .filter(
+        (l) =>
+          l.product.sku.toLowerCase().includes(t) ||
+          l.product.name.toLowerCase().includes(t) ||
+          (l.vendorProductCode ?? "").toLowerCase().includes(t) ||
+          (l.vendorProductName ?? "").toLowerCase().includes(t)
+      )
+      .slice(0, 40);
+  }, [catalog, search]);
 
   const filteredProducts = useMemo(() => {
     if (!search) return products.slice(0, 30);
@@ -226,10 +336,10 @@ export const PoEditor = ({ po, onClose, onSaved }: Props) => {
             </div>
             <div className="text-body-sm">
               {isNew
-                ? "Pick a vendor, add line items, set expected date. Saved as a draft."
+                ? "Pick a vendor and add lines from their supplier catalog (or full product list)."
                 : editable
                   ? "Drafts are fully editable; once approved, only notes and expected date can change."
-                  : "Read-only - this PO is past the draft stage."}
+                  : "Read-only — this PO is past the draft stage."}
             </div>
           </div>
           <div className="flex items-center gap-2">
@@ -278,6 +388,13 @@ export const PoEditor = ({ po, onClose, onSaved }: Props) => {
                 </option>
               ))}
             </select>
+            {vendorId && !catalogLoading && (
+              <div className="text-caption text-ink-muted mt-1">
+                {catalog.length > 0
+                  ? `${catalog.length} catalog line${catalog.length === 1 ? "" : "s"} for this vendor`
+                  : "No supplier catalog — add lines in Vendors → open vendor → Supplier catalog"}
+              </div>
+            )}
           </div>
           <div className="col-span-3">
             <div className="text-caption text-ink-muted uppercase font-semibold mb-1">
@@ -301,10 +418,8 @@ export const PoEditor = ({ po, onClose, onSaved }: Props) => {
 
         <div className="flex-1 min-h-0 flex flex-col">
           <div className="px-5 py-2 border-b border-border flex items-center justify-between">
-            <div>
-              <div className="text-caption text-ink-muted uppercase font-semibold">
-                Line items ({items.length})
-              </div>
+            <div className="text-caption text-ink-muted uppercase font-semibold">
+              Line items ({items.length})
             </div>
             {editable && (
               <Button
@@ -313,7 +428,7 @@ export const PoEditor = ({ po, onClose, onSaved }: Props) => {
                 icon={<Plus size={14} />}
                 onClick={() => setPickerOpen(true)}
               >
-                Add product
+                Add line
               </Button>
             )}
           </div>
@@ -321,15 +436,15 @@ export const PoEditor = ({ po, onClose, onSaved }: Props) => {
           <div className="flex-1 overflow-y-auto">
             {items.length === 0 ? (
               <div className="p-8 text-center text-body-sm text-ink-muted">
-                No items yet. Click <strong>Add product</strong>.
+                No items yet. Click <strong>Add line</strong>.
               </div>
             ) : (
               <div className="grid grid-cols-12 grid-header-cell text-caption sticky top-0 bg-surface z-10 border-b border-border">
                 <div className="col-span-2 px-3 py-2">SKU</div>
-                <div className="col-span-4 px-3 py-2">Product</div>
-                <div className="col-span-2 px-3 py-2 text-right">Qty</div>
+                <div className="col-span-3 px-3 py-2">Product</div>
+                <div className="col-span-2 px-3 py-2 text-right">Order qty</div>
                 <div className="col-span-2 px-3 py-2 text-right">Rate</div>
-                <div className="col-span-1 px-3 py-2 text-right">Amount</div>
+                <div className="col-span-2 px-3 py-2 text-right">Internal</div>
                 <div className="col-span-1 px-3 py-2"></div>
               </div>
             )}
@@ -341,34 +456,77 @@ export const PoEditor = ({ po, onClose, onSaved }: Props) => {
                 <div className="col-span-2 px-3 py-2 font-mono text-caption font-semibold">
                   {it.sku}
                 </div>
-                <div className="col-span-4 px-3 py-2 truncate">{it.name}</div>
+                <div className="col-span-3 px-3 py-2">
+                  <div className="truncate">{it.name}</div>
+                  {it.vendorLabel && (
+                    <div className="text-caption text-ink-muted truncate">{it.vendorLabel}</div>
+                  )}
+                </div>
                 <div className="col-span-2 px-3 py-2">
-                  <div className="flex items-center gap-1.5">
+                  {it.vendorProductId ? (
+                    <div className="flex items-center gap-1.5">
+                      <Input
+                        type="number"
+                        min={0.001}
+                        step={0.001}
+                        value={it.vendorQty ?? 1}
+                        onChange={(e) =>
+                          setVendorQty(it.tempKey, Number(e.target.value) || 0)
+                        }
+                        disabled={!editable}
+                        className="text-right"
+                      />
+                      <span className="text-caption text-ink-muted shrink-0">
+                        {it.vendorUom}
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-1.5">
+                      <Input
+                        type="number"
+                        min={0.001}
+                        step={0.001}
+                        value={it.qty}
+                        onChange={(e) => setQty(it.tempKey, Number(e.target.value) || 0)}
+                        disabled={!editable}
+                        className="text-right"
+                      />
+                      <span className="text-caption text-ink-muted">{it.uom}</span>
+                    </div>
+                  )}
+                </div>
+                <div className="col-span-2 px-3 py-2">
+                  {it.vendorProductId ? (
+                    <div className="flex items-center gap-1">
+                      <Input
+                        type="number"
+                        min={0}
+                        step={0.01}
+                        value={it.vendorRate ?? 0}
+                        onChange={(e) =>
+                          setVendorRate(it.tempKey, Number(e.target.value) || 0)
+                        }
+                        disabled={!editable}
+                        className="text-right"
+                      />
+                      <span className="text-caption text-ink-muted">/{it.vendorUom}</span>
+                    </div>
+                  ) : (
                     <Input
                       type="number"
-                      min={0.001}
-                      step={0.001}
-                      value={it.qty}
-                      onChange={(e) => setQty(it.tempKey, Number(e.target.value) || 0)}
+                      min={0}
+                      step={0.01}
+                      value={it.rate}
+                      onChange={(e) => setRate(it.tempKey, Number(e.target.value) || 0)}
                       disabled={!editable}
                       className="text-right"
                     />
-                    <span className="text-caption text-ink-muted">{it.uom}</span>
-                  </div>
+                  )}
                 </div>
-                <div className="col-span-2 px-3 py-2">
-                  <Input
-                    type="number"
-                    min={0}
-                    step={0.01}
-                    value={it.rate}
-                    onChange={(e) => setRate(it.tempKey, Number(e.target.value) || 0)}
-                    disabled={!editable}
-                    className="text-right"
-                  />
-                </div>
-                <div className="col-span-1 px-3 py-2 text-right tnum font-semibold">
-                  {num(it.qty * it.rate, 2)}
+                <div className="col-span-2 px-3 py-2 text-right text-caption">
+                  <div className="tnum font-semibold">{num(it.qty, 3)} {it.uom}</div>
+                  <div className="text-ink-muted tnum">@ {num(it.rate, 2)}</div>
+                  <div className="tnum">{inr(it.qty * it.rate)}</div>
                 </div>
                 <div className="col-span-1 px-3 py-2 text-right">
                   {editable && (
@@ -425,7 +583,20 @@ export const PoEditor = ({ po, onClose, onSaved }: Props) => {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="px-4 py-3 border-b border-border flex items-center justify-between">
-              <div className="text-body-sm font-bold">Pick a product</div>
+              <div>
+                <div className="text-body-sm font-bold">
+                  {catalogMode ? "Pick from vendor catalog" : "Pick a product"}
+                </div>
+                {catalog.length > 0 && (
+                  <button
+                    type="button"
+                    className="text-caption text-primary underline"
+                    onClick={() => setUseFullCatalog((u) => !u)}
+                  >
+                    {catalogMode ? "Use full product catalog instead" : "Back to vendor catalog"}
+                  </button>
+                )}
+              </div>
               <button
                 onClick={() => setPickerOpen(false)}
                 className="h-8 w-8 grid place-items-center rounded-md text-ink-muted hover:bg-canvas"
@@ -436,14 +607,48 @@ export const PoEditor = ({ po, onClose, onSaved }: Props) => {
             <div className="px-4 py-3 border-b border-border">
               <Input
                 iconLeft={<Search size={14} />}
-                placeholder="Search SKU or name…"
+                placeholder={
+                  catalogMode
+                    ? "Search vendor code, name, or internal SKU…"
+                    : "Search SKU or name…"
+                }
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 autoFocus
               />
             </div>
             <div className="flex-1 overflow-y-auto divide-y divide-border">
-              {filteredProducts.length === 0 ? (
+              {catalogMode ? (
+                filteredCatalog.length === 0 ? (
+                  <div className="px-4 py-6 text-center text-body-sm text-ink-muted">
+                    {catalogLoading ? "Loading catalog…" : "No matching catalog lines."}
+                  </div>
+                ) : (
+                  filteredCatalog.map((line) => (
+                    <button
+                      key={line.id}
+                      type="button"
+                      onClick={() => addFromCatalog(line)}
+                      className="w-full px-4 py-2.5 flex items-center gap-3 text-left hover:bg-canvas/60"
+                    >
+                      <div>
+                        <div className="font-mono text-caption font-semibold">
+                          {line.variant?.sku ?? line.product.sku}
+                        </div>
+                        <div className="text-caption text-ink-muted">
+                          {line.vendorProductName ?? line.product.name}
+                          {line.vendorProductCode && ` · ${line.vendorProductCode}`}
+                        </div>
+                      </div>
+                      <div className="flex-1" />
+                      <Chip size="sm" tone="neutral">
+                        1 {line.vendorUom} = {num(line.packSize, 2)} {line.product.uom}
+                      </Chip>
+                      <span className="text-caption tnum">{inr(line.price)}</span>
+                    </button>
+                  ))
+                )
+              ) : filteredProducts.length === 0 ? (
                 <div className="px-4 py-6 text-center text-body-sm text-ink-muted">
                   No matching products.
                 </div>
@@ -455,9 +660,7 @@ export const PoEditor = ({ po, onClose, onSaved }: Props) => {
                     onClick={() => addLine(p)}
                     className="w-full px-4 py-2.5 flex items-center gap-3 text-left hover:bg-canvas/60"
                   >
-                    <div className="font-mono text-caption font-semibold">
-                      {p.sku}
-                    </div>
+                    <div className="font-mono text-caption font-semibold">{p.sku}</div>
                     <div className="flex-1 min-w-0 truncate">{p.name}</div>
                     <Chip size="sm" tone="neutral">{p.uom}</Chip>
                   </button>

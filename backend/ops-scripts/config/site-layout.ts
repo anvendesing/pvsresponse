@@ -33,6 +33,47 @@ export const SITE_CITY = "Kothavaripalle, AP";
  */
 export const EXISTING_FINISHED_GOODS_WH_CODE = "STR";
 
+/** Raw / bulk storage godowns used by oil extraction. */
+export const BIG_GODOWN_CODE = "WH-STOR";
+export const NEW_GODOWN_CODE = "WH-GDNW";
+export const OIL_LOCAL_STORAGE_CODE = "WH-PROD-OIL";
+
+/** Oil Extraction — parallel lines (one operator may run several). */
+export const OIL_EXTRACTION_LINES = [
+  { code: "WC-OIL-EXT-01", name: "Extraction line 1", role: "extract" },
+  { code: "WC-OIL-EXT-02", name: "Extraction line 2", role: "extract" },
+  { code: "WC-OIL-EXT-03", name: "Extraction line 3", role: "extract" },
+  { code: "WC-OIL-EXT-04", name: "Extraction line 4", role: "extract" },
+  { code: "WC-OIL-EXT-05", name: "Extraction line 5", role: "extract" },
+  { code: "WC-OIL-EXT-06", name: "Extraction line 6", role: "extract" },
+  { code: "WC-OIL-FLT-01", name: "Filtering line 1", role: "filter" },
+  { code: "WC-OIL-FLT-02", name: "Filtering line 2", role: "filter" },
+  { code: "WC-OIL-FLT-03", name: "Filtering line 3", role: "filter" },
+  { code: "WC-OIL-FILL", name: "Filling line (variants)", role: "fill" },
+] as const;
+
+/** One physical unit per oil line — press, filter, or filler (Settings → Machines). */
+export function oilLineMachine(line: {
+  code: string;
+  name: string;
+  role: string;
+}): MachineSeedDef {
+  const roleLabel =
+    line.role === "extract"
+      ? "cold press"
+      : line.role === "filter"
+        ? "filter unit"
+        : "variant filler";
+  return {
+    code: line.code.replace(/^WC-/, "MCH-"),
+    name: line.name,
+    description: `Oil extraction ${roleLabel} · ${line.code}`,
+  };
+}
+
+export const OIL_EXTRACTION_LINE_MACHINES: readonly MachineSeedDef[] =
+  OIL_EXTRACTION_LINES.map(oilLineMachine);
+
 /** Long-term raw / cold storage warehouses (created by script). */
 export const STORAGE_WAREHOUSES = [
   { code: "WH-STO-OILSEEDS", name: "Oil Seeds Warehouse", kind: "storage" as const },
@@ -43,15 +84,66 @@ export const STORAGE_WAREHOUSES = [
   { code: "WH-STO-COLD-2", name: "Cold Storage 2", kind: "storage" as const },
 ] as const;
 
+/** Single machine row seeded under a production line (Settings → Machines). */
+export type MachineSeedDef = {
+  code: string;
+  name: string;
+  description?: string;
+};
+
+/** Expand "Destone Machine" ×3 → MCH-MILL-DSTONE-01 … with numbered names. */
+export function expandMachines(
+  codePrefix: string,
+  baseName: string,
+  count: number,
+  description?: string
+): MachineSeedDef[] {
+  return Array.from({ length: count }, (_, i) => {
+    const n = i + 1;
+    const suffix = count > 1 ? ` ${n}` : "";
+    return {
+      code: `${codePrefix}-${String(n).padStart(2, "0")}`,
+      name: `${baseName}${suffix}`,
+      ...(description ? { description } : {}),
+    };
+  });
+}
+
+/** Milling Room (LINE-MILL-MAIN) — physical machines on the main line. */
+export const MILLING_LINE_MACHINES: readonly MachineSeedDef[] = [
+  ...expandMachines("MCH-MILL-DSTONE", "Destone Machine", 3),
+  ...expandMachines("MCH-MILL-RICE", "Rice Machine", 1),
+  ...expandMachines("MCH-MILL-HULL", "Hulling Machine", 2),
+  ...expandMachines("MCH-MILL-RAGI-HULL", "Ragi Hulling", 3),
+  ...expandMachines("MCH-MILL-DUST-S", "Dust Machine Small", 2),
+];
+
+/** Flour Mill (LINE-FLOUR-MAIN) — grinding / spice / ravva equipment. */
+export const FLOUR_MILL_LINE_MACHINES: readonly MachineSeedDef[] = [
+  ...expandMachines("MCH-FLOUR-FRY", "Frying Machine", 1),
+  ...expandMachines("MCH-FLOUR-PULV-75", "Pulvariser 7.5 HP", 1),
+  ...expandMachines("MCH-FLOUR-PULV-S-3", "Small Pulviser 3 HP", 2),
+  ...expandMachines("MCH-FLOUR-FLOUR", "Flour Machine", 3),
+  ...expandMachines("MCH-FLOUR-MIRCHI", "Mirchi", 1),
+  ...expandMachines("MCH-FLOUR-TURM-MIRCHI", "Turmeric & Mirchi", 1),
+  ...expandMachines("MCH-FLOUR-RAVVA", "Ravva Machine", 1),
+];
+
 export type FacilityDef = {
   /** Unique code for the ProductionFacility (formerly WorkCenter). */
   facilityCode: string;
   facilityName: string;
   /** Lines within the facility. First entry is the auto-seeded "Main Line". */
-  lines: readonly { code: string; name: string }[];
-  /** Shop-floor warehouse (kind=production) — also temporary FG buffer. Shared by all lines. */
+  lines: readonly { code: string; name: string; role?: string }[];
+  /**
+   * Shop-floor warehouse (kind=production) — also temporary FG buffer.
+   * Use EXISTING_FINISHED_GOODS_WH_CODE when the line runs inside the
+   * stock room (no separate production warehouse).
+   */
   productionWhCode: string;
   productionWhName: string;
+  /** When production runs inside STR, prefer this zone for FG bins. */
+  productionZone?: string;
   /**
    * Putaway rule destination warehouse code after MO complete.
    * Usually EXISTING_FINISHED_GOODS_WH_CODE.
@@ -76,7 +168,10 @@ export const PRODUCTION_FACILITIES: readonly FacilityDef[] = [
   {
     facilityCode: "FAC-SNACKS",
     facilityName: "Snacks Room",
-    lines: [{ code: "LINE-SNACKS-MAIN", name: "Main Line" }],
+    lines: [
+      { code: "LINE-SNACKS-MAIN", name: "Production Line" },
+      { code: "LINE-SNACKS-PACK", name: "Packing Line" },
+    ],
     productionWhCode: "WH-PROD-SNACKS",
     productionWhName: "Snacks Room — Production WH",
     putawayDestinationWhCode: EXISTING_FINISHED_GOODS_WH_CODE,
@@ -96,48 +191,72 @@ export const PRODUCTION_FACILITIES: readonly FacilityDef[] = [
       "Facility WH is temporary FG buffer; putaway rules → finished-goods warehouse.",
   },
   {
-    facilityCode: "FAC-VACUUM",
-    facilityName: "Vacuum Packing",
-    lines: [{ code: "LINE-VACUUM-MAIN", name: "Main Line" }],
-    productionWhCode: "WH-PROD-VACUUM",
-    productionWhName: "Vacuum Packing — Production WH",
+    facilityCode: "WC-VACUUM",
+    facilityName: "Stock Room Packing",
+    lines: [
+      { code: "WC-VACUUM-MAIN", name: "Vacuum Packing – Main Line" },
+      { code: "WC-STR-PACK-MANUAL", name: "Manual Packing Line" },
+    ],
+    productionWhCode: EXISTING_FINISHED_GOODS_WH_CODE,
+    productionWhName: "Stock Room",
+    productionZone: "A",
     putawayDestinationWhCode: EXISTING_FINISHED_GOODS_WH_CODE,
     replenishFromStorageCodes: [EXISTING_FINISHED_GOODS_WH_CODE, "WH-STO-COLD-1", "WH-STO-COLD-2"],
     description:
-      "Uses Stock Room (STR) as putaway destination. Configure every variant putaway rule → STR.",
+      "Vacuum and manual retail packing in Stock Room zone A. Bulk flour arrives via TO from Flour Mill; grains/millets packed in situ. FG stays in STR.",
   },
   {
-    facilityCode: "FAC-OIL",
-    facilityName: "Oil Room",
-    lines: [{ code: "LINE-OIL-MAIN", name: "Main Line" }],
-    productionWhCode: "WH-PROD-OIL",
-    productionWhName: "Oil Room — Production WH",
+    facilityCode: "WC-OIL",
+    facilityName: "Oil Extraction",
+    lines: OIL_EXTRACTION_LINES.map((l) => ({
+      code: l.code,
+      name: l.name,
+      role: l.role,
+    })),
+    productionWhCode: OIL_LOCAL_STORAGE_CODE,
+    productionWhName: "Oil Extraction — Local storage",
     putawayDestinationWhCode: EXISTING_FINISHED_GOODS_WH_CODE,
-    replenishFromStorageCodes: ["WH-STO-OILSEEDS", "WH-STO-GROUNDNUT"],
+    replenishFromStorageCodes: [
+      NEW_GODOWN_CODE,
+      BIG_GODOWN_CODE,
+      OIL_LOCAL_STORAGE_CODE,
+    ],
     description:
-      "Press on line; temporary FG on facility WH; putaway TO to finished-goods warehouse.",
+      "Six extraction lines, three filtering lines, one filling line (demand-driven variants). " +
+      "Materials from New Godown, Big Godown, and local line storage; all FG → Stock Room.",
   },
   {
-    facilityCode: "FAC-MILL",
+    facilityCode: "WC-MILL",
     facilityName: "Milling Room",
-    lines: [{ code: "LINE-MILL-MAIN", name: "Main Line" }],
+    lines: [{ code: "WC-MILL-MAIN", name: "Main Line" }],
     productionWhCode: "WH-PROD-MILL",
     productionWhName: "Milling Room — Production WH",
     putawayDestinationWhCode: EXISTING_FINISHED_GOODS_WH_CODE,
-    replenishFromStorageCodes: ["WH-STO-MILLETS", "WH-STO-OILSEEDS"],
+    replenishFromStorageCodes: [BIG_GODOWN_CODE, "WH-STO-MILLETS", "WH-STO-OILSEEDS"],
     description:
-      "Mill on line; temporary FG on facility WH; putaway TO to finished-goods warehouse.",
+      "Destone, hulling, rice and ragi lines; semi-FG on facility WH; replenish raw from Big Godown.",
   },
   {
-    facilityCode: "FAC-FILTER",
-    facilityName: "Filter Room",
-    lines: [{ code: "LINE-FILTER-MAIN", name: "Main Line" }],
-    productionWhCode: "WH-PROD-FILTER",
-    productionWhName: "Filter Room — Production WH",
+    facilityCode: "WC-MCLEAN",
+    facilityName: "Manual Cleaning Room",
+    lines: [{ code: "WC-MCLEAN-MAIN", name: "Manual Cleaning Line" }],
+    productionWhCode: "WH-PROD-MCLEAN",
+    productionWhName: "Manual Cleaning — Production WH",
     putawayDestinationWhCode: EXISTING_FINISHED_GOODS_WH_CODE,
-    replenishFromStorageCodes: ["WH-STO-FILTERMAT", "WH-STO-OILSEEDS"],
+    replenishFromStorageCodes: ["WH-PROD-MILL"],
     description:
-      "Filter on line; temporary FG on facility WH; putaway TO to finished-goods warehouse.",
+      "Manual cleaning & grading of milled semi-FG; bulk output transferred to Stock Room for retail pack.",
+  },
+  {
+    facilityCode: "WC-FLOUR",
+    facilityName: "Flour Mill",
+    lines: [{ code: "WC-FLOUR-MAIN", name: "Main Line" }],
+    productionWhCode: "WH-PROD-FLOUR",
+    productionWhName: "Flour Mill — Production WH",
+    putawayDestinationWhCode: EXISTING_FINISHED_GOODS_WH_CODE,
+    replenishFromStorageCodes: ["WH-STO-MILLETS", "WH-STO-OILSEEDS"],
+    description:
+      "Flour, spice and ravva grinding only; bulk FG transferred to Stock Room for retail packing.",
   },
 ] as const;
 

@@ -176,6 +176,12 @@ export const MobileTasks = () => {
             desc="Receive stock against open purchase orders"
           />
           <QuickLink
+            to="/m/grn-qc"
+            icon="✓"
+            title="GRN QC approval"
+            desc="Inspect and approve pending goods receipts"
+          />
+          <QuickLink
             to="/m/count"
             icon="🔢"
             title="Cycle Count / Recount"
@@ -186,6 +192,12 @@ export const MobileTasks = () => {
             icon="📋"
             title="Bulk zone stock update"
             desc="Update barcode and qty for all bins in a zone at once"
+          />
+          <QuickLink
+            to="/m/bulk-capture"
+            icon="🗂️"
+            title="Bulk capture - Zone PR"
+            desc="Scan a Zone PR bin and count for every Stock Room variant"
           />
           <QuickLink
             to="/m/returns"

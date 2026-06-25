@@ -9,6 +9,8 @@ import { customerNetOpenBalance } from "./customer-payments.js";
 import { customerAddressBody, customerAddressPatch, pincodeSchema } from "../lib/customer-address.js";
 import { generateVariantSku, generateVariantBarcode } from "../lib/tax.js";
 import { productMatchesQuery, normalizeSearchTerm, codesEqual } from "../lib/text-search.js";
+import { attachProductPipeline } from "../lib/stock-rule-pipeline.js";
+import { getProductSupplyOutlook } from "../lib/product-supply-outlook.js";
 import { createWriteStream, mkdirSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -150,24 +152,37 @@ export const catalogRoutes = async (app: FastifyInstance) => {
 
   app.get("/products", async (req) => {
     const q = (req.query as Record<string, string>) ?? {};
-    const limit = q.limit ? parseInt(q.limit, 10) : 200;
+    const limit = q.limit ? parseInt(q.limit, 10) : 1000;
     const needle = q.q ? normalizeSearchTerm(q.q) : "";
     const all = await db.product.findMany({
       where: {
+        state: { not: "inactive" },
         ...(q.type ? { type: q.type } : {}),
       },
       include: productInclude,
       orderBy: { sku: "asc" },
     });
-    if (!needle) return all.slice(0, limit);
-    return all.filter((p) => productMatchesQuery(p, needle)).slice(0, limit);
+    const filtered = needle
+      ? all.filter((p) => productMatchesQuery(p, needle)).slice(0, limit)
+      : all.slice(0, limit);
+    return attachProductPipeline(filtered);
   });
 
   app.get("/products/:id", async (req, reply) => {
     const id = (req.params as { id: string }).id;
     const p = await db.product.findUnique({ where: { id }, include: productInclude });
     if (!p) return reply.code(404).send({ error: { code: "not_found" } });
-    return p;
+    const [withPipeline] = await attachProductPipeline([p]);
+    return withPipeline;
+  });
+
+  app.get("/products/:id/supply-outlook", async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const q = (req.query as Record<string, string>) ?? {};
+    const variantId = q.variantId?.trim() || null;
+    const outlook = await getProductSupplyOutlook(id, variantId);
+    if (!outlook) return reply.code(404).send({ error: { code: "not_found" } });
+    return outlook;
   });
 
   app.get("/products/by-sku/:sku", async (req, reply) => {

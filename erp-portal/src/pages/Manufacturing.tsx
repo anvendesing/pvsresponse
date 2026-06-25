@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import {
   AlertTriangle,
   ArrowDownToLine,
@@ -14,14 +14,13 @@ import {
   Network,
   Package,
   PackageCheck,
-  Pause,
   Play,
   Plus,
   RotateCcw,
-  Square,
   TrendingUp,
   Users,
   Wrench,
+  XCircle,
 } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Card } from "@/components/common/Card";
@@ -40,10 +39,12 @@ import { EmptyState } from "@/components/common/EmptyState";
 import type { Bom, ProductionOrder } from "@/data/types";
 import { cn } from "@/lib/cn";
 import { dd, num } from "@/lib/format";
+import { moPrimaryLabel, moSecondaryLabel } from "@/lib/mo-display";
 import { NewMoModal } from "@/components/manufacturing/NewMoModal";
 import { CorrectOutputModal } from "@/components/manufacturing/CorrectOutputModal";
 import { LogOutputModal } from "@/components/manufacturing/LogOutputModal";
 import { AssignLineModal } from "@/components/manufacturing/AssignLineModal";
+import { MoWorkOrdersPanel } from "@/components/manufacturing/MoWorkOrdersPanel";
 
 const statusTone = (s: ProductionOrder["status"]) => {
   switch (s) {
@@ -57,11 +58,14 @@ const statusTone = (s: ProductionOrder["status"]) => {
       return "danger" as const;
     case "planned":
       return "neutral" as const;
+    case "cancelled":
+      return "neutral" as const;
   }
 };
 
 export const Manufacturing = () => {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const liveMo = useApi(() => api.productionOrdersWithWO(), []);
   const liveBoms = useApi(() => api.boms(), []);
   const liveWorkers = useApi(() => api.workers(), []);
@@ -77,6 +81,16 @@ export const Manufacturing = () => {
   const lines = liveLines.data?.lines ?? [];
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  // Deep-link: /manufacturing?moId=… selects that MO in the list.
+  useEffect(() => {
+    const moId = searchParams.get("moId");
+    if (!moId) return;
+    setSelectedId(moId);
+    const next = new URLSearchParams(searchParams);
+    next.delete("moId");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
   // Tabs: Orders = active MOs you're working on right now, History =
   // closed (completed/cancelled) MOs kept available for lookup without
   // cluttering the active rail, Productivity = plant/line dashboard.
@@ -91,7 +105,7 @@ export const Manufacturing = () => {
   const [errBanner, setErrBanner] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
-  // Live requirements (multi-level explosion + on-hand) for the
+  // Live requirements (direct BOM components + on-hand) for the
   // currently-selected MO. Refreshed when the selection or output
   // counts change.
   const [requirements, setRequirements] = useState<MoRequirements | null>(null);
@@ -153,10 +167,15 @@ export const Manufacturing = () => {
   const railOrders = activeTab === "history" ? closedOrders : activeOrders;
   const railLabel = activeTab === "history" ? "Closed Orders" : "Active Orders";
 
-  const order =
-    productionOrders.find((p) => p.id === selectedId) ??
-    railOrders[0] ??
-    ordersNewestFirst[0];
+  // Detail pane follows the left rail only — never show a completed MO
+  // on the Active tab because selectedId still points at it.
+  const order = useMemo(() => {
+    if (selectedId) {
+      const picked = railOrders.find((p) => p.id === selectedId);
+      if (picked) return picked;
+    }
+    return railOrders[0] ?? null;
+  }, [selectedId, railOrders]);
 
   // Fetch requirements + linked TOs when the selected MO changes.
   useEffect(() => {
@@ -199,14 +218,14 @@ export const Manufacturing = () => {
   const activeBoms = boms.filter((b) => b.active);
   const isEmpty = !loading && !errorObj && productionOrders.length === 0;
 
-  // When the user switches between Active and History, the previously
-  // selected MO may not exist in the new rail anymore — bounce the
-  // selection to the rail's top item so the detail pane keeps matching
-  // what the user actually sees.
+  // Keep selection aligned with the visible rail. Clear when empty.
   useEffect(() => {
-    if (!selectedId) return;
-    if (!railOrders.some((p) => p.id === selectedId)) {
-      setSelectedId(railOrders[0]?.id ?? null);
+    if (railOrders.length === 0) {
+      if (selectedId) setSelectedId(null);
+      return;
+    }
+    if (!selectedId || !railOrders.some((p) => p.id === selectedId)) {
+      setSelectedId(railOrders[0].id);
     }
   }, [activeTab, railOrders, selectedId]);
 
@@ -215,6 +234,14 @@ export const Manufacturing = () => {
       left={<h2 className="text-h3 font-bold">Manufacturing</h2>}
       right={
         <>
+          <Button
+            variant="outline"
+            size="sm"
+            icon={<BarChart2 size={14} />}
+            onClick={() => navigate("/manufacturing/log")}
+          >
+            Production Log
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -315,11 +342,17 @@ export const Manufacturing = () => {
       </div>
     );
   }
-  const wos = workOrders.filter((w) => w.productionOrderId === order.id);
+  const wos = order ? workOrders.filter((w) => w.productionOrderId === order.id) : [];
+  const wosNeedLine = wos.some(
+    (w) =>
+      !w.lineId &&
+      w.status !== "complete" &&
+      w.status !== "running"
+  );
   // BOMs may not have loaded (or none exist) - never crash on
   // bom.product / bom.revision; the requirements card already has
   // its own empty state for the missing data.
-  const bom = boms.find((b) => b.sku === order.sku) ?? boms[0];
+  const bom = order ? boms.find((b) => b.sku === order.sku) ?? boms[0] : boms[0];
 
   const totalActual = productionOrders.reduce((s, p) => s + p.actualQty, 0);
   const totalPlanned = productionOrders.reduce((s, p) => s + p.plannedQty, 0);
@@ -327,16 +360,21 @@ export const Manufacturing = () => {
   const inProgress = productionOrders.filter((p) => p.status === "in-progress").length;
   const delayed = productionOrders.filter((p) => p.status === "delayed").length;
 
-  const moComplete = order.status === "completed";
-  const canRelease = order.status === "planned";
+  const moComplete = order?.status === "completed";
+  const moCancelled = order ? (order.status as string) === "cancelled" : false;
+  const canRelease = order?.status === "planned";
   const canIssue =
-    !moComplete && !(requirements?.allFullyIssued ?? false);
+    !moComplete && !moCancelled && !(requirements?.allFullyIssued ?? false);
   const canLogOutput =
+    !!order &&
     !moComplete &&
+    !moCancelled &&
     (order.status === "in-progress" || order.status === "qc");
   const releaseTitle = canRelease
     ? "Check material availability at production line and create replenishment transfers if short"
-    : `Release only applies while MO is planned (current: ${order.status})`;
+    : order
+      ? `Release only applies while MO is planned (current: ${order.status})`
+      : "";
   const issueTitle = requirements?.allFullyIssued
     ? "All BOM materials are already issued for this MO"
     : moComplete
@@ -345,6 +383,7 @@ export const Manufacturing = () => {
 
   // ---- MO actions ------------------------------------------------
   const onIssueMaterials = async () => {
+    if (!order) return;
     setBusy("issue");
     try {
       const res = await api.issueMaterials(order.id, { allowShort: true });
@@ -375,6 +414,7 @@ export const Manufacturing = () => {
   const onLogOutput = () => setShowLogOutput(true);
 
   const onReleaseMo = async () => {
+    if (!order) return;
     setBusy("release");
     try {
       const res = await api.releaseMo(order.id);
@@ -398,6 +438,7 @@ export const Manufacturing = () => {
   };
 
   const onCompleteMo = async () => {
+    if (!order) return;
     if (
       !confirm(
         `Complete ${order.orderNo}? Finished goods (${num(order.actualQty)}) will be posted to inventory.`
@@ -427,6 +468,39 @@ export const Manufacturing = () => {
     }
   };
 
+  const onCancelMo = async () => {
+    if (!order) return;
+    if (
+      !confirm(
+        `Cancel ${order.orderNo}? Linked replenishment transfers will be cancelled and any issued materials will be returned to bins.`
+      )
+    )
+      return;
+    setBusy("cancel");
+    try {
+      const res = await api.cancelMo(order.id);
+      const parts = [
+        res.transfersCancelled > 0
+          ? `${res.transfersCancelled} transfer(s) cancelled`
+          : null,
+        res.issuesReversed > 0
+          ? `${res.issuesReversed} material issue(s) reversed`
+          : null,
+      ].filter(Boolean);
+      setOkBanner(
+        parts.length > 0
+          ? `MO ${res.orderNo} cancelled. ${parts.join("; ")}.`
+          : `MO ${res.orderNo} cancelled.`
+      );
+      setActiveTab("history");
+      await refreshAll();
+    } catch (e) {
+      setErrBanner((e as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const locLabel = (
     whCode: string,
     whKind: string,
@@ -434,7 +508,7 @@ export const Manufacturing = () => {
   ) => `${whCode} (${whKind}) · ${binPath}`;
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col overflow-hidden">
       <Toolbar
         left={
           <>
@@ -503,7 +577,7 @@ export const Manufacturing = () => {
       </CollapsibleStats>
 
       {/* Tab bar */}
-      <div className="border-b border-border bg-surface flex items-center px-4 gap-1">
+      <div className="border-b border-border bg-surface flex items-center px-4 gap-1 shrink-0">
         {(
           [
             {
@@ -554,15 +628,15 @@ export const Manufacturing = () => {
         ))}
       </div>
 
-      <div className="flex-1 grid grid-cols-12 min-h-0">
+      <div className="flex-1 grid grid-cols-12 min-h-0 overflow-hidden">
         {/* Left: orders list — content depends on which top tab is
             active (Active vs Closed). Newest-first within each list. */}
-        <aside className="col-span-3 bg-surface border-r border-border flex flex-col">
-          <div className="px-3 py-2 border-b border-border flex items-center justify-between">
+        <aside className="col-span-3 bg-surface border-r border-border flex flex-col min-h-0 overflow-hidden">
+          <div className="px-3 py-2 border-b border-border flex items-center justify-between shrink-0">
             <span className="text-body-sm font-bold">{railLabel}</span>
             <Chip size="sm" tone="neutral">{railOrders.length}</Chip>
           </div>
-          <div className="flex-1 overflow-y-auto">
+          <div className="flex-1 min-h-0 overflow-y-auto">
             {railOrders.length === 0 && (
               <div className="px-3 py-6 text-center text-caption text-ink-muted">
                 {activeTab === "history"
@@ -590,7 +664,10 @@ export const Manufacturing = () => {
                       {p.status}
                     </Chip>
                   </div>
-                  <div className="text-body-sm font-semibold mt-1 truncate">{p.product}</div>
+                  <div className="text-body-sm font-semibold mt-1 truncate">{moPrimaryLabel(p)}</div>
+                  {p.variantSku && (
+                    <div className="text-caption text-ink-muted truncate">{moSecondaryLabel(p)}</div>
+                  )}
                   <div className="text-caption text-ink-muted flex items-center justify-between mt-1">
                     <span className="truncate max-w-[60%]">
                       {p.facility?.name ?? p.station ?? "—"}
@@ -626,21 +703,22 @@ export const Manufacturing = () => {
             History reuses the order-detail layout so closed MOs render
             with the same context (work orders, requirements, trail). */}
         <div className="col-span-9 flex flex-col min-h-0 overflow-y-auto">
-          {(activeTab === "orders" || activeTab === "history") && (
+          {(activeTab === "orders" || activeTab === "history") &&
+            (order ? (
             <div className="p-4 space-y-4">
             <Card
               title={
                 <div className="flex items-center gap-2">
                   <span className="font-mono text-caption text-ink-muted">{order.orderNo}</span>
-                  <span>{order.product}</span>
+                  <span>{moPrimaryLabel(order)}</span>
                 </div>
               }
               subtitle={
                 <span>
-                  {order.sku} ·{" "}
+                  {moSecondaryLabel(order)} ·{" "}
                   {order.facility?.name ?? order.station ?? "—"}
-                  {order.lineId === null && !isClosedStatus(order.status) ? (
-                    <span className="ml-1 text-warning font-semibold">awaiting line</span>
+                  {wosNeedLine && !isClosedStatus(order.status) ? (
+                    <span className="ml-1 text-warning font-semibold">awaiting line / machine</span>
                   ) : order.line ? (
                     <span className="text-ink-muted"> › {order.line.name}</span>
                   ) : null}
@@ -650,15 +728,17 @@ export const Manufacturing = () => {
               actions={
                 <div className="flex items-center gap-2 flex-wrap">
                   <Chip tone={statusTone(order.status)}>{order.status}</Chip>
-                  {order.lineId === null && !isClosedStatus(order.status) && (
+                  {!isClosedStatus(order.status) && (
+                    <>
+                  {(wosNeedLine || order.lineId === null) && (
                       <Button
                         size="sm"
                         variant="outline"
                         icon={<GitBranch size={14} />}
                         onClick={() => setShowAssignLine(true)}
-                        title="Assign this MO to a production line"
+                        title="Assign production lines and machines to work orders"
                       >
-                        Assign line
+                        Assign line / machine
                       </Button>
                     )}
                   <Button
@@ -701,18 +781,23 @@ export const Manufacturing = () => {
                     icon={<RotateCcw size={14} />}
                     onClick={() => setShowCorrect(true)}
                     disabled={
-                      moComplete ||
-                      (order.actualQty === 0 &&
-                        order.scrapQty === 0 &&
-                        order.reworkQty === 0)
+                      order.actualQty === 0 &&
+                      order.scrapQty === 0 &&
+                      order.reworkQty === 0
                     }
-                    title={
-                      moComplete
-                        ? "Cannot correct after completion - finished goods are already in inventory"
-                        : "Fix wrong-logged totals (e.g. Log output clicked twice)"
-                    }
+                    title="Fix wrong-logged totals (e.g. Log output clicked twice)"
                   >
                     Correct
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    icon={<XCircle size={14} />}
+                    onClick={onCancelMo}
+                    disabled={busy === "cancel"}
+                    title="Cancel MO, reverse issued materials, and cancel replenishment transfers"
+                  >
+                    {busy === "cancel" ? "Cancelling…" : "Cancel MO"}
                   </Button>
                   <Button
                     size="sm"
@@ -720,12 +805,13 @@ export const Manufacturing = () => {
                     onClick={onCompleteMo}
                     disabled={
                       busy === "complete" ||
-                      order.status === "completed" ||
                       order.actualQty <= 0
                     }
                   >
                     {busy === "complete" ? "Closing…" : "Complete · F8"}
                   </Button>
+                    </>
+                  )}
                 </div>
               }
               accent="primary"
@@ -753,79 +839,16 @@ export const Manufacturing = () => {
               </div>
             </Card>
 
-            <Card title="Work Orders" subtitle="Stages and live progress" noPadding>
-              <div className="divide-y divide-border">
-                {wos.map((wo) => {
-                  const pct = Math.round((wo.output / wo.target) * 100);
-                  const tone =
-                    wo.status === "complete"
-                      ? "success"
-                      : wo.status === "running"
-                        ? "primary"
-                        : wo.status === "paused"
-                          ? "warning"
-                          : "neutral";
-                  return (
-                    <div key={wo.id} className="px-4 py-3 hover:bg-canvas">
-                      <div className="flex items-center gap-3">
-                        <div
-                          className={cn(
-                            "h-9 w-9 grid place-items-center rounded-md",
-                            wo.status === "running"
-                              ? "bg-primary text-white"
-                              : wo.status === "complete"
-                                ? "bg-success-soft text-success"
-                                : "bg-canvas text-ink-muted"
-                          )}
-                        >
-                          {wo.status === "running" ? (
-                            <Play size={14} />
-                          ) : wo.status === "paused" ? (
-                            <Pause size={14} />
-                          ) : wo.status === "complete" ? (
-                            <CheckCircle2 size={14} />
-                          ) : (
-                            <Square size={14} />
-                          )}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-2">
-                            <span className="font-semibold text-body-sm">{wo.station}</span>
-                            <Chip tone={tone} size="sm">{wo.status}</Chip>
-                            <span className="text-caption text-ink-muted font-mono">
-                              {wo.machine}
-                            </span>
-                          </div>
-                          <div className="text-caption text-ink-muted mt-0.5 flex items-center gap-1.5">
-                            <Users size={11} />
-                            {wo.workers.join(", ")}
-                          </div>
-                        </div>
-                        <div className="text-right tnum">
-                          <div className="text-body-sm font-bold">
-                            {num(wo.output)} / {num(wo.target)}
-                          </div>
-                          <div className="text-caption text-ink-muted">{pct}%</div>
-                        </div>
-                      </div>
-                      <div className="mt-2 h-1 bg-canvas rounded-full overflow-hidden">
-                        <div
-                          className={cn(
-                            "h-full",
-                            tone === "success"
-                              ? "bg-success"
-                              : tone === "warning"
-                                ? "bg-warning"
-                                : "bg-primary"
-                          )}
-                          style={{ width: `${pct}%` }}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </Card>
+            <MoWorkOrdersPanel
+              order={order}
+              workOrders={wos}
+              moComplete={moComplete}
+              onRefresh={refreshAll}
+              onMessage={(msg, tone) => {
+                if (tone === "err") setErrBanner(msg);
+                else setOkBanner(msg);
+              }}
+            />
 
             <Card
               title="Inventory locations"
@@ -1122,18 +1145,30 @@ export const Manufacturing = () => {
               </Card>
             )}
 
+            {(() => {
+              const moClosed = order.status === "completed" || order.status === "cancelled";
+              return (
             <Card
-              title="Material requirements (multi-level)"
+              title={moClosed ? "Materials snapshot" : "Material requirements"}
               subtitle={
-                requirements
-                  ? `For remaining ${num(requirements.plannedFor)} units · ${requirements.lines.length} raw components`
-                  : bom
-                    ? `${bom.product} · ${bom.revision}`
-                    : "Loading BOM…"
+                moClosed
+                  ? `MO ${order.status} · historical BOM consumption (read-only)`
+                  : requirements
+                    ? `For remaining ${num(requirements.plannedFor)} units · ${requirements.lines.length} BOM component(s)`
+                    : bom
+                      ? `${bom.product} · ${bom.revision}`
+                      : "Loading BOM…"
               }
               actions={
                 <div className="flex items-center gap-2">
-                  {requirements?.allFullyIssued ? (
+                  {moClosed ? (
+                    <Chip
+                      tone={order.status === "completed" ? "success" : "neutral"}
+                      icon={<CheckCircle2 size={12} />}
+                    >
+                      {order.status === "completed" ? "MO completed" : "MO cancelled"}
+                    </Chip>
+                  ) : requirements?.allFullyIssued ? (
                     <Chip tone="success" icon={<PackageCheck size={12} />}>
                       Materials issued
                     </Chip>
@@ -1146,24 +1181,38 @@ export const Manufacturing = () => {
                       All in stock
                     </Chip>
                   ) : null}
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => {
-                      setRequirements(null);
-                      if (order) {
-                        void refreshRequirements(order.id).catch(() => {});
-                      }
-                    }}
-                    title="Reload stock from bins"
-                  >
-                    Refresh
-                  </Button>
+                  {!moClosed && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => {
+                        setRequirements(null);
+                        if (order) {
+                          void refreshRequirements(order.id).catch(() => {});
+                        }
+                      }}
+                      title="Reload stock from bins"
+                    >
+                      Refresh
+                    </Button>
+                  )}
                 </div>
               }
               noPadding
             >
-              {requirements?.allFullyIssued && (
+              {!moClosed && requirements?.stockScope === "production_line" &&
+                !requirements.allFullyIssued &&
+                requirements.lines.some((l) => l.stillNeeded > 0 && l.shortage <= 0) && (
+                <div className="px-4 py-2.5 bg-blue-50 border-b border-blue-200 flex items-start gap-2 text-body-sm text-blue-900">
+                  <PackageCheck size={14} className="mt-0.5 shrink-0" />
+                  <div>
+                    Stock is at the production line after replenishment, but{" "}
+                    <strong>To issue</strong> stays until you run <strong>Issue materials</strong>{" "}
+                    (consumes from line bins into this MO).
+                  </div>
+                </div>
+              )}
+              {!moClosed && requirements?.allFullyIssued && (
                 <div className="px-4 py-2.5 bg-success-soft border-b border-success/30 flex items-start gap-2 text-body-sm text-success">
                   <PackageCheck size={14} className="mt-0.5 shrink-0" />
                   <div>
@@ -1173,7 +1222,7 @@ export const Manufacturing = () => {
                   </div>
                 </div>
               )}
-              {requirements?.anyShortage && !requirements.allFullyIssued && (() => {
+              {!moClosed && requirements?.anyShortage && !requirements.allFullyIssued && (() => {
                 const topShort = requirements.lines
                   .filter((l) => l.shortage > 0 && l.stillNeeded > 0)
                   .sort((a, b) => b.shortage - a.shortage)[0];
@@ -1227,14 +1276,20 @@ export const Manufacturing = () => {
                 <div className="col-span-2">Path</div>
                 <div className="col-span-1 text-right">Req</div>
                 <div className="col-span-1 text-right">Issued</div>
-                <div className="col-span-1 text-right">Need</div>
-                <div className="col-span-2 text-right">In bins</div>
-                <div className="col-span-1 text-right">Short</div>
+                <div className="col-span-1 text-right">{moClosed ? "—" : "To issue"}</div>
+                <div className="col-span-2 text-right">
+                  {moClosed
+                    ? "Final"
+                    : requirements?.stockScope === "production_line"
+                      ? "At line"
+                      : "In bins"}
+                </div>
+                <div className="col-span-1 text-right">{moClosed ? "Variance" : "Short"}</div>
                 <div className="col-span-1" />
               </div>
               {!requirements ? (
                 <div className="px-4 py-6 text-center text-body-sm text-ink-muted">
-                  Computing multi-level requirements…
+                  Computing material requirements…
                 </div>
               ) : requirements.lines.length === 0 ? (
                 <div className="px-4 py-6 text-center text-body-sm text-ink-muted">
@@ -1287,7 +1342,7 @@ export const Manufacturing = () => {
                           : "✓"}
                       </div>
                       <div className="col-span-1 flex justify-end">
-                        {l.shortage > 0 && l.stillNeeded > 0 && (
+                        {!moClosed && l.shortage > 0 && l.stillNeeded > 0 && (
                           <Link
                             to={`/inventory?adjust=1&from=mfg&productId=${encodeURIComponent(l.productId)}&delta=${l.shortage}`}
                             className="text-caption text-primary hover:underline whitespace-nowrap"
@@ -1302,8 +1357,36 @@ export const Manufacturing = () => {
                 })
               )}
             </Card>
+              );
+            })()}
           </div>
-        )}
+            ) : (
+              <div className="flex-1 flex items-center justify-center p-8">
+                <EmptyState
+                  empty
+                  emptyTitle={
+                    activeTab === "history" ? "No closed orders" : "No active orders"
+                  }
+                  emptyDescription={
+                    activeTab === "history"
+                      ? "Completed and cancelled MOs appear here once you close them."
+                      : "Create a manufacturing order from an active BOM, or switch to History to review closed MOs."
+                  }
+                  action={
+                    activeTab === "orders" ? (
+                      <Button
+                        size="sm"
+                        icon={<Plus size={14} />}
+                        onClick={() => setShowNewMo(true)}
+                        disabled={activeBoms.length === 0}
+                      >
+                        New manufacturing order
+                      </Button>
+                    ) : undefined
+                  }
+                />
+              </div>
+            ))}
 
           {activeTab === "productivity" && (
             <div className="p-4 grid grid-cols-2 gap-4 items-start">
@@ -1385,6 +1468,7 @@ export const Manufacturing = () => {
                 )}
                 <div className="divide-y divide-border">
                   {lines.map((line) => {
+                    const machines = line.machines ?? [];
                     const utilTone =
                       line.utilisationPct === null
                         ? "neutral"
@@ -1393,7 +1477,7 @@ export const Manufacturing = () => {
                           : line.utilisationPct >= 30
                             ? "warning"
                             : "neutral";
-                    const lineRunning = line.machines.some(
+                    const lineRunning = machines.some(
                       (m) => m.status === "running" || m.busy
                     );
                     return (
@@ -1441,10 +1525,10 @@ export const Manufacturing = () => {
                           </div>
                         )}
                         <div className="space-y-1">
-                          {line.machines.length === 0 ? (
+                          {machines.length === 0 ? (
                             <div className="text-caption text-ink-muted">No machines configured.</div>
                           ) : (
-                            line.machines.map((m) => {
+                            machines.map((m) => {
                               const st =
                                 m.status === "running"
                                   ? "success"
@@ -1497,7 +1581,7 @@ export const Manufacturing = () => {
           }}
         />
       )}
-      {showCorrect && (
+      {showCorrect && order && (
         <CorrectOutputModal
           order={{
             id: order.id,
@@ -1516,7 +1600,7 @@ export const Manufacturing = () => {
           }}
         />
       )}
-      {showLogOutput && (
+      {showLogOutput && order && (
         <LogOutputModal
           order={{
             id: order.id,

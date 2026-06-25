@@ -279,6 +279,7 @@ export const billingRoutes = async (app: FastifyInstance) => {
         },
       });
       for (const rule of rules) {
+        if (!rule.monitorBinId) continue;
         const monitor = await db.bin.findUnique({
           where: { id: rule.monitorBinId },
         });

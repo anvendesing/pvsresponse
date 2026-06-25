@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Prakruthivanam Manufacturing</string>
+    <string name="title_activity_main">Prakruthivanam Manufacturing</string>
+    <string name="package_name">com.prakruthivanam.manufacturing</string>
+    <string name="custom_url_scheme">com.prakruthivanam.manufacturing</string>
+</resources>

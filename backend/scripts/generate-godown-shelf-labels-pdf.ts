@@ -15,11 +15,11 @@ import { fileURLToPath } from "node:url";
 import PDFDocument from "pdfkit";
 import bwipjs from "bwip-js";
 import { PrismaClient } from "@prisma/client";
-import { binCodeFromRow } from "../src/lib/codes.js";
+import { shelfCodeFromRow } from "../src/lib/codes.js";
 import {
   GODOWN_LAYOUTS,
   godownLayoutByCode,
-  shelfBinRows,
+  shelfRows,
 } from "../src/lib/godown-layouts.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -129,7 +129,6 @@ interface LabelRow {
   code: string;
   zone: string;
   shelf: string;
-  bin: string;
 }
 
 function shelfDisplayLabel(zone: string, shelf: string): string {
@@ -163,35 +162,18 @@ async function loadLabels(db: PrismaClient): Promise<LabelRow[]> {
       );
     }
 
-    const plannedKeys = new Set(
-      shelfBinRows(def.zones).map((r) => `${r.zone}/${r.shelf}/${r.bin}`)
-    );
-
-    const bins = await db.bin.findMany({
-      where: { warehouseId: wh.id },
-      orderBy: [{ zone: "asc" }, { shelf: "asc" }, { bin: "asc" }],
-    });
-
-    for (const b of bins) {
-      const key = `${b.zone}/${b.shelf}/${b.bin}`;
-      if (!plannedKeys.has(key)) continue;
-      let code = b.code;
-      if (!code) {
-        code = binCodeFromRow(b, wh);
-        await db.bin.update({ where: { id: b.id }, data: { code } });
-      }
+    for (const row of shelfRows(def.zones)) {
       labels.push({
         roomName: wh.name,
-        code,
-        zone: b.zone,
-        shelf: b.shelf,
-        bin: b.bin,
+        code: shelfCodeFromRow(row, wh),
+        zone: row.zone,
+        shelf: row.shelf,
       });
     }
   }
 
   if (labels.length === 0) {
-    throw new Error("No shelf bins found. Run: npm run db:seed-godowns:dev");
+    throw new Error("No shelves in layout. Check GODOWN_LAYOUTS.");
   }
   return labels;
 }

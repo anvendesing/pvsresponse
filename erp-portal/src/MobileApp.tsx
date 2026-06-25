@@ -33,6 +33,11 @@ import {
 } from "./mobile/screens/MobileGrn";
 import { MobileCount } from "./mobile/screens/MobileCount";
 import { MobileBulkZone } from "./mobile/screens/MobileBulkZone";
+import { MobileBulkCapture } from "./mobile/screens/MobileBulkCapture";
+import {
+  MobileGrnQcDetail,
+  MobileGrnQcList,
+} from "./mobile/components/GrnMobileHelpers";
 import {
   MobileReturnList,
   MobileReturnDetail,
@@ -58,8 +63,11 @@ export const MobileApp = () => (
       <Route path="/m/profile" element={<MobileProfile />} />
       <Route path="/m/grn" element={<MobileGrnList />} />
       <Route path="/m/grn/:poId" element={<MobileGrnReceive />} />
+      <Route path="/m/grn-qc" element={<MobileGrnQcList />} />
+      <Route path="/m/grn-qc/:grnId" element={<MobileGrnQcDetail />} />
       <Route path="/m/count" element={<MobileCount />} />
       <Route path="/m/bulk-zone" element={<MobileBulkZone />} />
+      <Route path="/m/bulk-capture" element={<MobileBulkCapture />} />
       <Route path="/m/returns" element={<MobileReturnList />} />
       <Route path="/m/returns/:id" element={<MobileReturnDetail />} />
     </Route>

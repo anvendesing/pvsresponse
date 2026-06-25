@@ -8,6 +8,7 @@ import { Inventory } from "./pages/Inventory";
 import { Warehouse } from "./pages/Warehouse";
 import { Transfers } from "./pages/Transfers";
 import { Manufacturing } from "./pages/Manufacturing";
+import { ProductionLog } from "./pages/ProductionLog";
 import { Boms } from "./pages/Boms";
 import { Procurement } from "./pages/Procurement";
 import { Productivity } from "./pages/Productivity";
@@ -48,9 +49,15 @@ import { MobileLocation } from "./mobile/screens/MobileLocation";
 import { MobileBin } from "./mobile/screens/MobileBin";
 import { MobileProfile } from "./mobile/screens/MobileProfile";
 import { MobileGrnList, MobileGrnReceive } from "./mobile/screens/MobileGrn";
+import {
+  MobileGrnQcDetail,
+  MobileGrnQcList,
+} from "./mobile/components/GrnMobileHelpers";
 import { MobileCount } from "./mobile/screens/MobileCount";
 import { MobileBulkZone } from "./mobile/screens/MobileBulkZone";
+import { MobileBulkCapture } from "./mobile/screens/MobileBulkCapture";
 import { MobileReturnList, MobileReturnDetail } from "./mobile/screens/MobileReturn";
+import { mfgRoutes } from "./manufacturing-mobile/MfgApp";
 import { Store } from "./pages/Store";
 
 const App = () => {
@@ -95,13 +102,18 @@ const App = () => {
         {/* GRN / receiving */}
         <Route path="/m/grn" element={<MobileGrnList />} />
         <Route path="/m/grn/:poId" element={<MobileGrnReceive />} />
+        <Route path="/m/grn-qc" element={<MobileGrnQcList />} />
+        <Route path="/m/grn-qc/:grnId" element={<MobileGrnQcDetail />} />
         {/* Bin cycle count / stock adjustment */}
         <Route path="/m/count" element={<MobileCount />} />
         <Route path="/m/bulk-zone" element={<MobileBulkZone />} />
+        <Route path="/m/bulk-capture" element={<MobileBulkCapture />} />
         {/* Returns processing */}
         <Route path="/m/returns" element={<MobileReturnList />} />
         <Route path="/m/returns/:id" element={<MobileReturnDetail />} />
       </Route>
+      {/* Manufacturing room PWA - separate shell pinned to a ProductionFacility. */}
+      {mfgRoutes}
       <Route
         element={
           <WorkspaceProvider>
@@ -132,6 +144,7 @@ const App = () => {
         <Route path="/warehouse-audit" element={<RequireRole roles={["warehouse"]}><WarehouseAudit /></RequireRole>} />
 
         <Route path="/manufacturing"  element={<RequireRole roles={["supervisor"]}><Manufacturing /></RequireRole>} />
+        <Route path="/manufacturing/log" element={<RequireRole roles={["supervisor"]}><ProductionLog /></RequireRole>} />
         <Route path="/manufacturing/boms/new" element={<RequireRole roles={["supervisor"]}><Boms /></RequireRole>} />
         <Route path="/manufacturing/boms/:bomId" element={<RequireRole roles={["supervisor"]}><Boms /></RequireRole>} />
         <Route path="/manufacturing/boms" element={<RequireRole roles={["supervisor"]}><Boms /></RequireRole>} />

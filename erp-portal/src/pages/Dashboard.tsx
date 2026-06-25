@@ -5,12 +5,10 @@ import {
   CircleAlert,
   Clock,
   Factory,
-  IndianRupee,
   KanbanSquare,
   Package,
   PackageCheck,
   ShoppingCart,
-  TrendingUp,
   Users,
 } from "lucide-react";
 import { Link } from "react-router-dom";
@@ -111,9 +109,6 @@ export const Dashboard = () => {
   const salesTrend = liveSales.data ?? [];
   const stationLoad = liveStations.data ?? [];
 
-  const totalSales = live.data?.sales ?? salesTrend.reduce((s, x) => s + x.sales, 0);
-  const totalCogs = salesTrend.reduce((s, x) => s + x.cogs, 0);
-  const margin = ((totalSales - totalCogs) / Math.max(1, totalSales)) * 100;
   const planned = live.data?.productionTotals._sum.plannedQty ?? 0;
   const actual = live.data?.productionTotals._sum.actualQty ?? 0;
   const efficiency = (actual / Math.max(1, planned)) * 100;
@@ -143,21 +138,7 @@ export const Dashboard = () => {
       </div>
 
       {/* KPI Strip */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
-        <Kpi
-          label="Net Sales (14d)"
-          value={inr(totalSales)}
-          delta={8.2}
-          icon={<IndianRupee size={16} />}
-          accent="primary"
-        />
-        <Kpi
-          label="Gross Margin"
-          value={`${margin.toFixed(1)}%`}
-          delta={1.4}
-          icon={<TrendingUp size={16} />}
-          accent="success"
-        />
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <Kpi
           label="Production Eff."
           value={`${efficiency.toFixed(1)}%`}

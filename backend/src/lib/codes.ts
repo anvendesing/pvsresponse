@@ -6,8 +6,9 @@
 // Two bin formats:
 //
 // **Compact** (when Warehouse.scanPrefix is set, e.g. WSP):
-//   WSP.AS05.11   → zone A, shelf S05, bin 11
-//   Merges zone + shelf into one segment so the barcode stays short.
+//   WSP.A         → zone A
+//   WSP.AS05      → shelf (zone A, shelf S05)
+//   WSP.AS05.11   → bin (zone A, shelf S05, bin 11)
 //
 // **Legacy** (full warehouse code):
 //   B.WH-PROD-SOAP.A.S05.11
@@ -119,6 +120,30 @@ export const encodeBin = (
   return `B.${wh}.${z}.${s}.${b}`;
 };
 
+/** Compact zone code: WSP.A (single-letter zones). */
+export const encodeZoneCompact = (scanPrefix: string, zone: string) => {
+  const p = norm(scanPrefix);
+  const z = norm(zone);
+  validateScanPrefix(p);
+  validateLabel("zone", z);
+  return `${p}.${z}`;
+};
+
+/** Compact shelf code: WSP.AS05 (zone + shelf merged; no bin segment). */
+export const encodeShelfCompact = (
+  scanPrefix: string,
+  zone: string,
+  shelf: string
+) => {
+  const p = norm(scanPrefix);
+  const z = norm(zone);
+  const s = norm(shelf);
+  validateScanPrefix(p);
+  validateLabel("zone", z);
+  validateLabel("shelf", s);
+  return `${p}.${z}${s}`;
+};
+
 /** Compact bin code: WSP.AS05.11 (zone + shelf merged after prefix). */
 export const encodeBinCompact = (
   scanPrefix: string,
@@ -137,6 +162,41 @@ export const encodeBinCompact = (
   return `${p}.${z}${s}.${b}`;
 };
 
+/** Compact bin with explicit zone: WSP.LINE.01.01 (multi-char zones). */
+export const encodeBinCompactExplicit = (
+  scanPrefix: string,
+  zone: string,
+  shelf: string,
+  bin: string
+) => {
+  const p = norm(scanPrefix);
+  const z = norm(zone);
+  const s = norm(shelf);
+  const b = norm(bin);
+  validateScanPrefix(p);
+  validateLabel("zone", z);
+  validateLabel("shelf", s);
+  validateLabel("bin", b);
+  return `${p}.${z}.${s}.${b}`;
+};
+
+/** Compact shelf with explicit zone: CL1.STG.01 (multi-char zones). */
+export const encodeShelfCompactExplicit = (
+  scanPrefix: string,
+  zone: string,
+  shelf: string
+) => {
+  const p = norm(scanPrefix);
+  const z = norm(zone);
+  const s = norm(shelf);
+  validateScanPrefix(p);
+  validateLabel("zone", z);
+  validateLabel("shelf", s);
+  return `${p}.${z}.${s}`;
+};
+
+const useMergedCompact = (zone: string) => norm(zone).length === 1;
+
 // Parse location codes. Returns null if the string doesn't match any
 // known shape — callers fall through to Bin.code lookup or SKU/barcode.
 export const decodeLocation = (raw: string): LocationCode | null => {
@@ -147,7 +207,59 @@ export const decodeLocation = (raw: string): LocationCode | null => {
 
   const [prefix, ...rest] = parts;
 
-  // -------- Compact bin: WSP.AS05.11 (3 parts)
+  // -------- Compact zone: WSP.A (2 parts, zone only — single segment)
+  if (
+    parts.length === 2 &&
+    SCAN_PREFIX_RE.test(prefix) &&
+    rest.length === 1 &&
+    LABEL_RE.test(rest[0]!) &&
+    rest[0]!.length === 1
+  ) {
+    return {
+      kind: "zone",
+      warehouseCode: prefix,
+      zone: rest[0]!,
+    };
+  }
+
+  // -------- Compact shelf: WSP.AS05 (2 parts, zone + shelf merged)
+  if (
+    parts.length === 2 &&
+    SCAN_PREFIX_RE.test(prefix) &&
+    rest.length === 1 &&
+    LABEL_RE.test(rest[0]!)
+  ) {
+    const locSeg = rest[0]!;
+    if (locSeg.length < 2) return null;
+    const zone = locSeg[0]!;
+    const shelf = locSeg.slice(1);
+    if (!LABEL_RE.test(zone) || !LABEL_RE.test(shelf)) return null;
+    return {
+      kind: "shelf",
+      warehouseCode: prefix,
+      zone,
+      shelf,
+    };
+  }
+
+  // -------- Compact shelf (explicit zone): CL1.STG.01 (3 parts)
+  if (
+    parts.length === 3 &&
+    SCAN_PREFIX_RE.test(prefix) &&
+    rest.length === 2 &&
+    rest[0]!.length > 1 &&
+    LABEL_RE.test(rest[0]!) &&
+    LABEL_RE.test(rest[1]!)
+  ) {
+    return {
+      kind: "shelf",
+      warehouseCode: prefix,
+      zone: rest[0]!,
+      shelf: rest[1]!,
+    };
+  }
+
+  // -------- Compact bin: WSP.AS05.11 (3 parts, single-letter zone merged)
   if (
     parts.length === 3 &&
     SCAN_PREFIX_RE.test(prefix) &&
@@ -159,7 +271,8 @@ export const decodeLocation = (raw: string): LocationCode | null => {
     if (locSeg.length < 2) return null;
     const zone = locSeg[0]!;
     const shelf = locSeg.slice(1);
-    if (!LABEL_RE.test(zone) || !LABEL_RE.test(shelf)) return null;
+    if (zone.length !== 1 || !LABEL_RE.test(zone) || !LABEL_RE.test(shelf))
+      return null;
     return {
       kind: "bin",
       warehouseCode: prefix,
@@ -221,13 +334,46 @@ export const decodeLocation = (raw: string): LocationCode | null => {
 export const isScanPrefixSegment = (segment: string): boolean =>
   SCAN_PREFIX_RE.test(norm(segment));
 
+export const zoneCodeFromRow = (
+  zone: string,
+  warehouse: WarehouseCodeInput
+): string => {
+  const { code: whCode, scanPrefix } = warehouseParts(warehouse);
+  if (scanPrefix && norm(zone).length === 1) {
+    return encodeZoneCompact(scanPrefix, zone);
+  }
+  return encodeZone(whCode, zone);
+};
+
+export const shelfCodeFromRow = (
+  row: { zone: string; shelf: string },
+  warehouse: WarehouseCodeInput
+): string => {
+  const { code: whCode, scanPrefix } = warehouseParts(warehouse);
+  if (scanPrefix) {
+    if (useMergedCompact(row.zone)) {
+      return encodeShelfCompact(scanPrefix, row.zone, row.shelf);
+    }
+    return encodeShelfCompactExplicit(scanPrefix, row.zone, row.shelf);
+  }
+  return encodeShelf(whCode, row.zone, row.shelf);
+};
+
 export const binCodeFromRow = (
   bin: { zone: string; shelf: string; bin: string },
   warehouse: WarehouseCodeInput
 ): string => {
   const { code: whCode, scanPrefix } = warehouseParts(warehouse);
   if (scanPrefix) {
-    return encodeBinCompact(scanPrefix, bin.zone, bin.shelf, bin.bin);
+    if (useMergedCompact(bin.zone)) {
+      return encodeBinCompact(scanPrefix, bin.zone, bin.shelf, bin.bin);
+    }
+    return encodeBinCompactExplicit(
+      scanPrefix,
+      bin.zone,
+      bin.shelf,
+      bin.bin
+    );
   }
   return encodeBin(whCode, bin.zone, bin.shelf, bin.bin);
 };

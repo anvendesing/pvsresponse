@@ -412,22 +412,128 @@ export const fulfilmentRoutes = async (app: FastifyInstance) => {
       //   sails through picking when only sibling variants are stocked.
       const issues: { itemId: string; reason: string }[] = [];
       const variantUsage = new Map<string, number>();
+      // Track in-place bin reassignments so we persist them before
+      // incrementing reservedQty / completing.
+      const reassigned: Array<{ itemId: string; oldBinId: string | null; newBinId: string; binLabel: string }> = [];
+      // Find a bin for this pli that has enough free qty (excluding
+      // our own SO reservation on it). Used both for the "no bin
+      // assigned" path and the sibling-reassign fallback below. When
+      // warehouseId is null we search across all warehouses — pick
+      // lists in this codebase don't carry a warehouse ref, so on the
+      // unassigned-bin path we cast wide.
+      const findBinFor = async (
+        warehouseId: string | null,
+        productId: string | null,
+        variantId: string | null,
+        salesOrderItemId: string,
+        qtyPicked: number,
+        excludeBinId: string | null
+      ) => {
+        if (!productId) return null;
+        const candidates = await db.bin.findMany({
+          where: {
+            ...(warehouseId ? { warehouseId } : {}),
+            productId,
+            ...(variantId ? { variantId } : {}),
+            ...(excludeBinId ? { NOT: { id: excludeBinId } } : {}),
+            qty: { gt: 0 },
+          },
+          orderBy: [{ qty: "desc" }],
+        });
+        for (const cand of candidates) {
+          const candOurs = await db.salesOrderReservation.aggregate({
+            where: { salesOrderItemId, binId: cand.id },
+            _sum: { qty: true },
+          });
+          const candFree =
+            cand.qty - Math.max(0, cand.reservedQty - (candOurs._sum.qty ?? 0));
+          if (candFree + 1e-6 >= qtyPicked) return cand;
+        }
+        return null;
+      };
+
       for (const it of positives) {
         if (!it.binId) {
-          issues.push({ itemId: it.id, reason: "no_bin_assigned" });
-          continue;
+          // Try to auto-assign a bin. Most common cause of an
+          // unassigned binId is a pick list built before any bin had
+          // stock for this variant — by the time the operator picks,
+          // a bin does have it. Search any warehouse.
+          const picked = await findBinFor(
+            null,
+            it.productId,
+            it.variantId,
+            it.salesOrderItemId,
+            it.qtyPicked,
+            null
+          );
+          if (!picked) {
+            issues.push({
+              itemId: it.id,
+              reason: "no bin assigned and no bin in the warehouse has enough free qty for this line",
+            });
+            continue;
+          }
+          await db.pickListItem.update({
+            where: { id: it.id },
+            data: { binId: picked.id },
+          });
+          reassigned.push({
+            itemId: it.id,
+            oldBinId: null,
+            newBinId: picked.id,
+            binLabel: `${picked.zone}/${picked.shelf}/${picked.bin}`,
+          });
+          it.binId = picked.id;
         }
         const bin = await db.bin.findUnique({ where: { id: it.binId } });
         if (!bin) {
           issues.push({ itemId: it.id, reason: "bin_not_found" });
           continue;
         }
-        const free = bin.qty - bin.reservedQty;
-        if (free < it.qtyPicked) {
-          issues.push({
-            itemId: it.id,
-            reason: `bin ${bin.bin} only has ${free} free (qty ${bin.qty}, reserved ${bin.reservedQty})`,
-          });
+        // Exclude THIS SO line's own SO-level reservation on this bin
+        // from reservedQty — at /complete the pick is about to take
+        // over that reservation, so it should count as ours, not as a
+        // competing commitment. Without this, an operator who recounts
+        // and corrects a bin downward to match a hard reservation
+        // (qty == reservedQty) sees free == 0 and can't complete even
+        // though the reservation belongs to this very pick.
+        const ourReservation = await db.salesOrderReservation.aggregate({
+          where: { salesOrderItemId: it.salesOrderItemId, binId: it.binId },
+          _sum: { qty: true },
+        });
+        const ourReservedHere = ourReservation._sum.qty ?? 0;
+        const free = bin.qty - Math.max(0, bin.reservedQty - ourReservedHere);
+        if (free + 1e-6 < it.qtyPicked) {
+          // Auto-reassign: look for a sibling bin (same product /
+          // variant / warehouse) that has enough free qty. This makes
+          // "I corrected stock and another bin has it" recover
+          // automatically instead of dead-ending the operator.
+          const picked = await findBinFor(
+            bin.warehouseId,
+            bin.productId,
+            it.variantId ?? bin.variantId ?? null,
+            it.salesOrderItemId,
+            it.qtyPicked,
+            bin.id
+          );
+          if (picked) {
+            await db.pickListItem.update({
+              where: { id: it.id },
+              data: { binId: picked.id },
+            });
+            reassigned.push({
+              itemId: it.id,
+              oldBinId: bin.id,
+              newBinId: picked.id,
+              binLabel: `${picked.zone}/${picked.shelf}/${picked.bin}`,
+            });
+            it.binId = picked.id;
+          } else {
+            issues.push({
+              itemId: it.id,
+              reason: `bin ${bin.bin} only has ${Math.max(0, free)} free (qty ${bin.qty}, reserved ${bin.reservedQty}). No sibling bin has enough either — recount or amend.`,
+            });
+          }
         }
         if (it.variantId) {
           variantUsage.set(
@@ -469,6 +575,31 @@ export const fulfilmentRoutes = async (app: FastifyInstance) => {
         const otherUsage = new Map(
           inFlight.map((r) => [r.variantId!, r._sum.qtyPicked ?? 0])
         );
+        // Self-healing cache: if v.stockOnHand looks short, sum the
+        // variant's bins to see whether physical stock has actually
+        // moved past the cached counter (e.g. a positive cycle-count
+        // landed in a bin but the recompute step missed the
+        // ProductVariant row). When bin sum is higher, we trust it,
+        // update the counter, and proceed.
+        const refreshVariantSoh = async (variantId: string, sku: string, fallback: number) => {
+          const sum = await db.bin.aggregate({
+            where: { variantId },
+            _sum: { qty: true },
+          });
+          const fromBins = sum._sum.qty ?? 0;
+          if (fromBins > fallback) {
+            await db.productVariant.update({
+              where: { id: variantId },
+              data: { stockOnHand: fromBins },
+            });
+            req.log?.info(
+              { variantId, sku, before: fallback, after: fromBins },
+              "pick complete: refreshed variant.stockOnHand from bins"
+            );
+            return fromBins;
+          }
+          return fallback;
+        };
         for (const it of positives) {
           if (!it.variantId) continue;
           const v = vMap.get(it.variantId);
@@ -476,12 +607,16 @@ export const fulfilmentRoutes = async (app: FastifyInstance) => {
           const usedHere = variantUsage.get(it.variantId) ?? 0;
           const usedElsewhere = otherUsage.get(it.variantId) ?? 0;
           const usedTotal = usedHere + usedElsewhere;
-          if (usedTotal > (v.stockOnHand ?? 0) + 1e-6) {
+          let soh = v.stockOnHand ?? 0;
+          if (usedTotal > soh + 1e-6) {
+            soh = await refreshVariantSoh(it.variantId, v.sku, soh);
+          }
+          if (usedTotal > soh + 1e-6) {
             const elsewhereNote =
               usedElsewhere > 0 ? `; ${usedElsewhere} committed by other pick lists` : "";
             issues.push({
               itemId: it.id,
-              reason: `variant ${v.sku} only has ${v.stockOnHand ?? 0} on hand (this pick wants ${usedHere}${elsewhereNote})`,
+              reason: `variant ${v.sku} only has ${soh} on hand (this pick wants ${usedHere}${elsewhereNote})`,
             });
           }
         }
@@ -491,10 +626,16 @@ export const fulfilmentRoutes = async (app: FastifyInstance) => {
           error: {
             code: "pick_blocked",
             message:
-              "Insufficient stock to complete this pick. Recount the bin or amend the order.",
+              "Insufficient stock to complete this pick. Recount the bin, move stock from a sibling bin, or amend the order.",
             details: issues,
           },
         });
+      }
+      if (reassigned.length > 0) {
+        req.log?.info(
+          { pickListId: id, reassigned },
+          "pick complete: auto-reassigned items to sibling bins with stock"
+        );
       }
       for (const it of positives) {
         if (it.binId) {

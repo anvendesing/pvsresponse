@@ -80,8 +80,9 @@ Without a rule + bin, **MO complete** returns `no_putaway_bin` / `no_receive_bin
 |-------------|---------------|------------------------------------------|
 | Snacks Room | `WH-PROD-SNACKS` | Stock Room `STR` |
 | Soap Room | `WH-PROD-SOAP` | Stock Room `STR` |
-| Vacuum Packing | `WH-PROD-VACUUM` | Stock Room `STR` |
-| Oil Room | `WH-PROD-OIL` | Stock Room `STR` |
+| Vacuum Packing | `WC-VACUUM` → **Stock Room `STR` zone A** (no separate prod WH) | Stock Room `STR` |
+| Oil Extraction | `WC-OIL` → `WH-PROD-OIL` (local) | Stock Room `STR` |
+| Replenish | New Godown `WH-GDNW`, Big Godown `WH-STOR`, local `WH-PROD-OIL` | MO release TO |
 | Milling Room | `WH-PROD-MILL` | Stock Room `STR` |
 | Filter Room | `WH-PROD-FILTER` | Stock Room `STR` |
 

@@ -9,15 +9,28 @@ type ProductSearchRow = {
   name: string;
   sku: string;
   barcode: string;
-  variants: Array<{ sku: string; barcode: string | null }>;
+  category?: { name: string } | null;
+  variants: Array<{
+    sku: string;
+    barcode: string | null;
+    size?: string | null;
+    color?: string | null;
+    grade?: string | null;
+  }>;
 };
 
 export const productMatchesQuery = (p: ProductSearchRow, needle: string): boolean =>
   textIncludes(p.name, needle) ||
   textIncludes(p.sku, needle) ||
   textIncludes(p.barcode, needle) ||
+  textIncludes(p.category?.name, needle) ||
   p.variants.some(
-    (v) => textIncludes(v.sku, needle) || textIncludes(v.barcode, needle)
+    (v) =>
+      textIncludes(v.sku, needle) ||
+      textIncludes(v.barcode, needle) ||
+      textIncludes(v.size, needle) ||
+      textIncludes(v.color, needle) ||
+      textIncludes(v.grade, needle)
   );
 
 export const codesEqual = (a: string, b: string): boolean =>
