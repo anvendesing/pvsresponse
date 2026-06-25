@@ -4956,6 +4956,9 @@ export const api = {
         binId: string | null;
         binCode: string | null;
         binQty: number;
+        binZone: string | null;
+        binWarehouseCode: string | null;
+        binWarehouseName: string | null;
       }>;
     }>("/zone-pr-variants"),
 

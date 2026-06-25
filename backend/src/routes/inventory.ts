@@ -55,17 +55,18 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
   // GET /zone-pr-variants
   // -----------------------------------------------------------------
   // Powers the mobile "Bulk capture — Zone PR" workflow. Returns the
-  // full list of variants that should land in Stock Room (STR) Zone PR
-  // per the active putaway rules, plus each variant's CURRENT capture
-  // state:
-  //   - status "captured" means a Zone PR bin already holds qty > 0
-  //     for that variant.
-  //   - status "pending"  means no Zone PR bin holds stock yet.
-  // The mobile UI uses this single payload to render Pending vs.
-  // Captured tabs without any extra round-trips. The "Clear & redo"
-  // action on the Captured tab calls the existing POST /bins/:id/recount
-  // with qtyAfter=0, which flips the variant back to "pending" on the
-  // next refresh.
+  // full list of variants whose putaway rules target Stock Room (STR)
+  // Zone PR, plus each variant's CURRENT capture state.
+  //
+  // IMPORTANT: a variant counts as "captured" as soon as ANY bin (in
+  // any warehouse / any zone) holds qty > 0 for it. The screen is a
+  // physical audit — operators scan whichever bin currently holds the
+  // stock, which is often NOT Zone PR yet. We surface the captured
+  // bin's warehouse + zone so the UI can show where it actually
+  // landed, but we do not force the scan to be in Zone PR.
+  //
+  // "Clear & redo" still calls POST /bins/:id/recount with qtyAfter=0
+  // and flips the variant back to "pending" on the next refresh.
   app.get("/zone-pr-variants", { preHandler: [app.authenticate] }, async () => {
     const strWh = await db.warehouse.findUnique({
       where: { code: "STR" },
@@ -111,37 +112,73 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
       },
     });
 
-    const bins = await db.bin.findMany({
-      where: { warehouseId: strWh.id, zone: "PR" },
-      select: {
-        id: true,
-        code: true,
-        zone: true,
-        shelf: true,
-        bin: true,
-        productId: true,
-        variantId: true,
-        qty: true,
-      },
-    });
+    // Collect the full set of variant + parent product ids first so we
+    // can fetch their current bin assignments in a single round-trip
+    // (across every warehouse/zone, not just STR.PR).
+    const wantedVariantIds = new Set<string>();
+    const wantedProductIds = new Set<string>();
+    for (const rule of rules) {
+      const targets =
+        rule.variantId && rule.variant ? [rule.variant] : rule.product.variants;
+      for (const v of targets) wantedVariantIds.add(v.id);
+      wantedProductIds.add(rule.product.id);
+    }
 
-    // Index bins by variantId and by productId (for parent-product bins).
-    const binByVariant = new Map<
-      string,
-      { id: string; code: string | null; qty: number }
-    >();
-    const binByProduct = new Map<
-      string,
-      { id: string; code: string | null; qty: number }
-    >();
+    const bins =
+      wantedVariantIds.size + wantedProductIds.size === 0
+        ? []
+        : await db.bin.findMany({
+            where: {
+              OR: [
+                { variantId: { in: Array.from(wantedVariantIds) } },
+                {
+                  productId: { in: Array.from(wantedProductIds) },
+                  variantId: null,
+                },
+              ],
+            },
+            select: {
+              id: true,
+              code: true,
+              zone: true,
+              shelf: true,
+              bin: true,
+              productId: true,
+              variantId: true,
+              qty: true,
+              warehouse: { select: { id: true, code: true, name: true } },
+            },
+          });
+
+    type BinHit = {
+      id: string;
+      code: string | null;
+      qty: number;
+      zone: string;
+      warehouseCode: string;
+      warehouseName: string;
+    };
+
+    // Index bins by variantId and by productId (parent fallback). Keep
+    // the bin with the largest qty so multi-bin variants surface the
+    // biggest stash on the row.
+    const binByVariant = new Map<string, BinHit>();
+    const binByProduct = new Map<string, BinHit>();
     for (const b of bins) {
-      const entry = { id: b.id, code: b.code, qty: b.qty };
+      const hit: BinHit = {
+        id: b.id,
+        code: b.code,
+        qty: b.qty,
+        zone: b.zone,
+        warehouseCode: b.warehouse.code,
+        warehouseName: b.warehouse.name,
+      };
       if (b.variantId) {
         const prev = binByVariant.get(b.variantId);
-        if (!prev || b.qty > prev.qty) binByVariant.set(b.variantId, entry);
+        if (!prev || b.qty > prev.qty) binByVariant.set(b.variantId, hit);
       } else if (b.productId) {
         const prev = binByProduct.get(b.productId);
-        if (!prev || b.qty > prev.qty) binByProduct.set(b.productId, entry);
+        if (!prev || b.qty > prev.qty) binByProduct.set(b.productId, hit);
       }
     }
 
@@ -160,6 +197,9 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
       binId: string | null;
       binCode: string | null;
       binQty: number;
+      binZone: string | null;
+      binWarehouseCode: string | null;
+      binWarehouseName: string | null;
     };
 
     const out: VariantRow[] = [];
@@ -188,6 +228,9 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
           binId: bin?.id ?? null,
           binCode: bin?.code ?? null,
           binQty: bin?.qty ?? 0,
+          binZone: bin?.zone ?? null,
+          binWarehouseCode: bin?.warehouseCode ?? null,
+          binWarehouseName: bin?.warehouseName ?? null,
         });
       }
     }

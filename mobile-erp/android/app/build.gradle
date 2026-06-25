@@ -7,8 +7,8 @@ android {
         applicationId "com.prakruthivanam.warehouse"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 8
-        versionName "1.5.0"
+        versionCode 9
+        versionName "1.5.1"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         // Only ship arm64-v8a native libs. Every Android device sold
         // since 2017 is 64-bit ARM; dropping armeabi-v7a/x86/x86_64

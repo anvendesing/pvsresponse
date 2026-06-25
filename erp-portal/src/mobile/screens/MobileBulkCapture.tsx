@@ -34,6 +34,9 @@ interface VariantRow {
   binId: string | null;
   binCode: string | null;
   binQty: number;
+  binZone: string | null;
+  binWarehouseCode: string | null;
+  binWarehouseName: string | null;
 }
 
 interface ZonePrPayload {
@@ -139,8 +142,10 @@ export const MobileBulkCapture = () => {
     setScanError(null);
   };
 
-  // Scanned a bin barcode - validate it lives in STR Zone PR before we
-  // accept it (a wrong-warehouse bin would be a silent disaster).
+  // Scanned a bin barcode - validate that the code resolves to an
+  // actual bin. Variants don't have to live in Zone PR - they can be
+  // anywhere (different warehouse, different zone) and this screen is
+  // just recording where they ACTUALLY are right now.
   const applyBinScan = async (raw: string) => {
     setScannerOpen(false);
     const code = raw.trim();
@@ -150,28 +155,11 @@ export const MobileBulkCapture = () => {
     try {
       const res = (await api.resolveLocation(code)) as {
         kind: string;
-        zone?: string;
-        bin?: { id: string; code: string };
+        bin?: { id: string; code: string; zone?: string };
         warehouse?: { code?: string };
       };
       if (res.kind !== "bin" || !res.bin) {
         setScanError("Scan a bin barcode, not a zone or shelf label.");
-        return;
-      }
-      if (
-        data?.warehouse?.code &&
-        res.warehouse?.code &&
-        res.warehouse.code !== data.warehouse.code
-      ) {
-        setScanError(
-          `Bin is in ${res.warehouse.code}; this capture is for ${data.warehouse.code}.`
-        );
-        return;
-      }
-      if (res.zone && res.zone !== "PR") {
-        setScanError(
-          `Bin is in zone ${res.zone}. Pick a bin inside Zone PR.`
-        );
         return;
       }
     } catch (e) {
@@ -200,27 +188,15 @@ export const MobileBulkCapture = () => {
     try {
       // Resolve the bin code to an id. We deliberately do this on save
       // (not on scan) so a manual barcode typed without a scan event
-      // still works.
+      // still works. The bin can live in any warehouse / any zone -
+      // this screen is a physical audit, not a Zone PR gate.
       const loc = (await api.resolveLocation(scanBinCode.trim())) as {
         kind: string;
-        bin?: { id: string; code: string };
-        zone?: string;
+        bin?: { id: string; code: string; zone?: string };
         warehouse?: { code?: string };
       };
       if (loc.kind !== "bin" || !loc.bin) {
         throw new Error("That code is not a bin.");
-      }
-      if (
-        data?.warehouse?.code &&
-        loc.warehouse?.code &&
-        loc.warehouse.code !== data.warehouse.code
-      ) {
-        throw new Error(
-          `Bin is in ${loc.warehouse.code}; capture is for ${data.warehouse.code}.`
-        );
-      }
-      if (loc.zone && loc.zone !== "PR") {
-        throw new Error(`Bin is in zone ${loc.zone}. Use a Zone PR bin.`);
       }
 
       await api.reassignBin(loc.bin.id, {
@@ -232,9 +208,9 @@ export const MobileBulkCapture = () => {
         clientOpId: `pr-capture-${variant.variantId}-${Date.now()}`,
       });
 
-      setBanner(
-        `Captured ${variant.variantSku} → ${loc.bin.code} (qty ${qty})`
-      );
+      const whCode = loc.warehouse?.code;
+      const where = whCode ? `${whCode} · ${loc.bin.code}` : loc.bin.code;
+      setBanner(`Captured ${variant.variantSku} → ${where} (qty ${qty})`);
       closeScan();
       await refresh();
       setTab("pending");
@@ -594,13 +570,21 @@ const CapturedList = ({ rows, busy, onClear }: CapturedProps) => {
                     </>
                   ) : null}
                 </div>
-                <div className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-emerald-50 px-2 py-1 text-xs ring-1 ring-emerald-200">
-                  <span className="font-mono font-semibold text-emerald-800">
-                    {v.binCode ?? "(no code)"}
-                  </span>
-                  <span className="text-emerald-600">qty</span>
-                  <span className="font-bold tabular-nums text-emerald-900">
-                    {v.binQty}
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  {v.binWarehouseCode && (
+                    <span className="inline-flex items-center gap-1 rounded-md bg-slate-100 px-2 py-1 text-[11px] font-semibold text-slate-700 ring-1 ring-slate-200">
+                      {v.binWarehouseCode}
+                      {v.binZone ? ` · Zone ${v.binZone}` : ""}
+                    </span>
+                  )}
+                  <span className="inline-flex items-center gap-1.5 rounded-md bg-emerald-50 px-2 py-1 text-xs ring-1 ring-emerald-200">
+                    <span className="font-mono font-semibold text-emerald-800">
+                      {v.binCode ?? "(no code)"}
+                    </span>
+                    <span className="text-emerald-600">qty</span>
+                    <span className="font-bold tabular-nums text-emerald-900">
+                      {v.binQty}
+                    </span>
                   </span>
                 </div>
               </div>
