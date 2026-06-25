@@ -40,8 +40,6 @@ CREATE INDEX "BomOperationLine_lineId_idx" ON "BomOperationLine"("lineId");
 
 CREATE INDEX "BomItem_bomOperationId_idx" ON "BomItem"("bomOperationId");
 
-ALTER TABLE "BomItem" ADD CONSTRAINT "BomItem_bomOperationId_fkey" FOREIGN KEY ("bomOperationId") REFERENCES "BomOperation" ("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
 ALTER TABLE "WorkOrder" ADD COLUMN "bomOperationId" TEXT;
 ALTER TABLE "WorkOrder" ADD COLUMN "splitSeq" INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE "WorkOrder" ADD COLUMN "plannedSplitQty" REAL;
@@ -52,5 +50,12 @@ ALTER TABLE "WorkOrder" ADD COLUMN "qaNotes" TEXT;
 CREATE INDEX "WorkOrder_bomOperationId_idx" ON "WorkOrder"("bomOperationId");
 CREATE INDEX "WorkOrder_blockedByWorkOrderId_idx" ON "WorkOrder"("blockedByWorkOrderId");
 
-ALTER TABLE "WorkOrder" ADD CONSTRAINT "WorkOrder_bomOperationId_fkey" FOREIGN KEY ("bomOperationId") REFERENCES "BomOperation" ("id") ON DELETE SET NULL ON UPDATE CASCADE;
-ALTER TABLE "WorkOrder" ADD CONSTRAINT "WorkOrder_blockedByWorkOrderId_fkey" FOREIGN KEY ("blockedByWorkOrderId") REFERENCES "WorkOrder" ("id") ON DELETE SET NULL ON UPDATE CASCADE;
+-- NOTE: SQLite does not support `ALTER TABLE ... ADD CONSTRAINT`. The FK
+-- declarations for BomItem.bomOperationId, WorkOrder.bomOperationId, and
+-- WorkOrder.blockedByWorkOrderId live only in prisma/schema.prisma (and
+-- are therefore enforced by Prisma client at the app layer, not the DB).
+-- The Postgres-style ADD CONSTRAINT lines that originally followed the
+-- ADD COLUMN block were removed because they crashed `migrate deploy`
+-- on a fresh SQLite database. Run `prisma migrate dev` again only when
+-- migrating to a database engine that supports adding FKs after the
+-- fact (Postgres / MySQL).
