@@ -242,6 +242,37 @@ export const decodeLocation = (raw: string): LocationCode | null => {
     };
   }
 
+  // -------- Compact bin: WSP.AS05.11 (3 parts, single-letter zone merged)
+  // MUST run before explicit-zone shelf (next block). Otherwise STR.CS10.03
+  // is misread as zone=CS10 shelf=03 instead of zone=C shelf=S10 bin=03.
+  if (
+    parts.length === 3 &&
+    SCAN_PREFIX_RE.test(prefix) &&
+    LABEL_RE.test(rest[0]!) &&
+    LABEL_RE.test(rest[1]!)
+  ) {
+    const locSeg = rest[0]!;
+    const binSeg = rest[1]!;
+    if (locSeg.length >= 2) {
+      const zone = locSeg[0]!;
+      const shelf = locSeg.slice(1);
+      if (
+        zone.length === 1 &&
+        LABEL_RE.test(zone) &&
+        LABEL_RE.test(shelf) &&
+        shelf.startsWith("S")
+      ) {
+        return {
+          kind: "bin",
+          warehouseCode: prefix,
+          zone,
+          shelf,
+          bin: binSeg,
+        };
+      }
+    }
+  }
+
   // -------- Compact shelf (explicit zone): CL1.STG.01 (3 parts)
   if (
     parts.length === 3 &&
@@ -256,29 +287,6 @@ export const decodeLocation = (raw: string): LocationCode | null => {
       warehouseCode: prefix,
       zone: rest[0]!,
       shelf: rest[1]!,
-    };
-  }
-
-  // -------- Compact bin: WSP.AS05.11 (3 parts, single-letter zone merged)
-  if (
-    parts.length === 3 &&
-    SCAN_PREFIX_RE.test(prefix) &&
-    LABEL_RE.test(rest[0]!) &&
-    LABEL_RE.test(rest[1]!)
-  ) {
-    const locSeg = rest[0]!;
-    const binSeg = rest[1]!;
-    if (locSeg.length < 2) return null;
-    const zone = locSeg[0]!;
-    const shelf = locSeg.slice(1);
-    if (zone.length !== 1 || !LABEL_RE.test(zone) || !LABEL_RE.test(shelf))
-      return null;
-    return {
-      kind: "bin",
-      warehouseCode: prefix,
-      zone,
-      shelf,
-      bin: binSeg,
     };
   }
 
