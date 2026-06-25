@@ -4,7 +4,7 @@ import { TrendingDown, TrendingUp } from "lucide-react";
 
 interface KpiProps {
   label: string;
-  value: string;
+  value: ReactNode;
   delta?: number;
   deltaSuffix?: string;
   icon?: ReactNode;

@@ -1097,7 +1097,7 @@ const AdjustStockModal = ({
               value={skuQuery}
               onChange={(e) => setSkuQuery(e.target.value)}
               placeholder="Type SKU or name (e.g. WSS, sesame)…"
-              icon={<Search size={14} />}
+              iconLeft={<Search size={14} />}
             />
             <span className="text-caption text-ink-muted">
               {skuQuery.trim()

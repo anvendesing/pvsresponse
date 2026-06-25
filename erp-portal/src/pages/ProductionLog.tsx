@@ -355,51 +355,54 @@ export const ProductionLog = () => {
     <div className="h-full flex flex-col min-h-0">
       <div className="flex-none flex flex-col">
       <div className="p-4 pb-2">
-      <Toolbar>
-        <Button variant="ghost" onClick={() => navigate("/manufacturing")}>
-          <ArrowLeft className="h-4 w-4" /> Manufacturing
-        </Button>
-        <div className="flex-1" />
-        <div className="flex items-center gap-2">
-          <label className="text-xs text-text-subtle">Window</label>
-          <select
-            className="border border-border rounded px-2 py-1 text-sm bg-surface"
-            value={days}
-            onChange={(e) => setDays(parseInt(e.target.value, 10))}
-          >
-            <option value={1}>Last 24h</option>
-            <option value={7}>Last 7 days</option>
-            <option value={30}>Last 30 days</option>
-            <option value={90}>Last 90 days</option>
-          </select>
-        </div>
-        <Input
-          placeholder="Search MO / WO / machine…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          className="w-64"
-        />
-        <Button
-          variant="ghost"
-          onClick={() =>
-            downloadCsv(
-              tab === "wo-log"
-                ? `/reports/mo-wo-log?days=${days}&format=csv`
-                : `/reports/machine-utilization?days=${days}&format=csv`
-            )
-          }
-        >
-          <Download className="h-4 w-4" /> CSV
-        </Button>
-        <button
-          type="button"
-          title={sourcesTooltip}
-          aria-label="Data sources and formulas"
-          className="inline-flex items-center justify-center w-8 h-8 rounded text-text-subtle hover:text-text hover:bg-canvas"
-        >
-          <Info className="h-4 w-4" />
-        </button>
-      </Toolbar>
+      <Toolbar
+        left={
+          <Button variant="ghost" onClick={() => navigate("/manufacturing")}>
+            <ArrowLeft className="h-4 w-4" /> Manufacturing
+          </Button>
+        }
+        right={
+          <>
+            <label className="text-xs text-text-subtle">Window</label>
+            <select
+              className="border border-border rounded px-2 py-1 text-sm bg-surface"
+              value={days}
+              onChange={(e) => setDays(parseInt(e.target.value, 10))}
+            >
+              <option value={1}>Last 24h</option>
+              <option value={7}>Last 7 days</option>
+              <option value={30}>Last 30 days</option>
+              <option value={90}>Last 90 days</option>
+            </select>
+            <Input
+              placeholder="Search MO / WO / machine…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-64"
+            />
+            <Button
+              variant="ghost"
+              onClick={() =>
+                downloadCsv(
+                  tab === "wo-log"
+                    ? `/reports/mo-wo-log?days=${days}&format=csv`
+                    : `/reports/machine-utilization?days=${days}&format=csv`
+                )
+              }
+            >
+              <Download className="h-4 w-4" /> CSV
+            </Button>
+            <button
+              type="button"
+              title={sourcesTooltip}
+              aria-label="Data sources and formulas"
+              className="inline-flex items-center justify-center w-8 h-8 rounded text-text-subtle hover:text-text hover:bg-canvas"
+            >
+              <Info className="h-4 w-4" />
+            </button>
+          </>
+        }
+      />
       </div>
 
       <CollapsibleStats storageKey="production-log" title="Stats" summary={statsSummary}>

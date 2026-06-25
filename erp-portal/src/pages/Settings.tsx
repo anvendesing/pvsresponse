@@ -2902,12 +2902,14 @@ export const PutawayRulesManager = () => {
     const p = catalogProducts.find((x) => x.id === draft.productId);
     if (p?.variants?.length) {
       setVariants(
-        p.variants.map((v) => ({
-          id: v.id,
-          sku: v.sku,
-          label: [v.size, v.color, v.grade].filter(Boolean).join(" · ") || v.sku,
-          barcode: v.barcode,
-        }))
+        p.variants
+          .filter((v): v is typeof v & { id: string } => typeof v.id === "string")
+          .map((v) => ({
+            id: v.id,
+            sku: v.sku,
+            label: [v.size, v.color, v.grade].filter(Boolean).join(" · ") || v.sku,
+            barcode: v.barcode ?? null,
+          }))
       );
       return;
     }

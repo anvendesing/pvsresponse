@@ -65,7 +65,7 @@ const leafLabel = (b: Bin): string => {
   if (!isPlaceholderBin(b.bin)) return b.bin;
   if (!isPlaceholderShelf(b.shelf)) return b.shelf;
   if (!isPlaceholderZone(b.zone)) return b.zone;
-  return b.warehouseCode ?? "warehouse";
+  return b.warehouse ?? "warehouse";
 };
 
 const buildTree = (allBins: Bin[]): TreeNode[] => {
