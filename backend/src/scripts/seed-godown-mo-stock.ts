@@ -14,11 +14,29 @@ import { applyBinReassign } from "../lib/bin-stock-update.js";
 import { resolveOrCreateLocationBin } from "../lib/location-bin.js";
 import { shouldSkipRawProcurement } from "../lib/raw-semi-exclusions.js";
 import { GODOWN_LAYOUTS } from "../lib/godown-layouts.js";
-import {
-  EXISTING_FINISHED_GOODS_WH_CODE,
-  PRODUCTION_FACILITIES,
-  STORAGE_WAREHOUSES,
-} from "../../ops-scripts/config/site-layout.js";
+
+// Inlined here (rather than imported from ops-scripts/config/site-layout
+// which lives outside this tsconfig's rootDir) to keep the script
+// compilable as part of the regular backend build. Keep in sync with
+// ops-scripts/config/site-layout.ts when adding warehouses.
+const EXISTING_FINISHED_GOODS_WH_CODE = "STR";
+const STORAGE_WAREHOUSES = [
+  { code: "WH-STO-OILSEEDS" },
+  { code: "WH-STO-MILLETS" },
+  { code: "WH-STO-GROUNDNUT" },
+  { code: "WH-STO-FILTERMAT" },
+  { code: "WH-STO-COLD-1" },
+  { code: "WH-STO-COLD-2" },
+] as const;
+const PRODUCTION_FACILITIES = [
+  { productionWhCode: "WH-PROD-SNACKS" },
+  { productionWhCode: "WH-PROD-SOAP" },
+  { productionWhCode: EXISTING_FINISHED_GOODS_WH_CODE },
+  { productionWhCode: "WH-PROD-OIL" },
+  { productionWhCode: "WH-PROD-MILL" },
+  { productionWhCode: "WH-PROD-MCLEAN" },
+  { productionWhCode: "WH-PROD-FLOUR" },
+] as const;
 
 const db = new PrismaClient();
 const dryRun = process.argv.includes("--dry-run");

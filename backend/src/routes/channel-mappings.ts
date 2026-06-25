@@ -18,6 +18,7 @@
 // first, then Product.sku as a fallback.
 
 import type { FastifyInstance } from "fastify";
+import type { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { db } from "../db.js";
 
@@ -125,7 +126,7 @@ export const channelMappingRoutes = async (app: FastifyInstance) => {
       limit?: string;
       onlyUnresolved?: string;
     };
-    const where: { channel?: string; OR?: unknown } = {};
+    const where: Prisma.ChannelMappingWhereInput = {};
     if (q.channel) where.channel = q.channel;
     if (q.q && q.q.trim()) {
       const term = q.q.trim();

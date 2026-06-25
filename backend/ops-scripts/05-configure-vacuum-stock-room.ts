@@ -8,8 +8,6 @@
 import { PrismaClient } from "@prisma/client";
 import { EXISTING_FINISHED_GOODS_WH_CODE } from "./config/site-layout.js";
 
-import { EXISTING_FINISHED_GOODS_WH_CODE } from "./config/site-layout.js";
-
 const MANUAL_PACK_LINE_CODE = "WC-STR-PACK-MANUAL";
 const VACUUM_LINE_CODE = "WC-VACUUM-MAIN";
 

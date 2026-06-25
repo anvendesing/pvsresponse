@@ -3491,7 +3491,7 @@ export const mfgRoutes = async (app: FastifyInstance) => {
           plannedQty: body.plannedQty ?? null,
           operator: body.operator ?? null,
         });
-        await recordChange("WorkOrderRun", run.id, "create", run, req.user.sub);
+        await recordChange("WorkOrderRun", run.id, "insert", run, req.user.sub);
         return run;
       } catch (e) {
         const err = runErr(e, "run_create_failed");

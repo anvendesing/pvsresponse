@@ -63,14 +63,18 @@ function catalogVendorUom(uom: string, packSize: number): string {
 async function ensureVendors() {
   const out: Array<{ id: string; code: string; name: string }> = [];
   for (const spec of VENDOR_SEED) {
-    let row = await db.vendor.findUnique({ where: { code: spec.code } });
-    if (!row && !dryRun) {
-      row = await db.vendor.create({ data: { ...spec, active: true } });
-      console.log(`  + vendor ${spec.code}`);
-    } else if (!row && dryRun) {
-      row = { id: `dry-${spec.code}`, code: spec.code, name: spec.name };
+    const existing = await db.vendor.findUnique({ where: { code: spec.code } });
+    if (existing) {
+      out.push({ id: existing.id, code: existing.code, name: existing.name });
+      continue;
     }
-    if (row) out.push(row);
+    if (!dryRun) {
+      const created = await db.vendor.create({ data: { ...spec, active: true } });
+      console.log(`  + vendor ${spec.code}`);
+      out.push({ id: created.id, code: created.code, name: created.name });
+    } else {
+      out.push({ id: `dry-${spec.code}`, code: spec.code, name: spec.name });
+    }
   }
   return out;
 }
