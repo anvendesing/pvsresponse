@@ -118,7 +118,10 @@ export const MobileBulkCapture = () => {
   const patchDraft = (variantId: string, patch: Partial<Draft>) => {
     setDrafts((prev) => ({
       ...prev,
-      [variantId]: { binCode: "", qty: "", ...prev[variantId], ...patch },
+      [variantId]: {
+        ...(prev[variantId] ?? { binCode: "", qty: "" }),
+        ...patch,
+      },
     }));
   };
 
@@ -173,7 +176,7 @@ export const MobileBulkCapture = () => {
 
   return (
     <div className="flex flex-col min-h-full">
-      <div className="flex-1 px-4 pt-4 pb-28">
+      <div className="flex-1 px-4 pt-4 pb-[calc(88px+env(safe-area-inset-bottom))]">
         <div className="mb-3 flex items-center justify-between gap-2">
           <div className="min-w-0">
             <h1 className="text-lg font-bold text-slate-900">
@@ -233,7 +236,19 @@ export const MobileBulkCapture = () => {
               className={inputCls}
             />
           </div>
-          <div className="flex items-end">
+          <div className="flex flex-col justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => void onSaveAll()}
+              disabled={busy || readyItems.length === 0}
+              className="h-11 w-full rounded-xl bg-[#003087] text-sm font-bold text-white disabled:opacity-40"
+            >
+              {busy
+                ? "Saving..."
+                : readyItems.length === 0
+                  ? "Save"
+                  : `Save (${readyItems.length})`}
+            </button>
             <button
               type="button"
               onClick={() => void refresh()}
@@ -365,8 +380,8 @@ export const MobileBulkCapture = () => {
         )}
       </div>
 
-      {/* Sticky save bar */}
-      <div className="fixed bottom-0 inset-x-0 z-20 border-t border-slate-200 bg-white/95 px-4 py-3 backdrop-blur">
+      {/* Sticky save bar — sits above the bottom tab nav (z-40 @ bottom-0). */}
+      <div className="fixed inset-x-0 bottom-[calc(72px+env(safe-area-inset-bottom))] z-30 border-t border-slate-200 bg-white px-4 py-3 shadow-[0_-4px_12px_-8px_rgba(0,0,0,0.15)]">
         <button
           type="button"
           onClick={() => void onSaveAll()}
@@ -376,8 +391,8 @@ export const MobileBulkCapture = () => {
           {busy
             ? "Saving..."
             : readyItems.length === 0
-              ? "Save all ready"
-              : `Save all ready (${readyItems.length})`}
+              ? "Save — scan a bin first"
+              : `Save all (${readyItems.length})`}
         </button>
       </div>
 
