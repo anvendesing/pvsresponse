@@ -4932,16 +4932,14 @@ export const api = {
   // -----------------------------------------------------------------
   // Zone PR bulk capture (mobile warehouse PWA)
   // -----------------------------------------------------------------
-  // Returns the variant list that should land in Stock Room (STR)
-  // Zone PR plus each variant's current capture state. The mobile
-  // bulk-capture screen renders Pending / Captured tabs from this
-  // single payload; the "Save" action calls api.reassignBin on the
-  // scanned bin, and "Clear & redo" calls api.recountBin(qtyAfter=0).
+  // Returns variants whose putaway rule still targets STR Zone PR
+  // without a fixed bin. POST /capture assigns stock + pins the rule.
   zonePrVariants: () =>
     fetcher<{
       warehouse: { id: string; code: string; name: string } | null;
-      counts: { total: number; captured: number; pending: number };
+      counts: { total: number };
       variants: Array<{
+        putawayRuleId: string;
         productId: string;
         productSku: string;
         productName: string;
@@ -4952,15 +4950,30 @@ export const api = {
         variantSize: string | null;
         variantUom: string | null;
         stockOnHand: number;
-        status: "pending" | "captured";
-        binId: string | null;
-        binCode: string | null;
-        binQty: number;
-        binZone: string | null;
-        binWarehouseCode: string | null;
-        binWarehouseName: string | null;
       }>;
     }>("/zone-pr-variants"),
+
+  captureZonePrVariants: (body: {
+    items: Array<{
+      variantId: string;
+      binCode: string;
+      qty: number;
+      clientOpId?: string;
+    }>;
+  }) =>
+    fetcher<{
+      ok: number;
+      failed: Array<{ variantId: string; error: string }>;
+      results: Array<{
+        variantId: string;
+        variantSku: string;
+        binId: string;
+        binCode: string;
+        binWarehouseCode: string;
+        binZone: string;
+        qty: number;
+      }>;
+    }>("/zone-pr-variants/capture", { method: "POST", body }),
 
   bulkZoneStock: (
     warehouseId: string,

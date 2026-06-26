@@ -15,6 +15,7 @@ import {
   resolveReceiveBinForProduct,
   LocationLevelBlockedError,
 } from "../lib/location-bin.js";
+import { decodeLocation } from "../lib/codes.js";
 
 const transferSchema = z.object({
   productId: z.string(),
@@ -53,31 +54,31 @@ const adjustSchema = z.object({
 export const inventoryRoutes = async (app: FastifyInstance) => {
   // -----------------------------------------------------------------
   // GET /zone-pr-variants
+  // POST /zone-pr-variants/capture
   // -----------------------------------------------------------------
-  // Powers the mobile "Bulk capture — Zone PR" workflow. Returns the
-  // full list of variants whose putaway rules target Stock Room (STR)
-  // Zone PR, plus each variant's CURRENT capture state.
+  // Mobile "Bulk capture — Zone PR" workflow.
   //
-  // IMPORTANT: a variant counts as "captured" as soon as ANY bin (in
-  // any warehouse / any zone) holds qty > 0 for it. The screen is a
-  // physical audit — operators scan whichever bin currently holds the
-  // stock, which is often NOT Zone PR yet. We surface the captured
-  // bin's warehouse + zone so the UI can show where it actually
-  // landed, but we do not force the scan to be in Zone PR.
-  //
-  // "Clear & redo" still calls POST /bins/:id/recount with qtyAfter=0
-  // and flips the variant back to "pending" on the next refresh.
+  // Pending list = variants whose putaway rule still targets STR Zone
+  // PR without a fixed bin (toZone=PR, toBinId=null). Once an operator
+  // scans a bin and saves, POST /capture assigns stock to that bin AND
+  // pins the putaway rule to it (toBinId set, toZone cleared). The
+  // variant then drops off this list permanently — no qty-based flip-flop.
   app.get("/zone-pr-variants", { preHandler: [app.authenticate] }, async () => {
     const strWh = await db.warehouse.findUnique({
       where: { code: "STR" },
       select: { id: true, name: true, code: true },
     });
     if (!strWh) {
-      return { warehouse: null, variants: [] };
+      return { warehouse: null, counts: { total: 0 }, variants: [] };
     }
 
     const rules = await db.putawayRule.findMany({
-      where: { toWarehouseId: strWh.id, toZone: "PR", active: true },
+      where: {
+        toWarehouseId: strWh.id,
+        toZone: "PR",
+        toBinId: null,
+        active: true,
+      },
       include: {
         product: {
           select: {
@@ -85,7 +86,6 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
             sku: true,
             name: true,
             type: true,
-            state: true,
             variants: {
               select: {
                 id: true,
@@ -110,79 +110,24 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
           },
         },
       },
+      orderBy: [{ priority: "asc" }, { createdAt: "asc" }],
     });
 
-    // Collect the full set of variant + parent product ids first so we
-    // can fetch their current bin assignments in a single round-trip
-    // (across every warehouse/zone, not just STR.PR).
-    const wantedVariantIds = new Set<string>();
-    const wantedProductIds = new Set<string>();
-    for (const rule of rules) {
-      const targets =
-        rule.variantId && rule.variant ? [rule.variant] : rule.product.variants;
-      for (const v of targets) wantedVariantIds.add(v.id);
-      wantedProductIds.add(rule.product.id);
-    }
-
-    const bins =
-      wantedVariantIds.size + wantedProductIds.size === 0
-        ? []
-        : await db.bin.findMany({
-            where: {
-              OR: [
-                { variantId: { in: Array.from(wantedVariantIds) } },
-                {
-                  productId: { in: Array.from(wantedProductIds) },
-                  variantId: null,
-                },
-              ],
-            },
-            select: {
-              id: true,
-              code: true,
-              zone: true,
-              shelf: true,
-              bin: true,
-              productId: true,
-              variantId: true,
-              qty: true,
-              warehouse: { select: { id: true, code: true, name: true } },
-            },
-          });
-
-    type BinHit = {
-      id: string;
-      code: string | null;
-      qty: number;
-      zone: string;
-      warehouseCode: string;
-      warehouseName: string;
-    };
-
-    // Index bins by variantId and by productId (parent fallback). Keep
-    // the bin with the largest qty so multi-bin variants surface the
-    // biggest stash on the row.
-    const binByVariant = new Map<string, BinHit>();
-    const binByProduct = new Map<string, BinHit>();
-    for (const b of bins) {
-      const hit: BinHit = {
-        id: b.id,
-        code: b.code,
-        qty: b.qty,
-        zone: b.zone,
-        warehouseCode: b.warehouse.code,
-        warehouseName: b.warehouse.name,
-      };
-      if (b.variantId) {
-        const prev = binByVariant.get(b.variantId);
-        if (!prev || b.qty > prev.qty) binByVariant.set(b.variantId, hit);
-      } else if (b.productId) {
-        const prev = binByProduct.get(b.productId);
-        if (!prev || b.qty > prev.qty) binByProduct.set(b.productId, hit);
-      }
-    }
+    // Variants already pinned to a specific bin via their own rule are
+    // done — skip them even when a product-level Zone PR rule remains.
+    const pinnedVariantIds = new Set(
+      (
+        await db.putawayRule.findMany({
+          where: { active: true, toBinId: { not: null }, variantId: { not: null } },
+          select: { variantId: true },
+        })
+      )
+        .map((r) => r.variantId)
+        .filter((id): id is string => !!id)
+    );
 
     type VariantRow = {
+      putawayRuleId: string;
       productId: string;
       productSku: string;
       productName: string;
@@ -193,13 +138,6 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
       variantSize: string | null;
       variantUom: string | null;
       stockOnHand: number;
-      status: "pending" | "captured";
-      binId: string | null;
-      binCode: string | null;
-      binQty: number;
-      binZone: string | null;
-      binWarehouseCode: string | null;
-      binWarehouseName: string | null;
     };
 
     const out: VariantRow[] = [];
@@ -209,11 +147,10 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
       const targets =
         rule.variantId && rule.variant ? [rule.variant] : rule.product.variants;
       for (const v of targets) {
-        if (seenVariants.has(v.id)) continue;
+        if (seenVariants.has(v.id) || pinnedVariantIds.has(v.id)) continue;
         seenVariants.add(v.id);
-        const bin = binByVariant.get(v.id) ?? binByProduct.get(rule.product.id);
-        const captured = !!bin && bin.qty > 0;
         out.push({
+          putawayRuleId: rule.id,
           productId: rule.product.id,
           productSku: rule.product.sku,
           productName: rule.product.name,
@@ -224,13 +161,6 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
           variantSize: v.size,
           variantUom: v.uom,
           stockOnHand: v.stockOnHand,
-          status: captured ? "captured" : "pending",
-          binId: bin?.id ?? null,
-          binCode: bin?.code ?? null,
-          binQty: bin?.qty ?? 0,
-          binZone: bin?.zone ?? null,
-          binWarehouseCode: bin?.warehouseCode ?? null,
-          binWarehouseName: bin?.warehouseName ?? null,
         });
       }
     }
@@ -239,14 +169,210 @@ export const inventoryRoutes = async (app: FastifyInstance) => {
 
     return {
       warehouse: { id: strWh.id, code: strWh.code, name: strWh.name },
-      counts: {
-        total: out.length,
-        captured: out.filter((r) => r.status === "captured").length,
-        pending: out.filter((r) => r.status === "pending").length,
-      },
+      counts: { total: out.length },
       variants: out,
     };
   });
+
+  const zonePrCaptureItem = z.object({
+    variantId: z.string().min(1),
+    binCode: z.string().trim().min(1),
+    qty: z.number().nonnegative(),
+    clientOpId: z.string().min(8).max(64).optional(),
+  });
+
+  app.post(
+    "/zone-pr-variants/capture",
+    { preHandler: [app.authenticate] },
+    async (req) => {
+      const body = z
+        .object({ items: z.array(zonePrCaptureItem).min(1).max(100) })
+        .parse(req.body);
+
+      const strWh = await db.warehouse.findUnique({
+        where: { code: "STR" },
+        select: { id: true, code: true },
+      });
+      if (!strWh) {
+        return { ok: 0, failed: body.items.map((i) => ({ variantId: i.variantId, error: "STR warehouse not found" })), results: [] };
+      }
+
+      type CaptureResult = {
+        variantId: string;
+        variantSku: string;
+        binId: string;
+        binCode: string;
+        binWarehouseCode: string;
+        binZone: string;
+        qty: number;
+      };
+
+      const results: CaptureResult[] = [];
+      const failed: Array<{ variantId: string; error: string }> = [];
+
+      const resolveBinByCode = async (code: string) => {
+        const loc = decodeLocation(code);
+        if (!loc || loc.kind !== "bin" || !loc.shelf || !loc.bin) {
+          throw new Error(`"${code}" is not a bin barcode.`);
+        }
+        const wh = await db.warehouse.findFirst({
+          where: {
+            OR: [{ code: loc.warehouseCode }, { scanPrefix: loc.warehouseCode }],
+          },
+          select: { id: true, code: true, scanPrefix: true },
+        });
+        if (!wh) throw new Error(`Warehouse "${loc.warehouseCode}" not found.`);
+        const bin = await db.bin.findFirst({
+          where: {
+            warehouseId: wh.id,
+            zone: loc.zone,
+            shelf: loc.shelf,
+            bin: loc.bin,
+          },
+        });
+        if (!bin) throw new Error(`Bin "${code}" not found.`);
+        return { bin, warehouse: wh };
+      };
+
+      const findOpenZonePrRule = async (productId: string, variantId: string) => {
+        const variantRule = await db.putawayRule.findFirst({
+          where: {
+            toWarehouseId: strWh.id,
+            toZone: "PR",
+            toBinId: null,
+            active: true,
+            productId,
+            variantId,
+          },
+        });
+        if (variantRule) return variantRule;
+        return db.putawayRule.findFirst({
+          where: {
+            toWarehouseId: strWh.id,
+            toZone: "PR",
+            toBinId: null,
+            active: true,
+            productId,
+            variantId: null,
+          },
+        });
+      };
+
+      for (const item of body.items) {
+        try {
+          const variant = await db.productVariant.findUnique({
+            where: { id: item.variantId },
+            select: { id: true, sku: true, productId: true },
+          });
+          if (!variant) throw new Error("Variant not found.");
+
+          const rule = await findOpenZonePrRule(variant.productId, variant.id);
+          if (!rule) {
+            throw new Error("No open Zone PR putaway rule for this variant.");
+          }
+
+          const { bin, warehouse } = await resolveBinByCode(item.binCode);
+          const qty = Math.round(item.qty);
+
+          if (item.clientOpId) {
+            const dupKey = `zone-pr-capture:${item.variantId}:${item.clientOpId}`;
+            const seen = await db.auditLog.findFirst({
+              where: { entity: "BinCount", entityId: dupKey },
+              select: { id: true },
+            });
+            if (seen) {
+              results.push({
+                variantId: variant.id,
+                variantSku: variant.sku,
+                binId: bin.id,
+                binCode: item.binCode.trim(),
+                binWarehouseCode: warehouse.code,
+                binZone: bin.zone,
+                qty,
+              });
+              continue;
+            }
+          }
+
+          await applyBinReassign(bin, {
+            productId: variant.productId,
+            variantId: variant.id,
+            qty,
+            reasonCode: "physical_match",
+            remarks: `Zone PR bulk capture (${variant.sku})`,
+            userId: req.user.sub,
+          });
+
+          if (rule.variantId) {
+            await db.putawayRule.update({
+              where: { id: rule.id },
+              data: {
+                toWarehouseId: bin.warehouseId,
+                toBinId: bin.id,
+                toZone: null,
+              },
+            });
+            await recordChange(
+              "PutawayRule" as never,
+              rule.id,
+              "update",
+              { toBinId: bin.id, toZone: null, toWarehouseId: bin.warehouseId },
+              req.user.sub
+            );
+          } else {
+            const created = await db.putawayRule.create({
+              data: {
+                productId: variant.productId,
+                variantId: variant.id,
+                toWarehouseId: bin.warehouseId,
+                toBinId: bin.id,
+                toZone: null,
+                priority: rule.priority,
+                active: true,
+                notes: rule.notes,
+              },
+            });
+            await recordChange(
+              "PutawayRule" as never,
+              created.id,
+              "insert",
+              created,
+              req.user.sub
+            );
+          }
+
+          if (item.clientOpId) {
+            await db.auditLog.create({
+              data: {
+                userId: req.user.sub,
+                action: "zone_pr_capture",
+                entity: "BinCount",
+                entityId: `zone-pr-capture:${item.variantId}:${item.clientOpId}`,
+                after: JSON.stringify({ binId: bin.id, qty }),
+              },
+            });
+          }
+
+          results.push({
+            variantId: variant.id,
+            variantSku: variant.sku,
+            binId: bin.id,
+            binCode: item.binCode.trim(),
+            binWarehouseCode: warehouse.code,
+            binZone: bin.zone,
+            qty,
+          });
+        } catch (e) {
+          failed.push({
+            variantId: item.variantId,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
+
+      return { ok: results.length, failed, results };
+    }
+  );
 
   app.get("/ledger", async (req) => {
     const q = (req.query as Record<string, string>) ?? {};
