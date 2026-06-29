@@ -409,6 +409,40 @@ export const explodeMoBom = async (
   return Array.from(leaves.values()).sort((a, b) => a.sku.localeCompare(b.sku));
 };
 
+/** Active BOM for a product/variant (variant-specific first, then product-level). */
+export const findActiveBomForProduct = async (
+  productId: string,
+  variantId: string | null
+) => {
+  if (variantId) {
+    const variantBom = await db.bom.findFirst({
+      where: { productId, variantId, active: true },
+      select: {
+        id: true,
+        productId: true,
+        variantId: true,
+        outputQty: true,
+        product: { select: { sku: true, name: true, uom: true } },
+        variant: { select: { sku: true, size: true } },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+    if (variantBom) return variantBom;
+  }
+  return db.bom.findFirst({
+    where: { productId, variantId: null, active: true },
+    select: {
+      id: true,
+      productId: true,
+      variantId: true,
+      outputQty: true,
+      product: { select: { sku: true, name: true, uom: true } },
+      variant: { select: { sku: true, size: true } },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+};
+
 // ----------------------------------------------------------------
 // Flat explosion - aggregated leaves only.
 

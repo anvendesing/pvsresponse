@@ -1,6 +1,8 @@
 /**
  * Default storefront categories and keyword bucketing used for one-time
  * backfill from legacy Product.category free-text → ProductCategory FK.
+ *
+ * Names, slugs, and sort order match categories-and-products.xlsx (Categories sheet).
  */
 
 export interface CategorySeedDef {
@@ -11,60 +13,65 @@ export interface CategorySeedDef {
 }
 
 export const DEFAULT_PRODUCT_CATEGORIES: CategorySeedDef[] = [
-  { slug: "oils", name: "Oils & Oil Seeds", sortOrder: 1, keywords: ["oil", "oilseed", "ghee"] },
   {
-    slug: "grains",
+    slug: "grains-pulses-flours",
     name: "Grains, Pulses & Flours",
-    sortOrder: 2,
-    keywords: ["grain", "flour", "rice", "wheat", "dal", "gram", "pulse", "atta"],
+    sortOrder: 1,
+    keywords: ["grain", "flour", "rice", "wheat", "dal", "gram", "pulse", "atta", "pappu", "pesalu"],
   },
   {
-    slug: "millets",
+    slug: "oils-oil-seeds",
+    name: "Oils & Oil Seeds",
+    sortOrder: 2,
+    keywords: ["oil", "oilseed", "ghee", "sesame", "groundnut", "mustard", "safflower"],
+  },
+  {
+    slug: "millets-millet-products",
     name: "Millets & Millet Products",
     sortOrder: 3,
-    keywords: ["millet", "ragi", "jowar", "bajra", "foxtail", "kodo", "barnyard"],
+    keywords: ["millet", "ragi", "jowar", "bajra", "foxtail", "kodo", "barnyard", "sorghum", "siridhanya"],
   },
   {
-    slug: "snacks",
+    slug: "sweets-snacks",
     name: "Sweets & Snacks",
     sortOrder: 4,
-    keywords: ["snack", "sweet", "chikki", "biscuit", "murukku", "laddu", "cookie", "jaggery sweet"],
+    keywords: ["snack", "sweet", "chikki", "biscuit", "murukku", "laddu", "cookie", "papad", "muruku", "ariselu"],
   },
   {
-    slug: "spices",
+    slug: "spices-condiments",
     name: "Spices & Condiments",
     sortOrder: 5,
-    keywords: ["spice", "masala", "turmeric", "chili", "pepper", "salt", "condiment"],
+    keywords: ["spice", "masala", "turmeric", "chilli", "chili", "pepper", "salt", "condiment", "pickle", "karam"],
   },
   {
-    slug: "dryfruits",
-    name: "Dry Fruits, Seeds & Superfoods",
+    slug: "dry-fruitsseeds-superfoods",
+    name: "Dry Fruits,Seeds & Superfoods",
     sortOrder: 6,
-    keywords: ["nut", "almond", "cashew", "raisin", "seed", "chia", "sunflower", "superfood", "dry fruit"],
+    keywords: ["nut", "almond", "cashew", "raisin", "seed", "chia", "sunflower", "superfood", "dry fruit", "walnut"],
   },
   {
-    slug: "wellness",
+    slug: "personal-care-wellness",
     name: "Personal Care & Wellness",
     sortOrder: 7,
-    keywords: ["soap", "wellness", "hair", "skin", "personal", "ayur", "herbal", "balm"],
+    keywords: ["soap", "wellness", "hair", "skin", "personal", "ayur", "herbal", "balm", "shampoo", "henna"],
   },
   {
-    slug: "eco",
-    name: "Eco-Friendly Household",
+    slug: "eco-friendly-household",
+    name: "Eco-friendly Household",
     sortOrder: 8,
-    keywords: ["eco", "household", "cleaner", "biodegradable", "bamboo", "soapnut"],
+    keywords: ["eco", "household", "cleaner", "biodegradable", "bamboo", "soapnut", "strategi", "repellent"],
   },
   {
-    slug: "sweeteners",
+    slug: "natural-sweeteners",
     name: "Natural Sweeteners",
     sortOrder: 9,
-    keywords: ["honey", "jaggery", "sweetener", "kakvi", "palm sugar", "panela"],
+    keywords: ["honey", "jaggery", "sweetener", "kakvi", "palm sugar", "panela", "khandsari"],
   },
   {
-    slug: "utilities",
+    slug: "home-utilities",
     name: "Home Utilities",
     sortOrder: 10,
-    keywords: ["clay", "pot", "scrubber", "utensil", "kitchen", "utility"],
+    keywords: ["clay", "pot", "scrubber", "utensil", "kitchen", "utility", "incense", "filter", "copper"],
   },
 ];
 
@@ -77,5 +84,5 @@ export const bucketCategorySlug = (
   for (const c of DEFAULT_PRODUCT_CATEGORIES) {
     if (c.keywords.some((kw) => haystack.includes(kw))) return c.slug;
   }
-  return "grains";
+  return "grains-pulses-flours";
 };

@@ -103,6 +103,10 @@ export const InvoiceDetail = ({ invoiceId, onClose, onChanged }: Props) => {
     return resolveBillingTotals({
       goodsSubTotal: sumLineAmounts(inv.items),
       goodsTax: inv.tax,
+      cgstTotal: inv.cgstTotal,
+      sgstTotal: inv.sgstTotal,
+      igstTotal: inv.igstTotal,
+      taxKind: inv.taxKind,
       transportCharge: inv.transportCharge,
       transportTax: inv.transportTax,
       total: inv.amount,
@@ -346,8 +350,8 @@ export const InvoiceDetail = ({ invoiceId, onClose, onChanged }: Props) => {
                     <div className="grid grid-cols-12 grid-header-cell text-caption">
                       <div className="col-span-6">Item</div>
                       <div className="col-span-2 text-right">Qty</div>
-                      <div className="col-span-2 text-right">Rate</div>
-                      <div className="col-span-2 text-right">Amount</div>
+                      <div className="col-span-2 text-right">Rate (excl.)</div>
+                      <div className="col-span-2 text-right">Taxable</div>
                     </div>
                     {inv.items.map((it) => (
                       <div
@@ -383,17 +387,21 @@ export const InvoiceDetail = ({ invoiceId, onClose, onChanged }: Props) => {
                         </div>
                         <div className="col-span-2 text-right tnum">{inr(it.rate)}</div>
                         <div className="col-span-2 text-right tnum font-semibold">
-                          {inr(it.amount)}
+                          {inr(it.taxableValue ?? it.amount)}
                         </div>
                       </div>
                     ))}
                   </div>
+                  {(inv.taxKind || inv.placeOfSupplyState) && (
+                    <div className="text-caption text-ink-muted mt-2">
+                      Place of supply: {inv.placeOfSupplyState ?? "—"} ·{" "}
+                      {inv.taxKind === "inter" ? "Inter-state (IGST)" : "Intra-state (CGST+SGST)"}
+                    </div>
+                  )}
                   <div className="flex justify-end mt-3">
                     <div className="w-72">
                       <BillingTotalsBreakdown
                         totals={billingTotals}
-                        goodsSubLabel="Sub-total (goods)"
-                        goodsTaxLabel="GST (goods)"
                         totalLabel="Total due"
                       />
                     </div>

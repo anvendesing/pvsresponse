@@ -22,7 +22,9 @@ import {
   recomputeSalesOrderWeight,
 } from "../lib/document-weight.js";
 import { recordChange } from "../sync/log.js";
-import { resolveGstRate, computeTax, computeGrandTotal } from "../lib/tax.js";
+import { resolveGstRate, computeTransportTax, type TaxKind } from "../lib/tax.js";
+import { getTaxContextForCustomer } from "../lib/company-tax.js";
+import { computeDocumentTax, documentTaxHeaderFields, lineTaxDbFields } from "../lib/document-tax.js";
 import {
   releaseSalesOrderReservations,
   reserveSalesOrderStock,
@@ -128,32 +130,25 @@ const soDirectCreate = z.object({
 
 // ---------------------------------------------------------- helper utilities --
 
-const computeTotals = (
+const computeTotals = async (
   items: { qty: number; rate: number; discount?: number; gstRate?: number }[],
-  transportCharge = 0
-): {
-  subTotal: number;
-  tax: number;
-  transportCharge: number;
-  transportTax: number;
-  total: number;
-  lines: number[];
-} => {
-  const amounts = items.map((it) => it.qty * it.rate * (1 - (it.discount ?? 0) / 100));
-  const subTotal = amounts.reduce((s, n) => s + n, 0);
-  const taxLines = items.map((it, i) => ({
-    amount: amounts[i],
-    gstRate: it.gstRate ?? 18,
-  }));
-  const tax = computeTax(taxLines);
-  const freight = computeGrandTotal(subTotal, tax, transportCharge);
-  return {
-    subTotal,
-    tax,
+  transportCharge = 0,
+  customerState?: string | null
+) => {
+  const taxCtx = await getTaxContextForCustomer(customerState);
+  const doc = computeDocumentTax({
+    items: items.map((it) => ({
+      qty: it.qty,
+      rate: it.rate,
+      discount: it.discount,
+      gstRate: it.gstRate ?? taxCtx.defaultGstRate ?? 18,
+    })),
     transportCharge,
-    transportTax: freight.transportTax,
-    total: freight.total,
-    lines: amounts,
+    taxCtx,
+  });
+  return {
+    ...documentTaxHeaderFields(doc),
+    lines: doc.lineResults.map((l) => lineTaxDbFields(l)),
   };
 };
 
@@ -776,10 +771,15 @@ export const salesRoutes = async (app: FastifyInstance) => {
 
   app.post("/quotes", { preHandler: [app.authenticate] }, async (req) => {
     const body = quoteCreate.parse(req.body);
+    const customer = await db.customer.findUnique({
+      where: { id: body.customerId },
+      select: { state: true },
+    });
     const lineRates = await resolveLineGstRates(body.items);
-    const totals = computeTotals(
+    const totals = await computeTotals(
       body.items.map((it, i) => ({ ...it, gstRate: lineRates[i] })),
-      body.transportCharge ?? 0
+      body.transportCharge ?? 0,
+      customer?.state
     );
     const quoteNo = await nextDocNo("Q", 2026, 1001);
     const validUntil = body.validUntil
@@ -799,18 +799,33 @@ export const salesRoutes = async (app: FastifyInstance) => {
         transportTax: totals.transportTax,
         subTotal: totals.subTotal,
         tax: totals.tax,
+        cgstTotal: totals.cgstTotal,
+        sgstTotal: totals.sgstTotal,
+        igstTotal: totals.igstTotal,
+        taxKind: totals.taxKind,
+        placeOfSupplyState: totals.placeOfSupplyState,
+        sellerState: totals.sellerState,
+        pricingInclusive: totals.pricingInclusive,
         total: totals.total,
         createdById: req.user.sub,
         items: {
-          create: body.items.map((it, i) => ({
-            productId: it.productId,
-            variantId: it.variantId ?? null,
-            qty: it.qty,
-            rate: it.rate,
-            discount: it.discount ?? 0,
-            amount: totals.lines[i],
-            requiredBy: it.requiredBy ? new Date(it.requiredBy) : null,
-          })),
+          create: body.items.map((it, i) => {
+            const line = totals.lines[i];
+            return {
+              productId: it.productId,
+              variantId: it.variantId ?? null,
+              qty: it.qty,
+              rate: line.rate,
+              discount: it.discount ?? 0,
+              amount: line.amount,
+              taxableValue: line.taxableValue,
+              gstRate: line.gstRate,
+              cgstAmount: line.cgstAmount,
+              sgstAmount: line.sgstAmount,
+              igstAmount: line.igstAmount,
+              requiredBy: it.requiredBy ? new Date(it.requiredBy) : null,
+            };
+          }),
         },
       },
       include: fullQuoteInclude,
@@ -871,42 +886,60 @@ export const salesRoutes = async (app: FastifyInstance) => {
         : before.transportCharge;
 
     if (items !== undefined) {
+      const customerId = body.customerId ?? before.customerId;
+      const customer = await db.customer.findUnique({
+        where: { id: customerId },
+        select: { state: true },
+      });
       const lineRates = await resolveLineGstRates(items);
-      const totals = computeTotals(
+      const totals = await computeTotals(
         items.map((it, i) => ({ ...it, gstRate: lineRates[i] })),
-        transportCharge
+        transportCharge,
+        customer?.state
       );
       headerData.subTotal = totals.subTotal;
       headerData.tax = totals.tax;
+      headerData.cgstTotal = totals.cgstTotal;
+      headerData.sgstTotal = totals.sgstTotal;
+      headerData.igstTotal = totals.igstTotal;
+      headerData.taxKind = totals.taxKind;
+      headerData.placeOfSupplyState = totals.placeOfSupplyState;
+      headerData.sellerState = totals.sellerState;
+      headerData.pricingInclusive = totals.pricingInclusive;
       headerData.transportCharge = totals.transportCharge;
       headerData.transportTax = totals.transportTax;
       headerData.total = totals.total;
       // Replace items wholesale - simpler than diffing; old items go via cascade.
       await db.quoteItem.deleteMany({ where: { quoteId: id } });
       await db.quoteItem.createMany({
-        data: items.map((it, i) => ({
-          quoteId: id,
-          productId: it.productId,
-          variantId: it.variantId ?? null,
-          qty: it.qty,
-          rate: it.rate,
-          discount: it.discount ?? 0,
-          amount: totals.lines[i],
-          requiredBy: it.requiredBy ? new Date(it.requiredBy) : null,
-        })),
+        data: items.map((it, i) => {
+          const line = totals.lines[i];
+          return {
+            quoteId: id,
+            productId: it.productId,
+            variantId: it.variantId ?? null,
+            qty: it.qty,
+            rate: line.rate,
+            discount: it.discount ?? 0,
+            amount: line.amount,
+            taxableValue: line.taxableValue,
+            gstRate: line.gstRate,
+            cgstAmount: line.cgstAmount,
+            sgstAmount: line.sgstAmount,
+            igstAmount: line.igstAmount,
+            requiredBy: it.requiredBy ? new Date(it.requiredBy) : null,
+          };
+        }),
       });
     } else if (
       body.transportCharge !== undefined ||
       body.dispatchOptionId !== undefined
     ) {
-      const freight = computeGrandTotal(
-        before.subTotal,
-        before.tax,
-        transportCharge
-      );
+      const taxKind = (before.taxKind ?? "intra") as TaxKind;
+      const freight = computeTransportTax(transportCharge, taxKind);
       headerData.transportCharge = transportCharge;
-      headerData.transportTax = freight.transportTax;
-      headerData.total = freight.total;
+      headerData.transportTax = freight.totalTax;
+      headerData.total = before.subTotal + before.tax + transportCharge + freight.totalTax;
     }
 
     const updated = await db.quote.update({
@@ -1221,10 +1254,20 @@ export const salesRoutes = async (app: FastifyInstance) => {
 
   app.post("/sales-orders", { preHandler: [app.authenticate] }, async (req, reply) => {
     const body = soDirectCreate.parse(req.body);
+    const customer = await db.customer.findUnique({
+      where: { id: body.customerId },
+      select: { id: true, name: true, creditLimit: true, state: true },
+    });
+    if (!customer) {
+      return reply.code(404).send({
+        error: { code: "customer_not_found", message: "Customer not found" },
+      });
+    }
     const lineRates = await resolveLineGstRates(body.items);
-    const totals = computeTotals(
+    const totals = await computeTotals(
       body.items.map((it, i) => ({ ...it, gstRate: lineRates[i] })),
-      body.transportCharge ?? 0
+      body.transportCharge ?? 0,
+      customer.state
     );
 
     // Credit-limit gate. Direct SO creation is a back-office flow that
@@ -1235,15 +1278,6 @@ export const salesRoutes = async (app: FastifyInstance) => {
     // bail out 409 BEFORE allocating an SO number / persisting any
     // row, and let the caller take it through the quote flow (or
     // /sales-orders with `force:true` once we add admin override).
-    const customer = await db.customer.findUnique({
-      where: { id: body.customerId },
-      select: { id: true, name: true, creditLimit: true },
-    });
-    if (!customer) {
-      return reply.code(404).send({
-        error: { code: "customer_not_found", message: "Customer not found" },
-      });
-    }
     const limit = customer.creditLimit ?? 0;
     const gate = await evaluateCreditGate(
       customer.id,
@@ -1279,15 +1313,30 @@ export const salesRoutes = async (app: FastifyInstance) => {
         transportTax: totals.transportTax,
         subTotal: totals.subTotal,
         tax: totals.tax,
+        cgstTotal: totals.cgstTotal,
+        sgstTotal: totals.sgstTotal,
+        igstTotal: totals.igstTotal,
+        taxKind: totals.taxKind,
+        placeOfSupplyState: totals.placeOfSupplyState,
+        sellerState: totals.sellerState,
+        pricingInclusive: totals.pricingInclusive,
         total: totals.total,
         items: {
-          create: body.items.map((it, i) => ({
-            productId: it.productId,
-            variantId: it.variantId ?? null,
-            qtyOrdered: it.qty,
-            rate: it.rate,
-            amount: totals.lines[i],
-          })),
+          create: body.items.map((it, i) => {
+            const line = totals.lines[i];
+            return {
+              productId: it.productId,
+              variantId: it.variantId ?? null,
+              qtyOrdered: it.qty,
+              rate: line.rate,
+              amount: line.amount,
+              taxableValue: line.taxableValue,
+              gstRate: line.gstRate,
+              cgstAmount: line.cgstAmount,
+              sgstAmount: line.sgstAmount,
+              igstAmount: line.igstAmount,
+            };
+          }),
         },
       },
       include: fullSoInclude,
@@ -1773,14 +1822,21 @@ export const salesRoutes = async (app: FastifyInstance) => {
       }
 
       // -------- Create invoice + lines + decrement stock + draw down SO --------
-      const sub = planned.reduce((s, p) => s + p.qty * p.item.rate, 0);
-      const tax = computeTax(
-        planned.map((p) => ({
-          amount: p.qty * p.item.rate,
-          gstRate: resolveGstRate(p.item.product, p.item.variant),
-        }))
-      );
-      const freight = computeGrandTotal(sub, tax, so.transportCharge ?? 0);
+      const taxCtx = await getTaxContextForCustomer(so.customer.state, so.placeOfSupplyState);
+      if (so.taxKind) taxCtx.taxKind = so.taxKind as TaxKind;
+      if (so.pricingInclusive) taxCtx.pricingInclusive = so.pricingInclusive;
+      if (so.sellerState) taxCtx.sellerState = so.sellerState;
+      if (so.placeOfSupplyState) taxCtx.placeOfSupplyState = so.placeOfSupplyState;
+
+      const doc = computeDocumentTax({
+        items: planned.map((p) => ({
+          qty: p.qty,
+          rate: p.item.rate,
+          gstRate: resolveGstRate(p.item.product, p.item.variant, taxCtx.defaultGstRate ?? 18),
+        })),
+        transportCharge: so.transportCharge ?? 0,
+        taxCtx,
+      });
       const invoiceNo = await nextDocNo("INV", 2026, 5500);
       const wh = await db.warehouse.findFirst();
 
@@ -1791,25 +1847,29 @@ export const salesRoutes = async (app: FastifyInstance) => {
           customerId: so.customerId,
           salesOrderId: so.id,
           dispatchOptionId: so.dispatchOptionId,
-          transportCharge: so.transportCharge ?? 0,
-          transportTax: freight.transportTax,
-          amount: freight.total,
-          tax,
+          transportCharge: doc.transportCharge,
+          transportTax: doc.transportTax,
+          amount: doc.total,
+          tax: doc.tax,
+          cgstTotal: doc.cgstTotal,
+          sgstTotal: doc.sgstTotal,
+          igstTotal: doc.igstTotal,
+          taxKind: doc.taxKind,
+          placeOfSupplyState: doc.placeOfSupplyState,
+          sellerState: doc.sellerState,
+          pricingInclusive: doc.pricingInclusive,
           paymentMode: body.paymentMode,
           status: "issued",
           items: {
-            create: planned.map((p) => {
-              const lineAmount = p.qty * p.item.rate;
-              const lineGstRate = resolveGstRate(p.item.product, p.item.variant);
+            create: doc.lineResults.map((line, idx) => {
+              const p = planned[idx];
+              const fields = lineTaxDbFields(line);
               return {
                 productId: p.item.productId,
                 variantId: p.item.variantId,
                 salesOrderItemId: p.item.id,
                 qty: p.qty,
-                rate: p.item.rate,
-                amount: lineAmount,
-                gstRate: lineGstRate,
-                taxAmount: Math.round(lineAmount * (lineGstRate / 100) * 100) / 100,
+                ...fields,
               };
             }),
           },
@@ -1945,6 +2005,13 @@ export const materialiseSO = async (quoteId: string, actor: string) => {
       transportTax: quote.transportTax,
       subTotal: quote.subTotal,
       tax: quote.tax,
+      cgstTotal: quote.cgstTotal,
+      sgstTotal: quote.sgstTotal,
+      igstTotal: quote.igstTotal,
+      taxKind: quote.taxKind,
+      placeOfSupplyState: quote.placeOfSupplyState,
+      sellerState: quote.sellerState,
+      pricingInclusive: quote.pricingInclusive,
       total: quote.total,
       // Inherit weight from the quote (already rolled up at quote
       // create/update). The post-create recompute below makes this
@@ -1958,6 +2025,11 @@ export const materialiseSO = async (quoteId: string, actor: string) => {
           qtyOrdered: it.qty,
           rate: it.rate,
           amount: it.amount,
+          taxableValue: it.taxableValue,
+          gstRate: it.gstRate,
+          cgstAmount: it.cgstAmount,
+          sgstAmount: it.sgstAmount,
+          igstAmount: it.igstAmount,
         })),
       },
     },

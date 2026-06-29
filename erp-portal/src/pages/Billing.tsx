@@ -34,6 +34,7 @@ import { effectiveUom } from "@/data/types";
 import { dd, dt, inr } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { effectivePrice, searchProductsForSale, variantLabel } from "@/lib/productSearch";
+import { aggregateLineTaxes, computeLineTax } from "@/lib/documentTax";
 import { formatScanRef, primaryScanCode } from "@/lib/scanCode";
 
 interface Line {
@@ -128,7 +129,15 @@ export const Billing = () => {
   const [posOk, setPosOk] = useState<string | null>(null);
   const [soSource, setSoSource] = useState<SalesOrderRow | null>(null);
   const [soPickerOpen, setSoPickerOpen] = useState(false);
+  const [pricingIncludesGst, setPricingIncludesGst] = useState(false);
   const searchRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    void api
+      .getCompanyProfile()
+      .then((p) => setPricingIncludesGst(p.pricingIncludesGst ?? false))
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!customerId && customers.length > 0) setCustomerId(customers[0].id);
@@ -142,9 +151,26 @@ export const Billing = () => {
     return () => document.removeEventListener("click", onClick);
   }, []);
 
-  const subTotal = lines.reduce((s, l) => s + l.qty * l.price, 0);
-  const tax = Math.round(subTotal * 0.18);
-  const total = subTotal + tax;
+  const posTax = useMemo(() => {
+    const taxKind = "intra" as const;
+    const computed = lines.map((l) => {
+      const p = products.find((x) => x.id === l.productId);
+      const v = p?.variants?.find((x) => x.id === l.variantId);
+      const gstRate = (v?.gstRate ?? null) ?? p?.gstRate ?? 18;
+      return computeLineTax(
+        { qty: l.qty, rate: l.price, gstRate },
+        { inclusive: pricingIncludesGst, taxKind }
+      );
+    });
+    const agg = aggregateLineTaxes(computed);
+    return { ...agg, taxKind, total: agg.subTotal + agg.tax };
+  }, [lines, products, pricingIncludesGst]);
+
+  const subTotal = posTax.subTotal;
+  const tax = posTax.tax;
+  const cgstTotal = posTax.cgstTotal;
+  const sgstTotal = posTax.sgstTotal;
+  const total = posTax.total;
 
   const customer = customers.find((c) => c.id === customerId);
 
@@ -943,8 +969,9 @@ export const Billing = () => {
                   )}
                 </div>
                 <div className="border border-border rounded-md p-3 bg-canvas">
-                  <Row k="Subtotal" v={inr(subTotal)} />
-                  <Row k="GST 18%" v={inr(tax)} />
+                  <Row k="Subtotal (excl. GST)" v={inr(subTotal)} />
+                  <Row k="CGST" v={inr(cgstTotal)} />
+                  <Row k="SGST" v={inr(sgstTotal)} />
                   <Row k="Discount" v="—" />
                   <div className="border-t border-border my-2" />
                   <Row k="Total" v={inr(total)} big />

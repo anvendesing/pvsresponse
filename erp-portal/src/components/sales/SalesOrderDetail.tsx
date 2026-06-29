@@ -349,6 +349,10 @@ export const SalesOrderDetail = ({ salesOrderId, onClose, onChanged }: Props) =>
                     const totals = resolveBillingTotals({
                       subTotal: so.subTotal,
                       tax: so.tax,
+                      cgstTotal: so.cgstTotal,
+                      sgstTotal: so.sgstTotal,
+                      igstTotal: so.igstTotal,
+                      taxKind: so.taxKind,
                       transportCharge: so.transportCharge,
                       transportTax: so.transportTax,
                       total: so.total,

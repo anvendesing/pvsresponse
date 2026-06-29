@@ -353,6 +353,11 @@ export const Manufacturing = () => {
   // bom.product / bom.revision; the requirements card already has
   // its own empty state for the missing data.
   const bom = order ? boms.find((b) => b.sku === order.sku) ?? boms[0] : boms[0];
+  const orderBom = order
+    ? (order.bomId ? boms.find((b) => b.id === order.bomId) : null) ??
+      boms.find((b) => b.sku === order.sku) ??
+      null
+    : null;
 
   const totalActual = productionOrders.reduce((s, p) => s + p.actualQty, 0);
   const totalPlanned = productionOrders.reduce((s, p) => s + p.plannedQty, 0);
@@ -843,6 +848,8 @@ export const Manufacturing = () => {
               order={order}
               workOrders={wos}
               moComplete={moComplete}
+              bomByproducts={orderBom?.byproducts ?? []}
+              bomOutputQty={orderBom?.outputQty ?? 1}
               onRefresh={refreshAll}
               onMessage={(msg, tone) => {
                 if (tone === "err") setErrBanner(msg);

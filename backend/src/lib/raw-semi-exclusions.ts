@@ -3,6 +3,17 @@
  * Flour, oils, snacks, and soap lines do not use that pattern — see purge script.
  */
 
+import { canonicalCategorySlug } from "./category-slug-map.js";
+
+const isOilsSlug = (slug: string | null | undefined) =>
+  canonicalCategorySlug(slug ?? "") === "oils-oil-seeds";
+const isSnacksSlug = (slug: string | null | undefined) =>
+  canonicalCategorySlug(slug ?? "") === "sweets-snacks";
+const isGrainsSlug = (slug: string | null | undefined) =>
+  canonicalCategorySlug(slug ?? "") === "grains-pulses-flours";
+const isMilletsSlug = (slug: string | null | undefined) =>
+  canonicalCategorySlug(slug ?? "") === "millets-millet-products";
+
 const FLOUR_RE =
   /\b(flour|atta|ravva|rava|sooji|besan|sattu|kanji|idli|puttu)\b/i;
 
@@ -39,7 +50,7 @@ export function isFlourLikeProduct(
   sku: string,
   categorySlug: string | null | undefined
 ): boolean {
-  if (categorySlug !== "grains" && categorySlug !== "millets") return false;
+  if (!isGrainsSlug(categorySlug) && !isMilletsSlug(categorySlug)) return false;
   return FLOUR_RE.test(`${sku} ${name}`);
 }
 
@@ -65,7 +76,7 @@ type ProductRef = {
 export function shouldSkipRawShadowFromFinished(p: ProductRef): boolean {
   if (p.type !== "finished") return false;
   const slug = p.categorySlug ?? null;
-  if (slug === "oils" || slug === "snacks") return true;
+  if (isOilsSlug(slug) || isSnacksSlug(slug)) return true;
   if (isSoapFinishedSku(p.sku)) return true;
   if (isFlourLikeProduct(p.name, p.sku, slug)) return true;
   return false;
@@ -75,7 +86,7 @@ export function shouldSkipRawShadowFromFinished(p: ProductRef): boolean {
 export function shouldSkipSemiShadowFromRaw(p: ProductRef): boolean {
   if (p.type !== "raw") return false;
   const slug = p.categorySlug ?? null;
-  if (slug === "oils" || slug === "snacks") return true;
+  if (isOilsSlug(slug) || isSnacksSlug(slug)) return true;
   if (isSoapProcessRawSku(p.sku)) return true;
   if (isSoapFinishedShadowSku(p.sku)) return true;
   if (isFlourLikeProduct(p.name, p.sku, slug)) return true;
@@ -106,7 +117,7 @@ export function shouldPurgeRawSemiProduct(
   if (isSoapProcessSemiSku(sku)) return true;
   if (isSoapFinishedShadowSku(sku)) return true;
 
-  if (slug === "snacks") return true;
+  if (slug === "snacks" || isSnacksSlug(slug)) return true;
 
   if (isFlourLikeProduct(p.name, p.sku, slug)) return true;
 
@@ -114,7 +125,7 @@ export function shouldPurgeRawSemiProduct(
   if (sourceSku) {
     const source = sourceBySku.get(sourceSku);
     if (source) {
-      if (source.categorySlug === "oils" || source.categorySlug === "snacks") return true;
+      if (isOilsSlug(source.categorySlug) || isSnacksSlug(source.categorySlug)) return true;
       if (source.type === "finished" && isSoapFinishedSku(source.sku)) return true;
       if (isFlourLikeProduct(source.name, source.sku, source.categorySlug)) return true;
       if (isSoapProcessRawSku(source.sku)) return true;
@@ -123,7 +134,7 @@ export function shouldPurgeRawSemiProduct(
   }
 
   // Oils category shadow rows without tags (shouldn't happen after backfill).
-  if (slug === "oils" && !isIntentionalOilBulkSku(sku) && !isSoapProcessRawSku(sku)) {
+  if (isOilsSlug(slug) && !isIntentionalOilBulkSku(sku) && !isSoapProcessRawSku(sku)) {
     if (p.type === "semi") return true;
     if (sourceSku || sku.startsWith("R")) return true;
   }

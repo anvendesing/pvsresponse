@@ -5,8 +5,10 @@
 import { Link, useNavigate } from "react-router-dom";
 import { useState } from "react";
 import { useCart, lineKeyFor } from "@/state/CartContext";
+import { lineBarcode } from "@/lib/scanCode";
 import { useToast } from "@/state/ToastContext";
-import { inr } from "@/lib/format";
+import { usePlatform } from "@/state/PlatformContext";
+import { inr, cartLineDescription } from "@/lib/format";
 import { TrashIcon } from "@/assets/icons";
 import { PackagingArt } from "@/components/PackagingArt";
 
@@ -16,6 +18,7 @@ export const CartPage = () => {
   const cart = useCart();
   const toast = useToast();
   const navigate = useNavigate();
+  const { isPhone } = usePlatform();
 
   const [notes, setNotes] = useState("");
   const [promo, setPromo] = useState("");
@@ -106,9 +109,9 @@ export const CartPage = () => {
                           <PackagingArt kind={l.packagingHint} />
                         </div>
                         <div>
-                          <div style={{ fontWeight: 600 }}>{l.productName}</div>
+                          <div style={{ fontWeight: 600 }}>{cartLineDescription(l)}</div>
                           <div style={{ fontSize: "0.78rem", color: "var(--neutral-gray)" }}>
-                            {l.variantSize ?? l.variantSku ?? l.productSku} · {inr(l.rate)} ea
+                            {[lineBarcode(l), `${inr(l.rate)} per pack`].filter(Boolean).join(" · ")}
                           </div>
                           <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginTop: "0.6rem" }}>
                             <span className="qty-pill green" style={{ height: 32 }}>
@@ -223,30 +226,56 @@ export const CartPage = () => {
                 )}
               </div>
 
-              <button
-                type="button"
-                className="btn btn-green btn-block"
-                style={{ marginTop: "1.25rem" }}
-                onClick={goCheckout}
-              >
-                Proceed to Checkout
-              </button>
-              <Link
-                to="/"
-                style={{
-                  display: "block",
-                  textAlign: "center",
-                  fontSize: "0.85rem",
-                  color: "var(--neutral-gray)",
-                  marginTop: "0.85rem",
-                }}
-              >
-                Continue shopping
-              </Link>
+              {!isPhone && (
+                <>
+                  <button
+                    type="button"
+                    className="btn btn-green btn-block"
+                    style={{ marginTop: "1.25rem" }}
+                    onClick={goCheckout}
+                  >
+                    Proceed to Checkout
+                  </button>
+                  <Link
+                    to="/"
+                    style={{
+                      display: "block",
+                      textAlign: "center",
+                      fontSize: "0.85rem",
+                      color: "var(--neutral-gray)",
+                      marginTop: "0.85rem",
+                    }}
+                  >
+                    Continue shopping
+                  </Link>
+                </>
+              )}
             </aside>
           )}
         </div>
       </div>
+
+      {/* Sticky bottom CTA on phone */}
+      {isPhone && cart.lines.length > 0 && (
+        <div className="sticky-bottom-cta">
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: "0.75rem", color: "var(--neutral-gray)" }}>
+              {cart.count} item{cart.count !== 1 ? "s" : ""}
+            </div>
+            <div style={{ fontSize: "1rem", fontWeight: 700, color: "var(--forest-green)" }}>
+              {inr(total)}
+            </div>
+          </div>
+          <button
+            type="button"
+            className="btn btn-green"
+            style={{ flex: "none", padding: "0.75rem 1.5rem" }}
+            onClick={goCheckout}
+          >
+            Checkout
+          </button>
+        </div>
+      )}
     </div>
   );
 };

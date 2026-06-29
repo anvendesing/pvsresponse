@@ -1,4 +1,4 @@
-// Product card used on Home (best sellers, combos) and Category
+// Product card used on Home, Category, and Concern listing grids.
 // listings. Renders one row per backend product. Variants are
 // surfaced as weight chips - clicking a chip selects that variant,
 // the price updates, and "Add to cart" pushes the chosen variant
@@ -8,6 +8,7 @@ import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { CatalogProduct, CatalogVariant } from "@/lib/api";
 import { inr, packagingFromName } from "@/lib/format";
+import { lineBarcode } from "@/lib/scanCode";
 import { useCart } from "@/state/CartContext";
 import { useWishlist } from "@/state/WishlistContext";
 import { useToast } from "@/state/ToastContext";
@@ -51,6 +52,11 @@ export const ProductCard = ({ product, badge }: Props) => {
   const inc = () => setQty((q) => Math.min(q + 1, stock || 1));
   const dec = () => setQty((q) => Math.max(1, q - 1));
 
+  const scanCode = lineBarcode({
+    barcode: variant?.barcode,
+    productBarcode: product.barcode,
+  });
+
   return (
     <article
       className="product-card"
@@ -92,7 +98,7 @@ export const ProductCard = ({ product, badge }: Props) => {
             {badge}
           </span>
         ) : (
-          product.sku
+          scanCode ?? ""
         )}
       </div>
 
@@ -111,9 +117,9 @@ export const ProductCard = ({ product, badge }: Props) => {
                 setVariantId(v.id);
                 setQty(1);
               }}
-              title={v.sku}
+              title={lineBarcode({ barcode: v.barcode, productBarcode: product.barcode }) ?? undefined}
             >
-              {v.size ?? v.sku}
+              {v.size ?? lineBarcode({ barcode: v.barcode, productBarcode: product.barcode }) ?? ""}
             </button>
           ))}
         </div>

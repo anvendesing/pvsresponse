@@ -9,6 +9,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { db } from "../db.js";
 import { recordChange } from "../sync/log.js";
+import { invalidateCompanyTaxCache } from "../lib/company-tax.js";
 import {
   DISPATCH_CATEGORIES,
   ensureDefaultDispatchOptions,
@@ -17,6 +18,8 @@ import {
   CONTAINER_KINDS,
   ensureDefaultContainerTypes,
 } from "../lib/container-types-seed.js";
+import { lookupPincodePlace } from "../lib/pincode-lookup.js";
+import { pincodeSchema } from "../lib/customer-address.js";
 
 const SINGLETON_KEY = "default";
 
@@ -47,6 +50,7 @@ const profileInput = z.object({
     .regex(/^\d{2}-\d{2}$/, "expected MM-DD")
     .optional(),
   defaultTaxRate: z.number().min(0).max(100).optional(),
+  pricingIncludesGst: z.boolean().optional(),
   termsDefault: z.string().max(2000).nullable().optional(),
   bankName: z.string().max(100).nullable().optional(),
   bankAccountNo: z.string().max(40).nullable().optional(),
@@ -59,6 +63,7 @@ const profileInput = z.object({
   requireMoReleaseBeforeIssue: z.boolean().optional(),
   packMultiContainerEnabled: z.boolean().optional(),
   packRequireSealConfirmation: z.boolean().optional(),
+  pickSortByBinEnabled: z.boolean().optional(),
 });
 
 // Reasonable starter values. The UI shows these the very first time
@@ -146,6 +151,7 @@ export const settingsRoutes = async (app: FastifyInstance) => {
         update: body,
         create: { key: SINGLETON_KEY, ...DEFAULT_PROFILE, ...body },
       });
+      invalidateCompanyTaxCache();
       await recordChange(
         "CompanyProfile",
         updated.id,
@@ -338,6 +344,27 @@ export const settingsRoutes = async (app: FastifyInstance) => {
       await db.containerType.delete({ where: { id } });
       await recordChange("ContainerType", id, "delete", { id }, req.user.sub);
       return { ok: true };
+    }
+  );
+
+  // Offline pincode → city, district, state, dispatch distance (ERP + forms).
+  app.get(
+    "/pincode-lookup",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      const pin = (req.query as { pin?: string }).pin?.trim() ?? "";
+      if (!pincodeSchema.safeParse(pin).success) {
+        return reply.code(400).send({
+          error: { code: "invalid_pincode", message: "Enter a valid 6-digit pincode." },
+        });
+      }
+      const place = await lookupPincodePlace(pin);
+      if (!place) {
+        return reply.code(404).send({
+          error: { code: "not_found", message: "Pincode not found in offline directory." },
+        });
+      }
+      return place;
     }
   );
 };

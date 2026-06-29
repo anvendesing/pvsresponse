@@ -6,6 +6,7 @@ import { useParams } from "react-router-dom";
 import { api, type PublicSalesOrderPayload } from "@/lib/api";
 import { inr } from "@/lib/format";
 import { resolveBillingTotals } from "@/lib/billingTotals";
+import { BillingTotalsBreakdown } from "@/components/billing/BillingTotalsBreakdown";
 import { PublicDocShell, fmtPublicDate } from "@/components/public/PublicDocShell";
 
 const statusBadge = (status: string) => {
@@ -56,6 +57,10 @@ export const PublicSalesOrder = () => {
     ? resolveBillingTotals({
         subTotal: data.subTotal,
         tax: data.tax,
+        cgstTotal: data.cgstTotal,
+        sgstTotal: data.sgstTotal,
+        igstTotal: data.igstTotal,
+        taxKind: data.taxKind,
         transportCharge: data.transportCharge,
         transportTax: data.transportTax,
         total: data.total,
@@ -135,33 +140,10 @@ export const PublicSalesOrder = () => {
           </div>
 
           <div className="flex justify-end pb-6 border-b border-gray-200">
-            <div className="w-72 space-y-1.5 text-sm">
-              <div className="flex justify-between">
-                <span className="text-gray-600">Sub-total (goods)</span>
-                <span className="tabular-nums">{inr(billingTotals!.goodsSubTotal)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-gray-600">GST (goods)</span>
-                <span className="tabular-nums">{inr(billingTotals!.goodsTax)}</span>
-              </div>
-              {(billingTotals!.transportCharge > 0 || billingTotals!.transportTax > 0) && (
-                <>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600">Freight / transport</span>
-                    <span className="tabular-nums">{inr(billingTotals!.transportCharge)}</span>
-                  </div>
-                  {billingTotals!.transportTax > 0 && (
-                    <div className="flex justify-between">
-                      <span className="text-gray-600">GST on freight</span>
-                      <span className="tabular-nums">{inr(billingTotals!.transportTax)}</span>
-                    </div>
-                  )}
-                </>
+            <div className="w-72">
+              {billingTotals && (
+                <BillingTotalsBreakdown totals={billingTotals} totalLabel="Order value" />
               )}
-              <div className="flex justify-between text-lg pt-2 border-t border-gray-200 mt-1">
-                <span className="font-bold">Order value</span>
-                <span className="font-bold tabular-nums">{inr(billingTotals!.grandTotal)}</span>
-              </div>
             </div>
           </div>
 

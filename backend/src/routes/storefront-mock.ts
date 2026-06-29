@@ -1,4 +1,4 @@
-// Storefront mock: a single endpoint that lets a non-authenticated
+﻿// Storefront mock: a single endpoint that lets a non-authenticated
 // caller place a *prepaid* order. The intent is to demo what the
 // real-storefront flow will look like without standing up the full
 // auth/cart/payment-gateway scaffolding.
@@ -30,84 +30,106 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { db } from "../db.js";
-import { mintShareToken } from "../lib/share.js";
-import { recordChange } from "../sync/log.js";
-import { createPickListForSalesOrder } from "../services/pick-list-create.js";
-import { resolveGstRate, computeTax, lineTax } from "../lib/tax.js";
-import { nextPaymentNo } from "./customer-payments.js";
+import { getRazorpayClient, inrToPaise } from "../lib/razorpay.js";
+import {
+  buildPayuRequestHash,
+  formatPayuAmount,
+  generatePayuTxnId,
+  getPayuCredentials,
+  payuCheckoutUrl,
+} from "../lib/payu.js";
+import {
+  isGatewayConfigured,
+  listActiveStorefrontGateways,
+  resolveStorefrontGateway,
+} from "../lib/storefront-payment.js";
+import { config } from "../config.js";
+import {
+  storefrontOrderSchema,
+  storefrontOrderItemSchema,
+  validateStorefrontOrder,
+  fulfillPrepaidStorefrontOrder,
+  buildOrderResponse,
+  confirmPaymentIntentById,
+  type CartSnapshot,
+} from "../services/storefront-order.js";
+import { quoteStorefrontShipping } from "../lib/storefront-shipping.js";
+import { logSystemError, logSystemInfo, logSystemWarn } from "../lib/system-log.js";
+import {
+  getCustomerOrderBySoNo,
+  optionalStorefrontAuth,
+  mapCustomerOrderRow,
+  serializeCustomerOrders,
+} from "../lib/storefront-customer.js";
+import { consumeOtpToken, validateOtp } from "../lib/otp.js";
+import { normalizePhone } from "../lib/phone.js";
 
-const orderSchema = z.object({
-  name: z.string().trim().min(1).max(120),
-  email: z.string().trim().toLowerCase().email(),
-  phone: z.string().trim().min(6).max(20),
-  city: z.string().trim().min(1).max(80).optional(),
-  notes: z.string().trim().max(500).optional(),
-  items: z
-    .array(
-      z.object({
-        productId: z.string().min(1),
-        variantId: z.string().nullable().optional(),
-        qty: z.number().positive(),
-      })
-    )
-    .min(1)
-    .max(40),
+const shippingQuoteSchema = z.object({
+  pincode: z.string().trim().min(6).max(10),
+  state: z.string().trim().max(80).optional(),
+  addressId: z.string().trim().optional(),
+  subTotal: z.number().min(0),
+  items: z.array(storefrontOrderItemSchema).min(1).max(40),
 });
 
-// Generate the next CUST-NNNN code. Mirrors catalog.ts logic; kept
-// inline (and not extracted) because there's only this one extra
-// caller and the helper is dead simple.
-const nextCustomerCode = async (): Promise<string> => {
-  const last = await db.customer.findFirst({
-    where: { code: { startsWith: "CUST-" } },
-    orderBy: { code: "desc" },
-    select: { code: true },
-  });
-  const n = last ? parseInt(last.code.replace("CUST-", ""), 10) || 0 : 0;
-  return `CUST-${(n + 1).toString().padStart(4, "0")}`;
-};
+const orderInitSchema = storefrontOrderSchema.extend({
+  gateway: z.enum(["razorpay", "payu"]).optional(),
+});
 
-const nextSoNo = async (): Promise<string> => {
-  const rows = await db.salesOrder.findMany({
-    where: { soNo: { startsWith: "SO-2026-" } },
-    select: { soNo: true },
-  });
-  const tail = rows
-    .map((r) => parseInt(r.soNo.split("-").pop() ?? "0", 10))
-    .filter((n) => Number.isFinite(n));
-  const max = tail.length > 0 ? Math.max(...tail) : 2000;
-  return `SO-2026-${String(max + 1).padStart(4, "0")}`;
-};
+const confirmSchema = z.object({
+  intentId: z.string().min(1),
+  razorpay_payment_id: z.string().min(1),
+  razorpay_order_id: z.string().min(1),
+  razorpay_signature: z.string().min(1),
+});
 
-const nextInvoiceNo = async (): Promise<string> => {
-  const rows = await db.invoice.findMany({
-    where: { invoiceNo: { startsWith: "INV-2026-" } },
-    select: { invoiceNo: true },
-  });
-  const tail = rows
-    .map((r) => parseInt(r.invoiceNo.split("-").pop() ?? "0", 10))
-    .filter((n) => Number.isFinite(n));
-  const max = tail.length > 0 ? Math.max(...tail) : 5499;
-  return `INV-2026-${String(max + 1).padStart(4, "0")}`;
-};
-
-// Resolve a "system" user id once at startup. The pick-list creator
-// needs a User.id for createdById. Falls back to the seeded admin -
-// every fresh install has one. If even that is missing we leave it
-// null and the route will surface a 500 on first call rather than
-// silently corrupt audit logs.
-let systemUserIdCache: string | null | undefined;
-const getSystemUserId = async (): Promise<string | null> => {
-  if (systemUserIdCache !== undefined) return systemUserIdCache;
-  const u = await db.user.findFirst({
-    where: { username: "admin" },
-    select: { id: true },
-  });
-  systemUserIdCache = u?.id ?? null;
-  return systemUserIdCache;
-};
+const lookupSchema = z.object({
+  soNo: z.string().trim().min(1),
+  phone: z.string().trim().min(6).max(20),
+  code: z.string().trim().length(6),
+});
 
 export const storefrontMockRoutes = async (app: FastifyInstance) => {
+  app.get("/storefront-mock/payment/gateways", async () => {
+    const active = await listActiveStorefrontGateways();
+    const configured: string[] = [];
+    for (const g of active) {
+      if (await isGatewayConfigured(g)) configured.push(g);
+    }
+    return { active: configured };
+  });
+
+  app.post("/storefront-mock/shipping/quote", async (req, reply) => {
+    const body = shippingQuoteSchema.parse(req.body);
+    const user = await optionalStorefrontAuth(req);
+    const result = await quoteStorefrontShipping({
+      deliveryPincode: body.pincode,
+      subTotal: body.subTotal,
+      items: body.items,
+      deliveryState: body.state,
+      addressId: body.addressId ?? null,
+      customerId: user?.customerId ?? null,
+    });
+    if (!result.ok) {
+      return reply.code(400).send({
+        error: { code: result.code, message: result.message },
+      });
+    }
+    await logSystemInfo("storefront", "shipping_quote", "Shipping quote returned", {
+      pincode: result.quote.deliveryPincode,
+      weightKg: result.quote.weightKg,
+      source: result.quote.source,
+      options: result.quote.options.map((o) => ({
+        id: o.id,
+        fee: o.fee,
+        transportTax: o.transportTax,
+        payableTotal: o.payableTotal,
+      })),
+    });
+    return result.quote;
+  });
+
+  // Legacy direct order (test seeding only) â€” requires MOCK_STOREFRONT_TOKEN when set.
   app.post("/storefront-mock/order", async (req, reply) => {
     const expectedToken = process.env.MOCK_STOREFRONT_TOKEN;
     if (expectedToken) {
@@ -117,375 +139,258 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
           .code(401)
           .send({ error: { code: "unauthorized", message: "Bad mock token." } });
       }
-    }
-
-    const body = orderSchema.parse(req.body);
-
-    // ---- Pre-flight oversell guard. Same shape as billing.ts. -----------
-    const variantIds = body.items
-      .map((i) => i.variantId)
-      .filter((v): v is string => typeof v === "string" && v.length > 0);
-    const productIds = body.items.map((i) => i.productId);
-
-    const variants = variantIds.length
-      ? await db.productVariant.findMany({
-          where: { id: { in: variantIds } },
-          select: {
-            id: true,
-            sku: true,
-            stockOnHand: true,
-            productId: true,
-            sellingPriceOverride: true,
-            active: true,
-            ecommerceEnabled: true,
-            gstRate: true,
-          },
-        })
-      : [];
-    const products = await db.product.findMany({
-      where: { id: { in: productIds } },
-      select: {
-        id: true,
-        sku: true,
-        name: true,
-        state: true,
-        stockOnHand: true,
-        sellingPrice: true,
-        gstRate: true,
-        ecommerceEnabled: true,
-      },
-    });
-    const vMap = new Map(variants.map((v) => [v.id, v]));
-    const pMap = new Map(products.map((p) => [p.id, p]));
-
-    type Issue = { sku: string; requested: number; available: number };
-    const oversell: Issue[] = [];
-    for (const it of body.items) {
-      const p = pMap.get(it.productId);
-      if (!p) {
-        return reply.code(400).send({
-          error: {
-            code: "product_not_found",
-            message: `Unknown productId ${it.productId}.`,
-          },
-        });
-      }
-      if (p.state !== "active") {
-        return reply.code(409).send({
-          error: {
-            code: "product_inactive",
-            message: `${p.sku} is not on sale (state=${p.state}).`,
-          },
-        });
-      }
-      if (!p.ecommerceEnabled) {
-        return reply.code(409).send({
-          error: {
-            code: "product_not_in_ecommerce",
-            message: `${p.sku} is not listed for e-commerce.`,
-          },
-        });
-      }
-      if (it.variantId) {
-        const v = vMap.get(it.variantId);
-        if (!v || v.productId !== it.productId) {
-          return reply.code(400).send({
-            error: {
-              code: "variant_mismatch",
-              message: `Variant ${it.variantId} does not belong to product ${p.sku}.`,
-            },
-          });
-        }
-        if (!v.active) {
-          return reply.code(409).send({
-            error: {
-              code: "variant_inactive",
-              message: `Variant ${v.sku} is no longer on sale.`,
-            },
-          });
-        }
-        if (!v.ecommerceEnabled) {
-          return reply.code(409).send({
-            error: {
-              code: "variant_not_in_ecommerce",
-              message: `Variant ${v.sku} is not listed for e-commerce.`,
-            },
-          });
-        }
-        if (it.qty > (v.stockOnHand ?? 0)) {
-          oversell.push({
-            sku: v.sku,
-            requested: it.qty,
-            available: v.stockOnHand ?? 0,
-          });
-        }
-      } else {
-        if (it.qty > (p.stockOnHand ?? 0)) {
-          oversell.push({
-            sku: p.sku,
-            requested: it.qty,
-            available: p.stockOnHand ?? 0,
-          });
-        }
-      }
-    }
-    if (oversell.length > 0) {
-      return reply.code(409).send({
+    } else {
+      return reply.code(403).send({
         error: {
-          code: "insufficient_stock",
-          message: `One or more lines exceed available stock: ${oversell
-            .map((o) => `${o.sku} (need ${o.requested}, have ${o.available})`)
-            .join("; ")}`,
-          details: oversell,
-        },
-      });
-    }
-
-    // ---- Compute totals using per-line GST rates. ---------------------------------
-    type LineCalc = {
-      productId: string;
-      variantId: string | null;
-      qty: number;
-      rate: number;
-      amount: number;
-      gstRate: number;
-    };
-    const lines: LineCalc[] = body.items.map((it) => {
-      const p = pMap.get(it.productId)!;
-      const v = it.variantId ? vMap.get(it.variantId) : null;
-      const rate = v?.sellingPriceOverride ?? p.sellingPrice ?? 0;
-      return {
-        productId: it.productId,
-        variantId: it.variantId ?? null,
-        qty: it.qty,
-        rate,
-        amount: it.qty * rate,
-        gstRate: resolveGstRate({ gstRate: p.gstRate }, v ? { gstRate: v.gstRate } : null),
-      };
-    });
-    const subTotal = lines.reduce((s, l) => s + l.amount, 0);
-    const tax = computeTax(lines.map((l) => ({ amount: l.amount, gstRate: l.gstRate })));
-    const total = subTotal + tax;
-
-    // Atomic write: customer/account upsert -> SO -> invoice -> stock decs.
-    const sysUserId = await getSystemUserId();
-    if (!sysUserId) {
-      return reply.code(500).send({
-        error: {
-          code: "no_system_user",
+          code: "use_payment_gateway",
           message:
-            "Seeded admin user not found - storefront mock cannot create pick lists.",
+            "Direct order placement is disabled. Use /storefront-mock/order/init with Razorpay or PayU.",
         },
       });
     }
 
-    const result = await db.$transaction(async (tx) => {
-      // 1. Customer + CustomerAccount upsert by email.
-      let account = await tx.customerAccount.findUnique({
-        where: { email: body.email },
-        include: { customer: true },
-      });
-      let customer;
-      if (account) {
-        customer = account.customer;
-        // Refresh any updated phone/city/name on the linked Customer
-        // row so the order reflects what the user just typed.
-        customer = await tx.customer.update({
-          where: { id: customer.id },
-          data: {
-            name: body.name,
-            contact: body.phone,
-            city: body.city ?? customer.city,
-          },
-        });
-      } else {
-        const code = await nextCustomerCode();
-        customer = await tx.customer.create({
-          data: {
-            code,
-            name: body.name,
-            contact: body.phone,
-            city: body.city ?? null,
-          },
-        });
-        account = await tx.customerAccount.create({
-          data: {
-            customerId: customer.id,
-            email: body.email,
-          },
-          include: { customer: true },
-        });
-      }
+    const body = storefrontOrderSchema.parse(req.body);
+    const validated = await validateStorefrontOrder(body, reply);
+    if (!validated) return;
 
-      // 2. Sales order (confirmed, source=ecommerce).
-      const soNo = await nextSoNo();
-      const so = await tx.salesOrder.create({
-        data: {
-          soNo,
-          shareToken: mintShareToken(),
-          customerId: customer.id,
-          status: "confirmed",
-          source: "ecommerce",
-          notes: body.notes ?? null,
-          subTotal,
-          tax,
-          total,
-          items: {
-            create: lines.map((l) => ({
-              productId: l.productId,
-              variantId: l.variantId,
-              qtyOrdered: l.qty,
-              rate: l.rate,
-              amount: l.amount,
-            })),
-          },
-        },
-      });
-
-      // 3. Stock decrement (variant first, fall back to product).
-      for (const l of lines) {
-        const dec = Math.round(l.qty);
-        if (l.variantId) {
-          await tx.productVariant.update({
-            where: { id: l.variantId },
-            data: { stockOnHand: { decrement: dec } },
-          });
-        } else {
-          await tx.product.update({
-            where: { id: l.productId },
-            data: { stockOnHand: { decrement: dec } },
-          });
-        }
-      }
-
-      // 4. Paid invoice. paymentMode=upi as a placeholder; the mock
-      //    payment provider would set this to whatever the real
-      //    rail used.
-      const invoiceNo = await nextInvoiceNo();
-      const invoice = await tx.invoice.create({
-        data: {
-          invoiceNo,
-          shareToken: mintShareToken(),
-          customerId: customer.id,
-          salesOrderId: so.id,
-          amount: total,
-          tax,
-          status: "paid",
-          paymentMode: "upi",
-          items: {
-            create: lines.map((l) => ({
-              productId: l.productId,
-              variantId: l.variantId,
-              qty: l.qty,
-              rate: l.rate,
-              amount: l.amount,
-              gstRate: l.gstRate,
-              taxAmount: lineTax(l.amount, l.gstRate),
-            })),
-          },
-        },
-      });
-
-      // Prepaid checkout → record AR payment + allocation so the
-      // customer statement shows debit (invoice) and credit (payment)
-      // netting to zero. Without this, Open Balance is correct (paid
-      // invoices are excluded) but the ledger closing balance is wrong.
-      const paymentNo = await nextPaymentNo();
-      const payment = await tx.customerPayment.create({
-        data: {
-          paymentNo,
-          customerId: customer.id,
-          amount: total,
-          mode: "upi",
-          reference: invoiceNo,
-          notes: `Storefront prepaid · ${soNo}`,
-          allocations: {
-            create: [{ invoiceId: invoice.id, amount: total }],
-          },
-        },
-      });
-
-      // Sale ledger rows are NOT posted here. The storefront doesn't
-      // know which bin/warehouse will fulfil the order — that is
-      // decided at pick/pack time (often STR). Ledger posts happen
-      // in POST /packing-slips/:id/pack from the pick bin's warehouse.
-
-      // qtyInvoiced is intentionally left at 0 on the SO lines even
-      // though the invoice exists. Reason: qtyInvoiced doubles as
-      // "qty already drawn down on the pick pipeline" in the existing
-      // pick-list creator (it computes remaining = qtyOrdered -
-      // qtyInvoiced - qtyCancelled - onPick). Bumping it here would
-      // make the pick list creator think there's nothing left to
-      // pick. The qtyInvoiced increment happens at pack-complete for
-      // ecommerce SOs instead, mirroring how B2B orders bump it at
-      // /packing-slips/:id/invoice.
-
-      return { customer, account, so, invoice, payment };
+    const fulfilled = await fulfillPrepaidStorefrontOrder(body, validated, {
+      mode: "upi",
+      reference: "mock-storefront",
     });
-
-    // 7. Outside the transaction so we don't hold locks while the
-    //    pick-list helper itself runs nested writes. The pick list is
-    //    drafted from the freshly-created SO; if it fails, the SO and
-    //    invoice are still valid (warehouse can re-issue the pick
-    //    list manually from the desktop).
-    const pickResult = await createPickListForSalesOrder(
-      result.so.id,
-      sysUserId
-    );
-
-    await recordChange("SalesOrder", result.so.id, "insert", result.so, sysUserId);
-    await recordChange("Invoice", result.invoice.id, "insert", result.invoice, sysUserId);
-    await recordChange(
-      "CustomerPayment",
-      result.payment.id,
-      "insert",
-      result.payment,
-      sysUserId
-    );
-    // recordChange's verb enum doesn't include "upsert"; the storefront-mock
-    // path either inserts a brand-new Customer or updates an existing one, so
-    // surface the more accurate "insert" / "update" verb at the call site.
-    await recordChange("Customer", result.customer.id, "update", result.customer, sysUserId);
-    if (pickResult.ok) {
-      await recordChange(
-        "PickList",
-        pickResult.pickList.id,
-        "insert",
-        pickResult.pickList,
-        sysUserId
-      );
+    if (!fulfilled.ok) {
+      return reply.code(500).send({
+        error: { code: fulfilled.code, message: fulfilled.message },
+      });
     }
 
-    return reply.code(201).send({
-      customer: {
-        id: result.customer.id,
-        code: result.customer.code,
-        name: result.customer.name,
-      },
-      customerAccount: {
-        id: result.account.id,
-        email: result.account.email,
-      },
-      salesOrder: {
-        id: result.so.id,
-        soNo: result.so.soNo,
-        status: result.so.status,
-        total: result.so.total,
-        shareToken: result.so.shareToken,
-      },
-      invoice: {
-        id: result.invoice.id,
-        invoiceNo: result.invoice.invoiceNo,
-        amount: result.invoice.amount,
-        status: result.invoice.status,
-        shareToken: result.invoice.shareToken,
-      },
-      pickList: pickResult.ok
-        ? pickResult.pickList
-        : { error: pickResult.error },
-    });
+    return reply.code(201).send(
+      buildOrderResponse(fulfilled.result, fulfilled.pickList)
+    );
   });
 
+  app.post("/storefront-mock/order/init", async (req, reply) => {
+    const session = await optionalStorefrontAuth(req);
+    let body = orderInitSchema.parse(req.body);
+
+    if (session) {
+      const account = await db.customerAccount.findUnique({
+        where: { id: session.accountId },
+        include: { customer: true },
+      });
+      if (account) {
+        body = {
+          ...body,
+          phone: account.phone ?? body.phone,
+          name: account.customer.name || body.name,
+          email: account.email ?? body.email,
+        };
+        if (body.addressId) {
+          const addr = await db.customerAddress.findFirst({
+            where: { id: body.addressId, customerId: session.customerId },
+          });
+          if (!addr) {
+            return reply.code(400).send({
+              error: { code: "invalid_address", message: "Address not found on your account." },
+            });
+          }
+        }
+      }
+    }
+
+    const gatewayPick = await resolveStorefrontGateway(body.gateway ?? null);
+    if (!gatewayPick.ok) {
+      return reply.code(503).send({
+        error: { code: gatewayPick.code, message: gatewayPick.message },
+      });
+    }
+    const gateway = gatewayPick.gateway;
+
+    const validated = await validateStorefrontOrder(body, reply, {
+      customerId: session?.customerId,
+    });
+    if (!validated) return;
+
+    await logSystemInfo("storefront", "order_init", `${gateway} checkout initiated`, {
+      gateway,
+      phone: body.phone,
+      deliveryMethod: body.deliveryMethod,
+      pincode: body.pincode ?? null,
+      addressId: body.addressId ?? null,
+      totals: {
+        subTotal: validated.subTotal,
+        tax: validated.tax,
+        transportTax: validated.transportTax,
+        shippingFee: validated.shippingFee,
+        total: validated.total,
+      },
+      weightKg: validated.weightKg,
+      shipping: validated.shippingMeta ?? null,
+    }, body.phone);
+
+    const snapshot: CartSnapshot = {
+      ...body,
+      subTotal: validated.subTotal,
+      tax: validated.tax,
+      transportTax: validated.transportTax,
+      total: validated.total,
+      weightKg: validated.weightKg,
+      shippingSource: validated.shippingMeta?.source,
+    };
+
+    const totals = {
+      subTotal: validated.subTotal,
+      tax: validated.tax,
+      transportTax: validated.transportTax,
+      shippingFee: validated.shippingFee,
+      total: validated.total,
+    };
+
+    const prefill = {
+      name: body.name,
+      email: body.email ?? "",
+      contact: body.phone,
+    };
+
+    if (gateway === "payu") {
+      const payu = await getPayuCredentials();
+      if (!payu) {
+        return reply.code(503).send({
+          error: {
+            code: "payu_not_configured",
+            message:
+              "PayU is not configured. Set merchant key + salt in Settings → Payment (PayU) or PAYU_MERCHANT_KEY/SALT env vars.",
+          },
+        });
+      }
+
+      const txnid = generatePayuTxnId();
+      const amount = formatPayuAmount(validated.total);
+      const productinfo = "Prakruthivanam order";
+      const firstname = body.name.split(/\s+/)[0] || body.name;
+      const email = body.email?.trim() || `${body.phone.replace(/\D/g, "")}@customers.pvs.local`;
+
+      const intent = await db.paymentIntent.create({
+        data: {
+          gateway: "payu",
+          gatewayOrderId: txnid,
+          amount: validated.total,
+          email,
+          phone: body.phone,
+          cartSnapshot: JSON.stringify(snapshot),
+        },
+      });
+
+      const returnBase = `${config.publicApiBase}/v1/storefront-mock/order/payu/return`;
+      const hash = buildPayuRequestHash({
+        key: payu.merchantKey,
+        salt: payu.salt,
+        txnid,
+        amount,
+        productinfo,
+        firstname,
+        email,
+        udf1: intent.id,
+      });
+
+      return {
+        gateway: "payu" as const,
+        intentId: intent.id,
+        checkoutUrl: payuCheckoutUrl(payu.mode),
+        fields: {
+          key: payu.merchantKey,
+          txnid,
+          amount,
+          productinfo,
+          firstname,
+          email,
+          phone: body.phone,
+          surl: returnBase,
+          furl: returnBase,
+          hash,
+          udf1: intent.id,
+          service_provider: "payu_paisa",
+        },
+        totals,
+        prefill,
+      };
+    }
+
+    const rzp = await getRazorpayClient();
+    if (!rzp) {
+      return reply.code(503).send({
+        error: {
+          code: "razorpay_not_configured",
+          message:
+            "Razorpay is not configured. Set keys in Settings â†’ Payment (Razorpay) or RAZORPAY_KEY_ID/SECRET env vars.",
+        },
+      });
+    }
+
+    const receipt = `pv-${Date.now()}`;
+    const order = await rzp.client.orders.create({
+      amount: inrToPaise(validated.total),
+      currency: "INR",
+      receipt,
+      notes: { phone: body.phone, email: body.email ?? "" },
+    });
+
+    const intent = await db.paymentIntent.create({
+      data: {
+        gateway: "razorpay",
+        gatewayOrderId: order.id,
+        amount: validated.total,
+        email: body.email || null,
+        phone: body.phone,
+        cartSnapshot: JSON.stringify(snapshot),
+      },
+    });
+
+    return {
+      gateway: "razorpay" as const,
+      intentId: intent.id,
+      razorpayOrderId: order.id,
+      keyId: rzp.creds.keyId,
+      amount: inrToPaise(validated.total),
+      currency: "INR",
+      totals,
+      prefill,
+    };
+  });
+
+  app.post("/storefront-mock/order/confirm", async (req, reply) => {
+    const body = confirmSchema.parse(req.body);
+    const creds = await getRazorpayClient();
+    if (!creds) {
+      return reply.code(503).send({
+        error: { code: "razorpay_not_configured", message: "Razorpay is not configured." },
+      });
+    }
+
+    const result = await confirmPaymentIntentById(
+      body.intentId,
+      body.razorpay_payment_id,
+      body.razorpay_order_id,
+      body.razorpay_signature,
+      creds.creds.keySecret
+    );
+
+    if (!result.ok) {
+      await logSystemError("storefront", "order_confirm", result.message, {
+        intentId: body.intentId,
+        code: result.code,
+      }, body.intentId);
+      return reply.code(result.status).send({
+        error: { code: result.code, message: result.message },
+      });
+    }
+
+    await logSystemInfo("storefront", "order_confirm", "Storefront order confirmed after payment", {
+      intentId: body.intentId,
+      soNo: result.response.salesOrder.soNo,
+    }, result.response.salesOrder.soNo);
+
+    return reply.code(201).send(result.response);
+  });
   // Active storefront categories for home page / nav (admin-configurable).
   app.get("/storefront-mock/categories", async () => {
     return db.productCategory.findMany({
@@ -497,12 +402,30 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
         name: true,
         sortOrder: true,
         imageUrl: true,
+        updatedAt: true,
       },
     });
   });
 
-  // Public enquiry capture — lets the storefront submit a lead (product
-  // interest, dealership application, farm-visit request, …) without auth.
+  // Active storefront concerns for "Shop by Concern" navigation.
+  app.get("/storefront-mock/concerns", async () => {
+    return db.productConcern.findMany({
+      where: { active: true },
+      orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
+      select: {
+        id: true,
+        slug: true,
+        name: true,
+        description: true,
+        icon: true,
+        sortOrder: true,
+        imageUrl: true,
+      },
+    });
+  });
+
+  // Public enquiry capture â€” lets the storefront submit a lead (product
+  // interest, dealership application, farm-visit request, â€¦) without auth.
   // Lands in the CRM pipeline at stage "new", source "website".
   app.post("/storefront-mock/enquiries", async (req, reply) => {
     const body = z
@@ -566,10 +489,14 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
       orderBy: { sku: "asc" },
       include: {
         category: { select: { id: true, slug: true, name: true } },
+        concernLinks: {
+          select: { concern: { select: { id: true, slug: true, name: true, active: true } } },
+        },
         variants: {
           select: {
             id: true,
             sku: true,
+            barcode: true,
             size: true,
             color: true,
             grade: true,
@@ -589,6 +516,7 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
       .map((p) => ({
         id: p.id,
         sku: p.sku,
+        barcode: p.barcode,
         name: p.name,
         categoryId: p.categoryId,
         categorySlug: p.category!.slug,
@@ -601,12 +529,20 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
         description: p.description ?? null,
         imageHint: p.imageHint ?? null,
         imageUrl: p.imageUrl ?? null,
+        imageUpdatedAt: p.updatedAt ? p.updatedAt.getTime() : null,
         tags: p.tags ? p.tags.split(",").map((t) => t.trim()).filter(Boolean) : [],
+        concernSlugs: p.concernLinks
+          .filter((l) => l.concern.active)
+          .map((l) => l.concern.slug),
+        concernNames: p.concernLinks
+          .filter((l) => l.concern.active)
+          .map((l) => l.concern.name),
         variants: p.variants
           .filter((v) => v.active && v.ecommerceEnabled && (v.stockOnHand ?? 0) > 0)
           .map((v) => ({
             id: v.id,
             sku: v.sku,
+            barcode: v.barcode,
             size: v.size,
             color: v.color,
             grade: v.grade,
@@ -628,10 +564,14 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
       where: { OR: [{ id }, { sku: id }], state: "active", ecommerceEnabled: true },
       include: {
         category: { select: { id: true, slug: true, name: true } },
+        concernLinks: {
+          select: { concern: { select: { id: true, slug: true, name: true, active: true } } },
+        },
         variants: {
           select: {
             id: true,
             sku: true,
+            barcode: true,
             size: true,
             color: true,
             grade: true,
@@ -650,6 +590,7 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
     return {
       id: p.id,
       sku: p.sku,
+      barcode: p.barcode,
       name: p.name,
       categoryId: p.categoryId,
       categorySlug: p.category?.slug ?? null,
@@ -664,11 +605,18 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
       imageHint: p.imageHint ?? null,
       imageUrl: p.imageUrl ?? null,
       tags: p.tags ? p.tags.split(",").map((t) => t.trim()).filter(Boolean) : [],
+      concernSlugs: p.concernLinks
+        .filter((l) => l.concern.active)
+        .map((l) => l.concern.slug),
+      concernNames: p.concernLinks
+        .filter((l) => l.concern.active)
+        .map((l) => l.concern.name),
       variants: p.variants
         .filter((v) => v.active && v.ecommerceEnabled)
         .map((v) => ({
           id: v.id,
           sku: v.sku,
+          barcode: v.barcode,
           size: v.size,
           color: v.color,
           grade: v.grade,
@@ -693,67 +641,122 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
   app.get<{ Querystring: { email?: string } }>(
     "/storefront-mock/orders",
     async (req, reply) => {
+      const session = await optionalStorefrontAuth(req);
+      if (session) {
+        return serializeCustomerOrders(session.customerId);
+      }
+
       const email = (req.query.email ?? "").trim().toLowerCase();
       if (!email) {
         return reply.code(400).send({
-          error: { code: "missing_email", message: "?email= is required." },
+          error: { code: "unauthorized", message: "Sign in or provide ?email= (legacy)." },
         });
       }
-      const account = await db.customerAccount.findUnique({
+      const account = await db.customerAccount.findFirst({
         where: { email },
         select: { customerId: true },
       });
       if (!account) return [];
-
-      const orders = await db.salesOrder.findMany({
-        where: { customerId: account.customerId },
-        orderBy: { createdAt: "desc" },
-        take: 50,
-        include: {
-          invoices: {
-            select: { invoiceNo: true, status: true, createdAt: true },
-            orderBy: { createdAt: "desc" },
-            take: 1,
-          },
-          packingSlips: {
-            select: {
-              packingSlipNo: true,
-              status: true,
-              awb: true,
-              carrier: true,
-              trackingUrl: true,
-              dispatchedAt: true,
-              deliveredAt: true,
-              createdAt: true,
-            },
-            orderBy: { createdAt: "desc" },
-            take: 1,
-          },
-          items: { select: { id: true } },
-        },
-      });
-
-      return orders.map((o) => ({
-        id: o.id,
-        soNo: o.soNo,
-        status: o.status,
-        total: o.total,
-        createdAt: o.createdAt,
-        invoiceNo: o.invoices[0]?.invoiceNo ?? null,
-        invoiceStatus: o.invoices[0]?.status ?? null,
-        packingSlip: o.packingSlips[0]
-          ? {
-              packingSlipNo: o.packingSlips[0].packingSlipNo,
-              status: o.packingSlips[0].status,
-              awb: o.packingSlips[0].awb,
-              carrier: o.packingSlips[0].carrier,
-              trackingUrl: o.packingSlips[0].trackingUrl,
-              dispatchedAt: o.packingSlips[0].dispatchedAt,
-              deliveredAt: o.packingSlips[0].deliveredAt,
-            }
-          : null,
-        itemCount: o.items.length,
-      }));
+      return serializeCustomerOrders(account.customerId);
     }
   );
+
+  app.get<{ Params: { soNo: string } }>(
+    "/storefront-mock/orders/:soNo",
+    async (req, reply) => {
+      const session = await optionalStorefrontAuth(req);
+      if (!session) {
+        return reply.code(401).send({
+          error: { code: "unauthorized", message: "Sign in to view order details." },
+        });
+      }
+      const row = await getCustomerOrderBySoNo(session.customerId, req.params.soNo);
+      if (!row) {
+        return reply.code(404).send({
+          error: { code: "not_found", message: "Order not found." },
+        });
+      }
+      return row;
+    }
+  );
+
+  app.post("/storefront-mock/orders/lookup", async (req, reply) => {
+    const body = lookupSchema.parse(req.body);
+    const phone = normalizePhone(body.phone);
+    if (!phone) {
+      return reply.code(400).send({ error: { code: "invalid_phone", message: "Invalid mobile number." } });
+    }
+
+    const otp = await validateOtp(phone, "track", body.code);
+    if (!otp.ok) {
+      const messages: Record<string, string> = {
+        invalid: "Invalid OTP.",
+        expired: "OTP expired or already used. Request a new code.",
+        locked: "Too many failed attempts. Try again in 15 minutes.",
+        max_attempts: "Incorrect OTP.",
+      };
+      return reply.code(400).send({
+        error: { code: otp.reason, message: messages[otp.reason] ?? "OTP verification failed." },
+      });
+    }
+
+    const account = await db.customerAccount.findUnique({ where: { phone } });
+    const customerIds = account
+      ? [account.customerId]
+      : (
+          await db.customer.findMany({
+            where: { contact: phone },
+            select: { id: true },
+          })
+        ).map((c) => c.id);
+
+    if (customerIds.length === 0) {
+      return reply.code(404).send({ error: { code: "not_found", message: "Order not found." } });
+    }
+
+    const order = await db.salesOrder.findFirst({
+      where: { soNo: body.soNo.trim(), customerId: { in: customerIds } },
+      include: {
+        invoices: {
+          select: { invoiceNo: true, status: true, createdAt: true },
+          orderBy: { createdAt: "desc" },
+          take: 1,
+        },
+        packingSlips: {
+          select: {
+            packingSlipNo: true,
+            status: true,
+            awb: true,
+            carrier: true,
+            trackingUrl: true,
+            dispatchedAt: true,
+            deliveredAt: true,
+            createdAt: true,
+          },
+          orderBy: { createdAt: "desc" },
+          take: 1,
+        },
+        items: {
+          select: {
+            productId: true,
+            variantId: true,
+            qtyOrdered: true,
+            rate: true,
+            amount: true,
+            product: { select: { name: true, sku: true, barcode: true } },
+            variant: { select: { size: true, sku: true, barcode: true } },
+          },
+          orderBy: { id: "asc" },
+        },
+      },
+    });
+
+    if (!order) {
+      return reply.code(404).send({ error: { code: "not_found", message: "Order not found." } });
+    }
+
+    await consumeOtpToken(otp.tokenId);
+
+    return mapCustomerOrderRow(order);
+  });
 };

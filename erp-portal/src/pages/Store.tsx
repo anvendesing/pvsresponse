@@ -21,6 +21,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { aggregateLineTaxes, computeLineTax } from "@/lib/documentTax";
 
 const API_URL = (import.meta.env.VITE_API_URL as string | undefined)?.replace(
   /\/$/,
@@ -111,6 +112,18 @@ export const Store = () => {
   const [orderError, setOrderError] = useState<string | null>(null);
   const [order, setOrder] = useState<OrderResult | null>(null);
 
+  const [pricingIncludesGst, setPricingIncludesGst] = useState(false);
+
+  useEffect(() => {
+    if (!API_URL) return;
+    fetch(`${API_URL}/v1/settings/company`, {
+      headers: MOCK_TOKEN ? { Authorization: `Bearer ${MOCK_TOKEN}` } : {},
+    })
+      .then(async (r) => (r.ok ? ((await r.json()) as { pricingIncludesGst?: boolean }) : null))
+      .then((p) => setPricingIncludesGst(p?.pricingIncludesGst ?? false))
+      .catch(() => {});
+  }, []);
+
   useEffect(() => {
     if (!API_URL) {
       setCatalogError("VITE_API_URL is not set; backend is unreachable.");
@@ -137,9 +150,23 @@ export const Store = () => {
     );
   }, [catalog, search]);
 
-  const subTotal = cart.reduce((s, l) => s + l.qty * l.rate, 0);
-  const tax = Math.round(subTotal * 0.18);
-  const total = subTotal + tax;
+  const posTotals = useMemo(() => {
+    const taxKind = "intra" as const;
+    const lines = cart.map((l) =>
+      computeLineTax(
+        { qty: l.qty, rate: l.rate, gstRate: 18 },
+        { inclusive: pricingIncludesGst, taxKind }
+      )
+    );
+    const agg = aggregateLineTaxes(lines);
+    return { ...agg, total: agg.subTotal + agg.tax };
+  }, [cart, pricingIncludesGst]);
+
+  const subTotal = posTotals.subTotal;
+  const tax = posTotals.tax;
+  const cgstTotal = posTotals.cgstTotal;
+  const sgstTotal = posTotals.sgstTotal;
+  const total = posTotals.total;
 
   const addToCart = (p: CatalogProduct, v: Variant): void => {
     setCart((prev) => {
@@ -309,6 +336,8 @@ export const Store = () => {
               cart={cart}
               subTotal={subTotal}
               tax={tax}
+              cgstTotal={cgstTotal}
+              sgstTotal={sgstTotal}
               total={total}
               busy={busy}
               error={orderError}
@@ -450,6 +479,8 @@ const CartPanel = ({
   cart,
   subTotal,
   tax,
+  cgstTotal,
+  sgstTotal,
   total,
   busy,
   error,
@@ -460,6 +491,8 @@ const CartPanel = ({
   cart: CartLine[];
   subTotal: number;
   tax: number;
+  cgstTotal: number;
+  sgstTotal: number;
   total: number;
   busy: boolean;
   error: string | null;
@@ -526,8 +559,9 @@ const CartPanel = ({
       </div>
     )}
     <dl className="mt-4 space-y-1 border-t border-slate-200 pt-3 text-sm">
-      <Row label="Subtotal" value={inr(subTotal)} />
-      <Row label="GST (18%)" value={inr(tax)} />
+      <Row label="Subtotal (excl. GST)" value={inr(subTotal)} />
+      <Row label="CGST" value={inr(cgstTotal)} />
+      <Row label="SGST" value={inr(sgstTotal)} />
       <Row label="Total" value={inr(total)} bold />
     </dl>
     {error && (

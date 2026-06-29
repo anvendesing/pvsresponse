@@ -36,6 +36,18 @@ export interface ProductCategory {
   _count?: { products: number };
 }
 
+export interface ProductConcern {
+  id: string;
+  slug: string;
+  name: string;
+  description?: string | null;
+  icon?: string | null;
+  sortOrder: number;
+  active: boolean;
+  imageUrl?: string | null;
+  _count?: { products: number };
+}
+
 export interface ProductVariant {
   id?: string;
   sku: string;
@@ -81,6 +93,9 @@ export interface Product {
   sellingPrice: number;
   categoryId?: string | null;
   category?: ProductCategory | null;
+  concernLinks?: { concern: ProductConcern }[];
+  /** Selected concern IDs for product editor / API payloads. */
+  concernIds?: string[];
   hsn: string;
   // GST rate percentage e.g. 18 = 18%. Default 18.
   gstRate: number;
@@ -388,11 +403,23 @@ export interface WorkOrder {
   runs?: WorkOrderRun[];
 }
 
+export interface WorkOrderRunByproductRow {
+  id: string;
+  bomByproductId: string;
+  qty: number;
+  posted: boolean;
+  bomByproduct?: {
+    product?: { id?: string; sku: string; name: string; uom: string };
+    variant?: { id?: string; sku: string; size?: string | null } | null;
+  };
+}
+
 export interface WorkOrderRun {
   id: string;
   workOrderId: string;
   machineId: string;
   lineId?: string | null;
+  batchSeq: number;
   plannedQty?: number | null;
   inputQty: number;
   goodQty: number;
@@ -405,6 +432,7 @@ export interface WorkOrderRun {
   createdAt?: string;
   machine: { id: string; code: string; name: string };
   line?: { id: string; code: string; name: string } | null;
+  byproducts?: WorkOrderRunByproductRow[];
 }
 
 export interface Worker {

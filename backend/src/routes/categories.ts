@@ -67,6 +67,7 @@ export const categoriesRoutes = async (app: FastifyInstance) => {
         sortOrder: true,
         active: true,
         imageUrl: true,
+        updatedAt: true,
       },
     });
   });

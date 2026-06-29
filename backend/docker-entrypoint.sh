@@ -10,23 +10,36 @@ if [ -d /app/uploads ]; then
   chown -R node:node /app/uploads 2>/dev/null || true
 fi
 
-# Seed product images into the uploads volume on first boot.
+# Seed product + category images into the uploads volume on first boot.
 # /app/uploads-seed/ is baked into the image from git; the volume
 # at /app/uploads starts empty the very first time, so we copy the
 # seed across once. On subsequent boots the volume already has files
 # and we skip this step (preserving any images added post-deploy).
 SEED_DIR=/app/uploads-seed
-DEST_DIR=/app/uploads/products
 if [ -d "$SEED_DIR" ]; then
+  # Products
+  DEST_DIR=/app/uploads/products
   mkdir -p "$DEST_DIR"
   chown -R node:node "$DEST_DIR" 2>/dev/null || true
-  SEED_COUNT=$(find "$SEED_DIR" -type f | wc -l)
+  SEED_COUNT=$(find "$SEED_DIR/products" -type f 2>/dev/null | wc -l)
   DEST_COUNT=$(find "$DEST_DIR" -type f 2>/dev/null | wc -l)
   if [ "$SEED_COUNT" -gt 0 ] && [ "$DEST_COUNT" -lt "$SEED_COUNT" ]; then
     echo "[entrypoint] Seeding $SEED_COUNT product images into $DEST_DIR ..."
     cp -n "$SEED_DIR"/products/* "$DEST_DIR"/ 2>/dev/null || true
-    echo "[entrypoint] Seed complete."
+    echo "[entrypoint] Product seed complete."
+  fi
+
+  # Categories
+  CAT_DEST=/app/uploads/categories
+  mkdir -p "$CAT_DEST"
+  chown -R node:node "$CAT_DEST" 2>/dev/null || true
+  CAT_SEED_COUNT=$(find "$SEED_DIR/categories" -type f 2>/dev/null | wc -l)
+  CAT_DEST_COUNT=$(find "$CAT_DEST" -type f 2>/dev/null | wc -l)
+  if [ "$CAT_SEED_COUNT" -gt 0 ] && [ "$CAT_DEST_COUNT" -lt "$CAT_SEED_COUNT" ]; then
+    echo "[entrypoint] Seeding $CAT_SEED_COUNT category images into $CAT_DEST ..."
+    cp -n "$SEED_DIR"/categories/* "$CAT_DEST"/ 2>/dev/null || true
+    echo "[entrypoint] Category seed complete."
   fi
 fi
 
-exec su-exec node sh -c "npx prisma migrate deploy && node dist/scripts/seed-image-urls.js && node dist/index.js"
+exec su-exec node sh -c "npx prisma migrate deploy && node dist/scripts/seed-image-urls.js && node dist/scripts/seed-category-images.js && node dist/index.js"

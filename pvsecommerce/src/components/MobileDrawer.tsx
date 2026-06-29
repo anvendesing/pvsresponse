@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { CloseIcon } from "@/assets/icons";
 import { useCategories } from "@/state/CategoriesContext";
+import { useConcerns } from "@/state/ConcernsContext";
 
 interface Props {
   open: boolean;
@@ -9,6 +10,7 @@ interface Props {
 
 export const MobileDrawer = ({ open, onClose }: Props) => {
   const { categories } = useCategories();
+  const { concerns } = useConcerns();
   return (
     <>
       <div
@@ -56,6 +58,23 @@ export const MobileDrawer = ({ open, onClose }: Props) => {
             {c.name}
           </Link>
         ))}
+        <div className="nav-link" style={{ opacity: 0.6, pointerEvents: "none", fontSize: "0.75rem" }}>
+          Shop by Concern
+        </div>
+        {concerns.map((c) => (
+          <Link
+            key={c.id}
+            className="nav-link"
+            to={`/concern/${c.slug}`}
+            onClick={onClose}
+            style={{ paddingLeft: "1.25rem" }}
+          >
+            {c.name}
+          </Link>
+        ))}
+        <Link className="nav-link" to="/track" onClick={onClose}>
+          Track Order
+        </Link>
         <Link className="nav-link" to="/account" onClick={onClose}>
           My Account
         </Link>

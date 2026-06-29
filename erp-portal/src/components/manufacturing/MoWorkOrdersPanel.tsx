@@ -1,6 +1,6 @@
 // Odoo-style work orders tab on an MO: Waiting → Ready → Start → Done → QA.
 
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import {
   CheckCircle2,
   ChevronDown,
@@ -23,7 +23,7 @@ import { Input } from "@/components/common/Input";
 import { useApi } from "@/hooks/useApi";
 import { api } from "@/lib/api";
 import { num } from "@/lib/format";
-import type { ProductionOrder, WorkOrder, WorkOrderRun } from "@/data/types";
+import type { BomByproductRow, ProductionOrder, WorkOrder, WorkOrderRun } from "@/data/types";
 import { cn } from "@/lib/cn";
 import { SplitOperationModal } from "./SplitOperationModal";
 import {
@@ -59,6 +59,8 @@ interface Props {
   order: ProductionOrder;
   workOrders: WorkOrder[];
   moComplete: boolean;
+  bomByproducts: BomByproductRow[];
+  bomOutputQty: number;
   onRefresh: () => Promise<void>;
   onMessage: (msg: string, tone?: "ok" | "err") => void;
 }
@@ -67,6 +69,8 @@ export const MoWorkOrdersPanel = ({
   order,
   workOrders,
   moComplete,
+  bomByproducts,
+  bomOutputQty,
   onRefresh,
   onMessage,
 }: Props) => {
@@ -405,6 +409,8 @@ export const MoWorkOrdersPanel = ({
                           wo={wo}
                           machines={machines}
                           lines={lines}
+                          bomByproducts={bomByproducts}
+                          bomOutputQty={bomOutputQty}
                           busy={busy}
                           onBusy={setBusy}
                           onRefresh={onRefresh}
@@ -511,17 +517,42 @@ interface WoRunsSectionProps {
   wo: WorkOrder;
   machines: MachineOption[];
   lines: ProductionLineOption[];
+  bomByproducts: BomByproductRow[];
+  bomOutputQty: number;
   busy: string | null;
   onBusy: (key: string | null) => void;
   onRefresh: () => Promise<void>;
   onMessage: (msg: string, tone?: "ok" | "err") => void;
 }
 
+type RunDraft = {
+  good?: string;
+  scrap?: string;
+  input?: string;
+  byproducts?: Record<string, string>;
+};
+
+const expectedBpQty = (
+  bp: BomByproductRow,
+  goodQty: number,
+  batchSize: number
+): number => {
+  if (!batchSize || batchSize <= 0 || goodQty <= 0) return 0;
+  const raw = (bp.qty / batchSize) * goodQty;
+  if (!Number.isFinite(raw) || raw <= 0) return 0;
+  return Math.round(raw * 1000) / 1000;
+};
+
+const bpLabel = (bp: BomByproductRow) =>
+  bp.variantSku ? `${bp.variantSku} · ${bp.name}` : `${bp.sku} · ${bp.name}`;
+
 const WoRunsSection = ({
   moId,
   wo,
   machines,
   lines,
+  bomByproducts,
+  bomOutputQty,
   busy,
   onBusy,
   onRefresh,
@@ -530,13 +561,14 @@ const WoRunsSection = ({
   const [addLineId, setAddLineId] = useState<string>(wo.lineId ?? "");
   const [addMachineId, setAddMachineId] = useState<string>("");
   const [addPlanned, setAddPlanned] = useState<string>("");
-  // Inline per-run draft inputs for log/complete.
-  const [drafts, setDrafts] = useState<Record<string, { good?: string; scrap?: string; input?: string }>>({});
+  const [drafts, setDrafts] = useState<Record<string, RunDraft>>({});
 
   const runs = wo.runs ?? [];
-  const usedMachineIds = new Set(runs.filter((r) => r.status !== "abandoned").map((r) => r.machineId));
+  const activeMachineIds = new Set(
+    runs.filter((r) => r.status === "queued" || r.status === "running").map((r) => r.machineId)
+  );
   const availableMachines = machines.filter(
-    (m) => (!addLineId || m.productionLineId === addLineId) && !usedMachineIds.has(m.id)
+    (m) => (!addLineId || m.productionLineId === addLineId) && !activeMachineIds.has(m.id)
   );
   const totalGood = runs.reduce((s, r) => s + (r.goodQty ?? 0), 0);
   const remaining = Math.max(0, (wo.plannedSplitQty ?? wo.target) - totalGood);
@@ -568,31 +600,66 @@ const WoRunsSection = ({
   };
 
   const draftFor = (id: string) => drafts[id] ?? {};
-  const setDraft = (id: string, patch: Partial<{ good: string; scrap: string; input: string }>) =>
+  const setDraft = (id: string, patch: Partial<RunDraft>) =>
     setDrafts((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
+
+  const runBpQty = (run: WorkOrderRun, bp: BomByproductRow): string => {
+    const d = draftFor(run.id);
+    if (d.byproducts?.[bp.id ?? ""] !== undefined) return d.byproducts[bp.id ?? ""];
+    const saved = run.byproducts?.find((r) => r.bomByproductId === bp.id);
+    if (saved) return String(saved.qty);
+    const good =
+      d.good !== undefined && d.good !== ""
+        ? parseFloat(d.good) || 0
+        : run.goodQty;
+    return String(expectedBpQty(bp, good, bomOutputQty));
+  };
 
   const draftToBody = (id: string, run: WorkOrderRun) => {
     const d = draftFor(id);
-    const body: { goodQty?: number; scrapQty?: number; inputQty?: number } = {};
+    const body: {
+      goodQty?: number;
+      scrapQty?: number;
+      inputQty?: number;
+      byproducts?: Array<{ bomByproductId: string; qty: number }>;
+    } = {};
     if (d.good !== undefined && d.good !== "") body.goodQty = parseFloat(d.good) || 0;
     if (d.scrap !== undefined && d.scrap !== "") body.scrapQty = parseFloat(d.scrap) || 0;
     if (d.input !== undefined && d.input !== "") body.inputQty = parseFloat(d.input) || 0;
-    // Default goodQty to current value if user only edited other fields
     if (Object.keys(body).length === 0) body.goodQty = run.goodQty;
+    if (bomByproducts.length > 0) {
+      body.byproducts = bomByproducts
+        .filter((bp) => bp.id)
+        .map((bp) => ({
+          bomByproductId: bp.id!,
+          qty: parseFloat(runBpQty(run, bp)) || 0,
+        }));
+    }
     return body;
+  };
+
+  const hasDraftChanges = (run: WorkOrderRun) => {
+    const d = draftFor(run.id);
+    return (
+      d.good !== undefined ||
+      d.scrap !== undefined ||
+      d.input !== undefined ||
+      (d.byproducts && Object.keys(d.byproducts).length > 0)
+    );
   };
 
   return (
     <div className="mt-2 rounded border border-border bg-canvas/40 p-2">
       {runs.length === 0 ? (
         <div className="text-caption text-ink-muted px-1 py-1">
-          No machine runs yet. Add one below to log this step across multiple machines in parallel.
+          No batches yet. Add one below — each batch is one feed cycle on a machine (e.g. 25 kg seeds → oil + cake).
         </div>
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-caption tnum">
             <thead>
               <tr className="text-ink-muted text-left">
+                <th className="px-2 py-1 font-medium">Batch</th>
                 <th className="px-2 py-1 font-medium">Machine</th>
                 <th className="px-2 py-1 font-medium text-right">Plan</th>
                 <th className="px-2 py-1 font-medium text-right">Input</th>
@@ -607,8 +674,11 @@ const WoRunsSection = ({
               {runs.map((run) => {
                 const editable = run.status === "queued" || run.status === "running";
                 const d = draftFor(run.id);
+                const colSpan = bomByproducts.length > 0 ? 9 : 9;
                 return (
-                  <tr key={run.id} className="border-t border-border align-middle">
+                  <Fragment key={run.id}>
+                  <tr className="border-t border-border align-middle">
+                    <td className="px-2 py-1.5 font-semibold text-ink-muted">#{run.batchSeq ?? 1}</td>
                     <td className="px-2 py-1.5">
                       <div className="font-mono text-caption text-primary">
                         {run.machine.code}
@@ -682,7 +752,7 @@ const WoRunsSection = ({
                             Start
                           </Button>
                         )}
-                        {editable && (d.good !== undefined || d.scrap !== undefined || d.input !== undefined) && (
+                        {editable && hasDraftChanges(run) && (
                           <Button
                             size="sm"
                             variant="outline"
@@ -691,7 +761,7 @@ const WoRunsSection = ({
                               exec(`run-log-${run.id}`, async () => {
                                 await api.logWorkOrderRun(moId, wo.id, run.id, draftToBody(run.id, run));
                                 setDrafts((prev) => ({ ...prev, [run.id]: {} }));
-                                onMessage(`Logged ${run.machine.code}.`, "ok");
+                                onMessage(`Saved batch #${run.batchSeq}.`, "ok");
                               })
                             }
                           >
@@ -713,7 +783,7 @@ const WoRunsSection = ({
                                   draftToBody(run.id, run)
                                 );
                                 setDrafts((prev) => ({ ...prev, [run.id]: {} }));
-                                onMessage(`Completed ${run.machine.code} on ${wo.workOrderNo}.`, "ok");
+                                onMessage(`Completed batch #${run.batchSeq} on ${run.machine.code}.`, "ok");
                               })
                             }
                           >
@@ -752,10 +822,62 @@ const WoRunsSection = ({
                       </div>
                     </td>
                   </tr>
+                  {bomByproducts.length > 0 && (
+                    <tr key={`${run.id}-bp`} className="border-t border-border/50 bg-canvas/30">
+                      <td colSpan={colSpan} className="px-2 py-2">
+                        <div className="text-[10px] font-semibold uppercase tracking-wide text-ink-muted mb-1.5">
+                          By-products {run.status === "complete" ? "(posted)" : "(this batch)"}
+                        </div>
+                        <div className="flex flex-wrap gap-3">
+                          {bomByproducts.map((bp) => {
+                            if (!bp.id) return null;
+                            const posted = run.byproducts?.find(
+                              (r) => r.bomByproductId === bp.id && r.posted
+                            );
+                            return (
+                              <label
+                                key={bp.id}
+                                className="flex items-center gap-2 text-caption min-w-[140px]"
+                              >
+                                <span className="text-ink-muted truncate max-w-[120px]" title={bpLabel(bp)}>
+                                  {bpLabel(bp)}
+                                </span>
+                                {editable && !posted ? (
+                                  <Input
+                                    size="sm"
+                                    type="number"
+                                    min={0}
+                                    step="any"
+                                    value={runBpQty(run, bp)}
+                                    onChange={(e) =>
+                                      setDraft(run.id, {
+                                        byproducts: {
+                                          ...d.byproducts,
+                                          [bp.id!]: e.target.value,
+                                        },
+                                      })
+                                    }
+                                    className="w-20 text-right"
+                                  />
+                                ) : (
+                                  <span className="font-semibold tabular-nums">
+                                    {num(posted?.qty ?? run.byproducts?.find((r) => r.bomByproductId === bp.id)?.qty ?? 0)}{" "}
+                                    {bp.uom}
+                                  </span>
+                                )}
+                              </label>
+                            );
+                          })}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 );
               })}
               <tr className="border-t border-border font-semibold">
                 <td className="px-2 py-1.5">Rollup</td>
+                <td className="px-2 py-1.5" />
                 <td className="px-2 py-1.5 text-right">{num(wo.plannedSplitQty ?? wo.target)}</td>
                 <td className="px-2 py-1.5 text-right">
                   {num(runs.reduce((s, r) => s + (r.inputQty ?? 0), 0))}
@@ -828,7 +950,7 @@ const WoRunsSection = ({
           disabled={!addMachineId || busy !== null}
           onClick={() => void addRun()}
         >
-          Add machine run
+          Add batch
         </Button>
       </div>
     </div>

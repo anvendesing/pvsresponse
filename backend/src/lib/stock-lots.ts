@@ -299,8 +299,8 @@ export const planLegacyBinIssue = async (args: {
     lotQtyByBin.set(row.binId, (lotQtyByBin.get(row.binId) ?? 0) + row.qtyOnHand);
   }
 
-  // Bulk parent issue (no variantId): only bins tagged parent-only (variantId null).
-  // Variant-scoped issue: exact variant match.
+  // Bulk parent issue (no variantId): only untagged parent bins — not sale variants.
+  // Variant-scoped issue: exact variant match only (e.g. SOAP-PROC on pack MO).
   const variantFilter =
     args.variantId != null && args.variantId !== ""
       ? { variantId: args.variantId }

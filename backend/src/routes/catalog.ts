@@ -7,6 +7,8 @@ import { normalizeUomCode } from "../lib/uom.js";
 import { binCodeFromRow } from "../lib/codes.js";
 import { customerNetOpenBalance } from "./customer-payments.js";
 import { customerAddressBody, customerAddressPatch, pincodeSchema } from "../lib/customer-address.js";
+import { computeAddressDistanceFields } from "../lib/address-distance.js";
+import { lookupPincodePlace } from "../lib/pincode-lookup.js";
 import { generateVariantSku, generateVariantBarcode } from "../lib/tax.js";
 import { productMatchesQuery, normalizeSearchTerm, codesEqual } from "../lib/text-search.js";
 import { attachProductPipeline } from "../lib/stock-rule-pipeline.js";
@@ -119,6 +121,7 @@ const productCreate = z.object({
   priceListEnabled: z.boolean().default(true),
   // Free-form catalogue description. Empty / null clears the column.
   description: z.string().max(5000).nullish(),
+  concernIds: z.array(z.string().min(1)).optional(),
   variants: z.array(variantInput).default([]),
 });
 
@@ -128,9 +131,44 @@ export const catalogRoutes = async (app: FastifyInstance) => {
   // ============= Products =============
   const productInclude = {
     category: { select: { id: true, slug: true, name: true, active: true } },
+    concernLinks: {
+      select: {
+        concern: {
+          select: { id: true, slug: true, name: true, active: true, sortOrder: true },
+        },
+      },
+    },
     variants: {
       orderBy: { sku: "asc" as const },
     },
+  };
+
+  const syncProductConcerns = async (
+    productId: string,
+    concernIds: string[] | undefined,
+    reply: FastifyReply
+  ): Promise<boolean> => {
+    if (concernIds === undefined) return true;
+    const unique = [...new Set(concernIds)];
+    if (unique.length > 0) {
+      const found = await db.productConcern.findMany({
+        where: { id: { in: unique } },
+        select: { id: true },
+      });
+      if (found.length !== unique.length) {
+        void reply.code(400).send({
+          error: { code: "invalid_concern", message: "One or more concern IDs are invalid." },
+        });
+        return false;
+      }
+    }
+    await db.productConcernLink.deleteMany({ where: { productId } });
+    if (unique.length > 0) {
+      await db.productConcernLink.createMany({
+        data: unique.map((concernId) => ({ productId, concernId })),
+      });
+    }
+    return true;
   };
 
   const assertCategoryId = async (categoryId: string, reply: FastifyReply) => {
@@ -221,7 +259,7 @@ export const catalogRoutes = async (app: FastifyInstance) => {
 
   app.post("/products", { preHandler: [app.authenticate] }, async (req, reply) => {
     const data = productCreate.parse(req.body);
-    const { variants, ...productData } = data;
+    const { variants, concernIds, ...productData } = data;
     productData.uom = requireCanonicalUom(productData.uom);
     if (!(await assertCategoryId(productData.categoryId, reply))) return;
 
@@ -281,8 +319,13 @@ export const catalogRoutes = async (app: FastifyInstance) => {
       },
       include: productInclude,
     });
-    await recordChange("Product", created.id, "insert", created, req.user.sub);
-    return created;
+    if (!(await syncProductConcerns(created.id, concernIds, reply))) return;
+    const withConcerns = await db.product.findUnique({
+      where: { id: created.id },
+      include: productInclude,
+    });
+    await recordChange("Product", created.id, "insert", withConcerns, req.user.sub);
+    return withConcerns;
   });
 
   app.patch("/products/:id", { preHandler: [app.authenticate] }, async (req, reply) => {
@@ -291,12 +334,15 @@ export const catalogRoutes = async (app: FastifyInstance) => {
     const before = await db.product.findUnique({ where: { id } });
     if (!before) return reply.code(404).send({ error: { code: "not_found" } });
 
-    const { variants, ...productData } = data;
+    const { variants, concernIds, ...productData } = data;
     if (productData.uom !== undefined) {
       productData.uom = requireCanonicalUom(productData.uom);
     }
     if (productData.categoryId !== undefined) {
       if (!(await assertCategoryId(productData.categoryId, reply))) return;
+    }
+    if (concernIds !== undefined) {
+      if (!(await syncProductConcerns(id, concernIds, reply))) return;
     }
 
     if (variants !== undefined) {
@@ -1542,6 +1588,10 @@ export const catalogRoutes = async (app: FastifyInstance) => {
         error: { code: "duplicate_code", message: `Customer code "${code}" already exists.` },
       });
     }
+    const place = await lookupPincodePlace(body.pincode);
+    const distance = place
+      ? { distanceKm: place.distanceKm, dispatchPincode: place.dispatchPincode }
+      : await computeAddressDistanceFields(body.pincode);
     const created = await db.customer.create({
       data: {
         code,
@@ -1549,8 +1599,11 @@ export const catalogRoutes = async (app: FastifyInstance) => {
         gst: body.gst ?? null,
         addressLine: body.addressLine,
         city: body.city,
+        district: body.district ?? place?.district ?? null,
         state: body.state ?? null,
         pincode: body.pincode,
+        distanceKm: distance.distanceKm,
+        dispatchPincode: distance.dispatchPincode,
         contact: body.contact ?? null,
         creditLimit: body.creditLimit,
         priceListId: body.priceListId ?? null,
@@ -1586,6 +1639,7 @@ export const catalogRoutes = async (app: FastifyInstance) => {
     const merged = {
       addressLine: body.addressLine ?? existing.addressLine,
       city: body.city ?? existing.city,
+      district: body.district !== undefined ? body.district : existing.district,
       state: body.state !== undefined ? body.state : existing.state,
       pincode: body.pincode ?? existing.pincode,
     };
@@ -1606,10 +1660,27 @@ export const catalogRoutes = async (app: FastifyInstance) => {
       });
     }
 
+    const pinChanged = body.pincode !== undefined;
+    const place = pinChanged ? await lookupPincodePlace(merged.pincode!) : null;
+    const distanceFields =
+      pinChanged && !place ? await computeAddressDistanceFields(merged.pincode!) : null;
+    const distancePatch = pinChanged
+      ? {
+          distanceKm: place?.distanceKm ?? distanceFields?.distanceKm ?? null,
+          dispatchPincode: place?.dispatchPincode ?? distanceFields?.dispatchPincode ?? null,
+        }
+      : {};
+    const districtPatch =
+      body.district !== undefined
+        ? { district: body.district }
+        : pinChanged
+          ? { district: place?.district ?? existing.district }
+          : {};
+
     try {
       const updated = await db.customer.update({
         where: { id },
-        data: body,
+        data: { ...body, ...distancePatch, ...districtPatch },
         include: {
           priceList: { select: { id: true, code: true, name: true, multiplier: true, basis: true } },
           _count: { select: { quotes: true, salesOrders: true, invoices: true } },

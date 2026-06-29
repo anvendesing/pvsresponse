@@ -1,46 +1,76 @@
-// Order success page. Pulls the just-placed order from
-// react-router's location state when arriving from checkout, falling
-// back to localStorage if the customer reloads or shares the link.
-// The tracking timeline reads off the regular order lifecycle, but
-// since we don't actually progress the order on this page we mock
-// the first two steps as completed/active.
-
 import { useEffect, useState } from "react";
-import { Link, useLocation, useParams } from "react-router-dom";
-import type { PlaceOrderResult } from "@/lib/api";
+import { Link, useParams, useSearchParams } from "react-router-dom";
+import { api, type CustomerOrderRow, type PlaceOrderResult } from "@/lib/api";
+import { OrderTimeline } from "@/components/OrderTimeline";
+import { OrderItemsList } from "@/components/OrderItemsList";
+import { useAuth } from "@/state/AuthContext";
+import { useCart } from "@/state/CartContext";
+import { useToast } from "@/state/ToastContext";
 import { CheckIcon } from "@/assets/icons";
 import { inr } from "@/lib/format";
 
-interface LocState {
-  result?: PlaceOrderResult;
-}
-
 export const OrderSuccessPage = () => {
   const { soNo = "" } = useParams<{ soNo: string }>();
-  const loc = useLocation();
-  const incoming = (loc.state as LocState | null)?.result ?? null;
-  const [order, setOrder] = useState<PlaceOrderResult | null>(incoming);
-
-  useEffect(() => {
-    if (order) return;
+  const [searchParams, setSearchParams] = useSearchParams();
+  const auth = useAuth();
+  const cart = useCart();
+  const toast = useToast();
+  const [order] = useState<PlaceOrderResult | null>(() => {
     try {
       const raw = window.localStorage.getItem(`pv_order_${soNo}`);
-      if (raw) setOrder(JSON.parse(raw) as PlaceOrderResult);
+      return raw ? (JSON.parse(raw) as PlaceOrderResult) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [liveRow, setLiveRow] = useState<CustomerOrderRow | null>(null);
+  const [loadingItems, setLoadingItems] = useState(true);
+
+  useEffect(() => {
+    if (searchParams.get("paid") !== "1") return;
+    cart.clear();
+    try {
+      window.localStorage.removeItem("pv_cart_notes");
     } catch {
       /* noop */
     }
-  }, [order, soNo]);
+    toast.show("Payment successful — order placed!", "success");
+    setSearchParams({}, { replace: true });
+  }, [cart, searchParams, setSearchParams, toast]);
+
+  useEffect(() => {
+    if (!soNo || !auth.isAuthed) {
+      setLoadingItems(false);
+      return;
+    }
+    let cancelled = false;
+    setLoadingItems(true);
+    void api
+      .myOrder(soNo)
+      .then((row) => {
+        if (!cancelled) setLiveRow(row);
+      })
+      .catch(() => {
+        if (!cancelled) setLiveRow(null);
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingItems(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [auth.isAuthed, soNo]);
+
+  const packingSlip = liveRow?.packingSlip ?? null;
+  const invoiceStatus = liveRow?.invoiceStatus ?? order?.invoice.status ?? null;
+  const status = liveRow?.status ?? order?.salesOrder.status ?? "confirmed";
+  const displaySoNo = liveRow?.soNo ?? order?.salesOrder.soNo ?? soNo;
+  const displayTotal = liveRow?.total ?? order?.invoice.amount ?? null;
+  const items = liveRow?.items ?? [];
 
   return (
     <div style={{ padding: "3rem 5%", background: "var(--neutral-light)", minHeight: "70vh" }}>
-      <div
-        className="card-soft"
-        style={{
-          maxWidth: 760,
-          margin: "0 auto",
-          padding: "2.5rem",
-        }}
-      >
+      <div className="card-soft" style={{ maxWidth: 760, margin: "0 auto", padding: "2.5rem" }}>
         <div
           style={{
             display: "inline-flex",
@@ -58,17 +88,14 @@ export const OrderSuccessPage = () => {
             <CheckIcon />
           </span>
         </div>
-        <h1
-          className="serif-title"
-          style={{ fontSize: "2.2rem", color: "var(--forest-green-dark)", marginBottom: "0.6rem" }}
-        >
-          Thank you, {order?.customer.name?.split(" ")[0] ?? "friend"}!
+        <h1 className="serif-title" style={{ fontSize: "2.2rem", color: "var(--forest-green-dark)", marginBottom: "0.6rem" }}>
+          Thank you, {order?.customer.name?.split(" ")[0] ?? auth.customer?.name?.split(" ")[0] ?? "friend"}!
         </h1>
         <p style={{ color: "var(--neutral-gray)", marginBottom: "1.75rem" }}>
-          Your order <strong>{order?.salesOrder.soNo ?? soNo}</strong> has been placed and is now being prepared by our farm team. A confirmation has been sent to your email.
+          Your order <strong>{displaySoNo}</strong> has been placed and is now being prepared by our farm team.
         </p>
 
-        {order && (
+        {(order || liveRow) && (
           <div
             style={{
               padding: "1.25rem 1.5rem",
@@ -80,28 +107,25 @@ export const OrderSuccessPage = () => {
               gridTemplateColumns: "1fr 1fr",
             }}
           >
-            <DocRow label="Sales order" value={order.salesOrder.soNo} />
-            <DocRow label="Invoice" value={order.invoice.invoiceNo} />
-            <DocRow label="Status" value={`${order.salesOrder.status} · ${order.invoice.status}`} />
-            <DocRow label="Total paid" value={inr(order.invoice.amount)} />
-            {"pickListNo" in order.pickList && (
-              <DocRow label="Pick list" value={order.pickList.pickListNo} />
-            )}
+            <DocRow label="Sales order" value={displaySoNo} />
+            <DocRow label="Invoice" value={liveRow?.invoiceNo ?? order?.invoice.invoiceNo ?? "—"} />
+            <DocRow label="Status" value={`${status} · ${invoiceStatus ?? "paid"}`} />
+            <DocRow label="Total paid" value={displayTotal != null ? inr(displayTotal) : "—"} />
           </div>
         )}
 
-        <h2 style={{ marginTop: "2.25rem", marginBottom: "0.4rem" }}>Tracking</h2>
-        <p className="muted" style={{ fontSize: "0.85rem" }}>
-          You'll receive an email and SMS as your order moves through each
-          stage.
-        </p>
-        <ol className="tracking-timeline">
-          <Step done label="Order Confirmed" sub="We received your order." />
-          <Step active label="Packing" sub="Warehouse picking your items now." />
-          <Step label="Dispatched" sub="Awaiting pickup by courier partner." />
-          <Step label="Out for Delivery" sub="Courier on the last mile." />
-          <Step label="Delivered" sub="Enjoy your harvest!" />
-        </ol>
+        <h2 style={{ marginTop: "2.25rem", marginBottom: "0.75rem" }}>Order items</h2>
+        {loadingItems ? (
+          <p className="muted" style={{ fontSize: "0.9rem" }}>Loading items…</p>
+        ) : items.length > 0 ? (
+          <OrderItemsList items={items} total={displayTotal ?? undefined} />
+        ) : !auth.isAuthed ? (
+          <p className="muted" style={{ fontSize: "0.9rem" }}>
+            <Link to="/login" className="text-link">Sign in</Link> to view line items for this order.
+          </p>
+        ) : (
+          <p className="muted" style={{ fontSize: "0.9rem" }}>Line items are not available yet.</p>
+        )}
 
         <div style={{ marginTop: "2rem", display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
           <Link to="/" className="btn btn-green">
@@ -111,6 +135,17 @@ export const OrderSuccessPage = () => {
             View all orders
           </Link>
         </div>
+
+        <div style={{ marginTop: "1.5rem" }}>
+          {packingSlip?.trackingUrl && (
+            <p style={{ marginBottom: "0.5rem", fontSize: "0.85rem", textAlign: "center" }}>
+              <a href={packingSlip.trackingUrl} target="_blank" rel="noreferrer" className="text-link">
+                Track shipment with courier →
+              </a>
+            </p>
+          )}
+          <OrderTimeline compact packingSlip={packingSlip} invoiceStatus={invoiceStatus} status={status} />
+        </div>
       </div>
     </div>
   );
@@ -118,38 +153,11 @@ export const OrderSuccessPage = () => {
 
 const DocRow = ({ label, value }: { label: string; value: string }) => (
   <div>
-    <div
-      style={{
-        fontSize: "0.7rem",
-        textTransform: "uppercase",
-        letterSpacing: "0.08em",
-        color: "var(--neutral-gray)",
-      }}
-    >
+    <div style={{ fontSize: "0.7rem", textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--neutral-gray)" }}>
       {label}
     </div>
     <div className="tnum" style={{ fontWeight: 600 }}>
       {value}
     </div>
   </div>
-);
-
-const Step = ({
-  done,
-  active,
-  label,
-  sub,
-}: {
-  done?: boolean;
-  active?: boolean;
-  label: string;
-  sub: string;
-}) => (
-  <li className={`tracking-step ${done ? "completed" : ""} ${active ? "active" : ""}`}>
-    <span className="dot" />
-    <div>
-      <strong>{label}</strong>
-      <span>{sub}</span>
-    </div>
-  </li>
 );

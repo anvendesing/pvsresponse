@@ -139,6 +139,7 @@ export function parseLegacyCustomerCity(city: string | null | undefined): {
 export const customerAddressBody = {
   addressLine: z.string().trim().min(3, "Address line is required"),
   city: z.string().trim().min(2, "City / town is required"),
+  district: z.string().trim().min(2, "District is required").optional(),
   state: z.string().trim().nullable().optional(),
   pincode: pincodeSchema,
 };
@@ -146,6 +147,7 @@ export const customerAddressBody = {
 export const customerAddressPatch = {
   addressLine: z.string().trim().min(3, "Address line is required").optional(),
   city: z.string().trim().min(2, "City / town is required").optional(),
+  district: z.string().trim().min(2, "District is required").optional().nullable(),
   state: z.string().trim().nullable().optional(),
   pincode: pincodeSchema.optional(),
 };

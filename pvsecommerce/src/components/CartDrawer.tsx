@@ -4,7 +4,8 @@
 import { Link } from "react-router-dom";
 import { CloseIcon, TrashIcon } from "@/assets/icons";
 import { useCart, lineKeyFor } from "@/state/CartContext";
-import { inr } from "@/lib/format";
+import { lineBarcode } from "@/lib/scanCode";
+import { inr, cartLineDescription } from "@/lib/format";
 import { PackagingArt } from "./PackagingArt";
 
 const SHIPPING_THRESHOLD = 3000;
@@ -100,9 +101,9 @@ export const CartDrawer = () => {
                       <PackagingArt kind={l.packagingHint} />
                     </div>
                     <div className="cart-line-info">
-                      <span className="cart-line-title">{l.productName}</span>
+                      <span className="cart-line-title">{cartLineDescription(l)}</span>
                       <span className="cart-line-meta">
-                        {l.variantSize ?? l.variantSku ?? l.productSku}
+                        {lineBarcode(l) ?? ""}
                       </span>
                       <span className="cart-line-price">{inr(l.qty * l.rate)}</span>
                       <span className="qty-pill green" style={{ marginTop: "0.35rem", height: "30px", fontSize: "0.8rem" }}>

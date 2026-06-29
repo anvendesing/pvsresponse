@@ -29,12 +29,12 @@ export const AccountOrders = () => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!auth.user?.email) return;
+    if (!auth.isAuthed) return;
     let cancelled = false;
     setLoading(true);
     setError(null);
     api
-      .ordersByEmail(auth.user.email)
+      .myOrders()
       .then((rows) => {
         if (!cancelled) setOrders(rows);
       })
@@ -52,7 +52,7 @@ export const AccountOrders = () => {
     return () => {
       cancelled = true;
     };
-  }, [auth.user?.email]);
+  }, [auth.isAuthed]);
 
   return (
     <div className="card-soft">
@@ -134,12 +134,15 @@ export const AccountOrders = () => {
                       </span>
                     </td>
                     <td style={{ padding: "0.85rem 0.5rem", textAlign: "right" }}>
-                      <Link
-                        to={`/order/${o.soNo}`}
-                        style={{ color: "var(--forest-green)", fontSize: "0.85rem", fontWeight: 600 }}
-                      >
-                        View →
-                      </Link>
+                      {o.packingSlip?.trackingUrl ? (
+                        <a href={o.packingSlip.trackingUrl} target="_blank" rel="noreferrer" style={{ color: "var(--forest-green)", fontSize: "0.85rem", fontWeight: 600 }}>
+                          Track →
+                        </a>
+                      ) : (
+                        <Link to={`/order/${o.soNo}`} style={{ color: "var(--forest-green)", fontSize: "0.85rem", fontWeight: 600 }}>
+                          View →
+                        </Link>
+                      )}
                     </td>
                   </tr>
                 );

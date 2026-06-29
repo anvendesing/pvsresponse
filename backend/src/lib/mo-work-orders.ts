@@ -2,8 +2,15 @@
  * Odoo-style work orders from BOM operations (mrp.bom.operation → mrp.workorder).
  */
 import type { PrismaClient } from "@prisma/client";
+import {
+  loadMoByproductContext,
+  postMoByproductEntries,
+  type MoByproductEntry,
+} from "./mo-byproduct-post.js";
 
 type Db = PrismaClient;
+
+export type RunByproductPatch = { bomByproductId: string; qty: number };
 
 const woDone = (status: string, qaStatus: string | null) =>
   status === "complete" && (qaStatus === "pass" || qaStatus === null);
@@ -429,7 +436,104 @@ const VALID_RUN_STATUSES: RunStatus[] = ["queued", "running", "complete", "aband
 const runInclude = {
   machine: { select: { id: true, code: true, name: true, productionLineId: true } },
   line: { select: { id: true, code: true, name: true } },
+  byproducts: {
+    include: {
+      bomByproduct: {
+        include: {
+          product: { select: { id: true, sku: true, name: true, uom: true } },
+          variant: { select: { id: true, sku: true, size: true } },
+        },
+      },
+    },
+  },
 };
+
+async function syncRunByproductDrafts(
+  db: Db,
+  runId: string,
+  entries: RunByproductPatch[]
+) {
+  const keepIds = entries.filter((e) => e.qty > 0).map((e) => e.bomByproductId);
+  if (keepIds.length === 0) {
+    await db.workOrderRunByproduct.deleteMany({
+      where: { workOrderRunId: runId, posted: false },
+    });
+  } else {
+    await db.workOrderRunByproduct.deleteMany({
+      where: {
+        workOrderRunId: runId,
+        posted: false,
+        bomByproductId: { notIn: keepIds },
+      },
+    });
+  }
+  for (const e of entries) {
+    if (e.qty <= 0) {
+      await db.workOrderRunByproduct.deleteMany({
+        where: {
+          workOrderRunId: runId,
+          bomByproductId: e.bomByproductId,
+          posted: false,
+        },
+      });
+      continue;
+    }
+    await db.workOrderRunByproduct.upsert({
+      where: {
+        workOrderRunId_bomByproductId: {
+          workOrderRunId: runId,
+          bomByproductId: e.bomByproductId,
+        },
+      },
+      create: {
+        workOrderRunId: runId,
+        bomByproductId: e.bomByproductId,
+        qty: e.qty,
+        posted: false,
+      },
+      update: { qty: e.qty },
+    });
+  }
+}
+
+async function applyRunOutputToMo(
+  db: Db,
+  productionOrderId: string,
+  goodDelta: number,
+  scrapDelta: number
+) {
+  if (goodDelta === 0 && scrapDelta === 0) return;
+  const po = await db.productionOrder.findUnique({ where: { id: productionOrderId } });
+  if (!po || po.status === "completed") return;
+  const newActual = Math.max(0, po.actualQty + goodDelta);
+  const newScrap = Math.max(0, po.scrapQty + scrapDelta);
+  await db.productionOrder.update({
+    where: { id: productionOrderId },
+    data: {
+      actualQty: newActual,
+      scrapQty: newScrap,
+      status: po.status === "planned" && newActual > 0 ? "in-progress" : po.status,
+      efficiency:
+        po.plannedQty > 0
+          ? Math.round((newActual / po.plannedQty) * 1000) / 10
+          : po.efficiency,
+    },
+  });
+}
+
+async function maybeSetMachineIdle(db: Db, machineId: string) {
+  const stillRunning = await db.workOrderRun.count({
+    where: { machineId, status: "running" },
+  });
+  if (stillRunning > 0) return;
+  const m = await db.machine.findUnique({
+    where: { id: machineId },
+    select: { status: true },
+  });
+  if (m?.status === "running") {
+    await db.machine.update({ where: { id: machineId }, data: { status: "idle" } });
+  }
+}
 
 async function recomputeWorkOrderFromRuns(db: Db, workOrderId: string) {
   const runs = await db.workOrderRun.findMany({
@@ -522,11 +626,32 @@ export async function addWorkOrderRun(
       );
     }
   }
+  const activeOnMachine = await db.workOrderRun.findFirst({
+    where: {
+      workOrderId: wo.id,
+      machineId: machine.id,
+      status: { in: ["queued", "running"] },
+    },
+    select: { id: true, batchSeq: true },
+  });
+  if (activeOnMachine) {
+    throw Object.assign(
+      new Error(
+        `Machine ${machine.name} already has batch #${activeOnMachine.batchSeq} in progress. Complete or abandon it before starting another batch on this machine.`
+      ),
+      { statusCode: 409, code: "machine_run_active" }
+    );
+  }
+  const maxBatch = await db.workOrderRun.aggregate({
+    where: { workOrderId: wo.id },
+    _max: { batchSeq: true },
+  });
   const created = await db.workOrderRun.create({
     data: {
       workOrderId: wo.id,
       machineId: machine.id,
       lineId,
+      batchSeq: (maxBatch._max.batchSeq ?? 0) + 1,
       plannedQty: opts.plannedQty ?? null,
       operator: opts.operator?.trim() || null,
       status: "queued",
@@ -580,12 +705,26 @@ export async function logWorkOrderRun(
     inputQty?: number;
     notes?: string | null;
     operator?: string | null;
+    byproducts?: RunByproductPatch[];
   }
 ) {
   const wo = await loadRunWorkOrder(db, workOrderId);
   const run = await loadRun(db, wo.id, runId);
   if (run.status === "abandoned") {
     throw Object.assign(new Error("Run is abandoned — cannot log output."), { statusCode: 409 });
+  }
+  if (patch.byproducts?.length) {
+    const { bpById } = await loadMoByproductContext(db, wo.productionOrderId);
+    for (const entry of patch.byproducts) {
+      if (entry.qty <= 0) continue;
+      if (!bpById.has(entry.bomByproductId)) {
+        throw Object.assign(
+          new Error(`Byproduct ${entry.bomByproductId} is not on this MO's BOM.`),
+          { statusCode: 400, code: "byproduct_not_on_bom" }
+        );
+      }
+    }
+    await syncRunByproductDrafts(db, run.id, patch.byproducts);
   }
   const updated = await db.workOrderRun.update({
     where: { id: run.id },
@@ -606,14 +745,33 @@ export async function completeWorkOrderRun(
   db: Db,
   workOrderId: string,
   runId: string,
-  patch: { goodQty?: number; scrapQty?: number; inputQty?: number; notes?: string | null }
+  patch: {
+    goodQty?: number;
+    scrapQty?: number;
+    inputQty?: number;
+    notes?: string | null;
+    byproducts?: RunByproductPatch[];
+  }
 ) {
   const wo = await loadRunWorkOrder(db, workOrderId);
   const run = await loadRun(db, wo.id, runId);
-  if (run.status === "complete") return run;
+  if (run.status === "complete") {
+    return db.workOrderRun.findUniqueOrThrow({
+      where: { id: run.id },
+      include: runInclude,
+    });
+  }
   if (run.status === "abandoned") {
     throw Object.assign(new Error("Run is abandoned — cannot complete."), { statusCode: 409 });
   }
+
+  const prevGood = run.goodQty;
+  const prevScrap = run.scrapQty;
+
+  if (patch.byproducts?.length) {
+    await syncRunByproductDrafts(db, run.id, patch.byproducts);
+  }
+
   const updated = await db.workOrderRun.update({
     where: { id: run.id },
     data: {
@@ -627,8 +785,46 @@ export async function completeWorkOrderRun(
     },
     include: runInclude,
   });
+
+  const goodDelta = updated.goodQty - prevGood;
+  const scrapDelta = updated.scrapQty - prevScrap;
+  await applyRunOutputToMo(db, wo.productionOrderId, goodDelta, scrapDelta);
+
+  const alreadyPosted = await db.workOrderRunByproduct.count({
+    where: { workOrderRunId: run.id, posted: true, qty: { gt: 0 } },
+  });
+  if (alreadyPosted === 0) {
+    const draftRows = await db.workOrderRunByproduct.findMany({
+      where: { workOrderRunId: run.id, posted: false, qty: { gt: 0 } },
+    });
+    const entries: MoByproductEntry[] =
+      patch.byproducts?.filter((b) => b.qty > 0) ??
+      draftRows.map((d) => ({ bomByproductId: d.bomByproductId, qty: d.qty }));
+    if (entries.length > 0) {
+      const { bpById, landingWhId, orderNo } = await loadMoByproductContext(
+        db,
+        wo.productionOrderId
+      );
+      await postMoByproductEntries(db, {
+        productionOrderId: wo.productionOrderId,
+        orderNo,
+        landingWhId,
+        entries,
+        bpById,
+      });
+      await db.workOrderRunByproduct.updateMany({
+        where: { workOrderRunId: run.id },
+        data: { posted: true },
+      });
+    }
+  }
+
+  await maybeSetMachineIdle(db, run.machineId);
   await recomputeWorkOrderFromRuns(db, wo.id);
-  return updated;
+  return db.workOrderRun.findUniqueOrThrow({
+    where: { id: run.id },
+    include: runInclude,
+  });
 }
 
 export async function abandonWorkOrderRun(db: Db, workOrderId: string, runId: string) {

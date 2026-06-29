@@ -33,9 +33,10 @@ import {
   nextFulfilmentDocNo,
   nextImportedInvoiceNo,
 } from "../lib/pick-list-helpers.js";
-import { computeTax, computeGrandTotal } from "../lib/tax.js";
+import { computeLineTax, computeTransportTax, type TaxKind } from "../lib/tax.js";
 import { applyAdvancesToInvoice } from "../routes/customer-payments.js";
 import { recomputeInvoiceWeight } from "../lib/document-weight.js";
+import { aggregateLineTaxes } from "../lib/tax.js";
 
 type Tx = Prisma.TransactionClient | PrismaClient;
 
@@ -68,12 +69,7 @@ export const ensureInvoiceForSalesOrder = async (
   const so = await client.salesOrder.findUnique({
     where: { id: salesOrderId },
     include: {
-      items: {
-        include: {
-          product: { select: { gstRate: true } },
-          variant: { select: { gstRate: true } },
-        },
-      },
+      items: true,
       customer: true,
     },
   });
@@ -86,9 +82,8 @@ export const ensureInvoiceForSalesOrder = async (
     );
   }
 
-  // External-channel orders (DTDC etc.) get their own invoice number
-  // series so finance / GST audits can separate them from back-office
-  // sales. See SalesOrder.source comment for the full taxonomy.
+  const pricingInclusive = so.pricingInclusive ?? false;
+
   const invoiceNo =
     so.source === "imported"
       ? await nextImportedInvoiceNo(2026)
@@ -104,22 +99,31 @@ export const ensureInvoiceForSalesOrder = async (
       transportTax: so.transportTax,
       amount: so.total,
       tax: so.tax,
+      cgstTotal: so.cgstTotal,
+      sgstTotal: so.sgstTotal,
+      igstTotal: so.igstTotal,
+      taxKind: so.taxKind,
+      placeOfSupplyState: so.placeOfSupplyState,
+      sellerState: so.sellerState,
+      pricingInclusive: so.pricingInclusive,
       status: opts.status ?? "issued",
       paymentMode: opts.paymentMode ?? "credit",
       items: {
-        create: so.items.map((it) => {
-          const lineGstRate = (it.variant?.gstRate ?? null) ?? it.product.gstRate;
-          return {
-            productId: it.productId,
-            variantId: it.variantId,
-            salesOrderItemId: it.id,
-            qty: it.qtyOrdered,
-            rate: it.rate,
-            amount: it.amount,
-            gstRate: lineGstRate,
-            taxAmount: Math.round(it.amount * (lineGstRate / 100) * 100) / 100,
-          };
-        }),
+        create: so.items.map((it) => ({
+          productId: it.productId,
+          variantId: it.variantId,
+          salesOrderItemId: it.id,
+          qty: it.qtyOrdered,
+          rate: it.rate,
+          amount: it.amount,
+          taxableValue: it.taxableValue ?? it.amount,
+          gstRate: it.gstRate,
+          taxAmount:
+            (it.cgstAmount ?? 0) + (it.sgstAmount ?? 0) + (it.igstAmount ?? 0),
+          cgstAmount: it.cgstAmount,
+          sgstAmount: it.sgstAmount,
+          igstAmount: it.igstAmount,
+        })),
       },
     },
     include: {
@@ -128,17 +132,8 @@ export const ensureInvoiceForSalesOrder = async (
     },
   });
 
-  // Stamp totalWeightKg from invoice items (no packing slip yet at
-  // this point — pack reconciliation refreshes it later).
   await recomputeInvoiceWeight(client, invoice.id);
-
-  // Sweep the customer's unallocated advance payments against the
-  // freshly-created invoice so a prepayment recorded BEFORE the
-  // invoice was minted is correctly absorbed (status flips to 'paid'
-  // or 'partial' instantly, instead of leaving the invoice in
-  // 'issued' with cash sitting on account).
   await applyAdvancesToInvoice(client, invoice.id);
-  // Re-read so the caller gets the post-allocation status.
   const final = await client.invoice.findUnique({
     where: { id: invoice.id },
     include: {
@@ -169,6 +164,9 @@ export const reconcileInvoiceWithPack = async (
   });
   if (!invoice) throw new Error(`Invoice ${invoiceId} not found`);
 
+  const taxKind = (invoice.taxKind ?? "intra") as TaxKind;
+  const pricingInclusive = invoice.pricingInclusive ?? false;
+
   const packedBySoItem = new Map(
     packed.map((p) => [p.salesOrderItemId, p.qtyPacked])
   );
@@ -182,14 +180,21 @@ export const reconcileInvoiceWithPack = async (
     if (want <= 0) {
       await client.invoiceItem.delete({ where: { id: it.id } });
     } else {
-      const newAmount = want * it.rate;
       const gst = it.gstRate ?? 18;
+      const lineTax = computeLineTax(
+        { qty: want, rate: it.rate, gstRate: gst },
+        { inclusive: false, taxKind }
+      );
       await client.invoiceItem.update({
         where: { id: it.id },
         data: {
           qty: want,
-          amount: newAmount,
-          taxAmount: Math.round(newAmount * (gst / 100) * 100) / 100,
+          amount: lineTax.taxableValue,
+          taxableValue: lineTax.taxableValue,
+          taxAmount: lineTax.totalTax,
+          cgstAmount: lineTax.cgst,
+          sgstAmount: lineTax.sgst,
+          igstAmount: lineTax.igst,
         },
       });
     }
@@ -207,26 +212,37 @@ export const reconcileInvoiceWithPack = async (
 
   const remainingItems = await client.invoiceItem.findMany({
     where: { invoiceId },
-    select: { amount: true, gstRate: true },
+    select: {
+      amount: true,
+      gstRate: true,
+      cgstAmount: true,
+      sgstAmount: true,
+      igstAmount: true,
+    },
   });
-  const sub = remainingItems.reduce((s, r) => s + r.amount, 0);
-  const tax = computeTax(
-    remainingItems.map((r) => ({ amount: r.amount, gstRate: r.gstRate ?? 18 }))
-  );
+  const lineTaxes = remainingItems.map((r) => ({
+    taxableValue: r.amount,
+    cgst: r.cgstAmount ?? 0,
+    sgst: r.sgstAmount ?? 0,
+    igst: r.igstAmount ?? 0,
+    totalTax: (r.cgstAmount ?? 0) + (r.sgstAmount ?? 0) + (r.igstAmount ?? 0),
+    gross: r.amount + ((r.cgstAmount ?? 0) + (r.sgstAmount ?? 0) + (r.igstAmount ?? 0)),
+  }));
+  const agg = aggregateLineTaxes(lineTaxes);
   const transportCharge = invoice.transportCharge ?? 0;
-  const freight = computeGrandTotal(sub, tax, transportCharge);
+  const freight = computeTransportTax(transportCharge, taxKind);
   await client.invoice.update({
     where: { id: invoiceId },
     data: {
-      amount: freight.total,
-      tax,
-      transportTax: freight.transportTax,
+      amount: agg.subTotal + agg.tax + transportCharge + freight.totalTax,
+      tax: agg.tax,
+      cgstTotal: agg.cgstTotal,
+      sgstTotal: agg.sgstTotal,
+      igstTotal: agg.igstTotal,
+      transportTax: freight.totalTax,
     },
   });
 
-  // Pack reconciliation can drop / shrink lines — refresh weight.
-  // We prefer the packing-slip cached value when the slip is linked
-  // because it folds in actual scale readings.
   await recomputeInvoiceWeight(client, invoiceId, { preferPackingSlipKg: true });
 
   return client.invoice.findUnique({

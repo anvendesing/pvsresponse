@@ -146,6 +146,10 @@ export const PackingSlipEditor = ({ packingSlipId, onClose, onChanged }: Props) 
     return resolveBillingTotals({
       goodsSubTotal,
       goodsTax,
+      cgstTotal: ps.invoice?.cgstTotal ?? ps.salesOrder?.cgstTotal,
+      sgstTotal: ps.invoice?.sgstTotal ?? ps.salesOrder?.sgstTotal,
+      igstTotal: ps.invoice?.igstTotal ?? ps.salesOrder?.igstTotal,
+      taxKind: ps.invoice?.taxKind ?? ps.salesOrder?.taxKind,
       transportCharge: ps.invoice?.transportCharge ?? ps.salesOrder?.transportCharge,
       transportTax: ps.invoice?.transportTax ?? ps.salesOrder?.transportTax,
       total: ps.invoice?.amount,
@@ -671,7 +675,6 @@ export const PackingSlipEditor = ({ packingSlipId, onClose, onChanged }: Props) 
                     <BillingTotalsBreakdown
                       totals={billingTotals}
                       goodsSubLabel="Subtotal (from packed)"
-                      goodsTaxLabel="GST (goods)"
                     />
                     <div>
                       <div className="text-caption text-ink-muted mb-1">

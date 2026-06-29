@@ -46,6 +46,7 @@ const NAV_ROLES: Record<string, string[]> = {
   "warehouse-audit": ["admin", "warehouse"],
   manufacturing: ["admin", "supervisor"],
   "production-log": ["admin", "supervisor"],
+  "daily-production": ["admin", "supervisor"],
   boms:          ["admin", "supervisor"],
   productivity:  ["admin", "supervisor"],
   transport:     ["admin", "supervisor", "warehouse"],
@@ -85,6 +86,7 @@ const ALL_ITEMS = [
   // `end` = exact path only (avoids /manufacturing also matching /manufacturing/boms)
   { id: "manufacturing", label: "Manufacturing", icon: Factory, path: "/manufacturing", end: true },
   { id: "production-log", label: "Production Log", icon: BarChart3, path: "/manufacturing/log" },
+  { id: "daily-production", label: "Daily Production", icon: ClipboardList, path: "/manufacturing/daily" },
   { id: "boms", label: "BOMs", icon: Network, path: "/manufacturing/boms" },
   { id: "productivity", label: "Productivity", icon: Users, path: "/productivity" },
   { id: "transport", label: "Transport", icon: Truck, path: "/transport" },

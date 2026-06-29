@@ -31,8 +31,8 @@ export const Footer = () => (
         <h4>Shop</h4>
         <ul>
           <li><Link to="/">All Products</Link></li>
-          <li><Link to="/category/oils">Oils</Link></li>
-          <li><Link to="/category/millets">Millets</Link></li>
+          <li><Link to="/category/oils-oil-seeds">Oils</Link></li>
+          <li><Link to="/category/millets-millet-products">Millets</Link></li>
           <li><Link to="/category/wellness">Wellness</Link></li>
         </ul>
       </div>
@@ -49,6 +49,7 @@ export const Footer = () => (
         <h4>Help</h4>
         <ul>
           <li><Link to="/enquiry">Bulk / Dealership Enquiry</Link></li>
+          <li><Link to="/track">Track Order</Link></li>
           <li><a href="mailto:prakruthivanam@gmail.com">Contact Us</a></li>
           <li><a href="#">Shipping Policy</a></li>
           <li><a href="#">Returns &amp; Refunds</a></li>

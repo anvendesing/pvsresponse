@@ -61,6 +61,20 @@ export const MobilePick = () => {
   // "Reset stale lines" -> calls /reset for each id, then a fresh
   // /complete attempt. See backend reset endpoint.
   const [staleItemIds, setStaleItemIds] = useState<string[]>([]);
+  const [binSortEnabled, setBinSortEnabled] = useState(true);
+
+  useEffect(() => {
+    let alive = true;
+    api
+      .getCompanyProfile()
+      .then((p) => {
+        if (alive) setBinSortEnabled(p.pickSortByBinEnabled !== false);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const refresh = useCallback(async () => {
     if (!id) return;
@@ -339,7 +353,7 @@ export const MobilePick = () => {
 
       <div className="mb-2 flex items-center justify-between">
         <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-          Lines (in walk order)
+          {binSortEnabled ? "Lines (in walk order)" : "Lines (order sequence)"}
         </span>
         <span className="text-xs font-semibold text-slate-600">
           {pickedCount}/{pickableItems.length} picked

@@ -4,6 +4,7 @@
 import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useEffect } from "react";
 import { useAuth } from "@/state/AuthContext";
+import { isPlaceholderCustomerName } from "@/lib/customer";
 
 export const AccountLayout = () => {
   const auth = useAuth();
@@ -53,9 +54,15 @@ export const AccountLayout = () => {
               {auth.user.name.charAt(0).toUpperCase()}
             </div>
             <div>
-              <div style={{ fontWeight: 700 }}>{auth.user.name}</div>
+              <div style={{ fontWeight: 700 }}>
+                {auth.customer && !isPlaceholderCustomerName(auth.customer.name, auth.customer.phone)
+                  ? auth.customer.name
+                  : auth.user?.name && !isPlaceholderCustomerName(auth.user.name, auth.user.phone)
+                  ? auth.user.name
+                  : "My account"}
+              </div>
               <div style={{ fontSize: "0.78rem", color: "var(--neutral-gray)" }}>
-                {auth.user.email}
+                {auth.customer?.phone ?? auth.user?.phone}
               </div>
             </div>
           </div>

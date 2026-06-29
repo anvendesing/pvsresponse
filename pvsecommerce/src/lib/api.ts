@@ -1,15 +1,6 @@
-// Backend client for the storefront. We only consume two NovaERP
-// endpoints right now:
-//   GET  /v1/storefront-mock/catalog       (public)
-//   POST /v1/storefront-mock/order         (public; gated by mock-token if set)
-//   GET  /v1/storefront-mock/orders?email= (public; new helper for the
-//                                            customer dashboard - returns
-//                                            this customer's order history)
-//
-// Auth is intentionally fake during the demo so the storefront can be
-// browsed end-to-end without standing up a real signup/login flow.
-// The dummy "session" lives in localStorage; all order-history reads
-// just send the email along.
+// Backend client for the storefront.
+
+import { AUTH_TOKEN_KEY } from "@/lib/auth-storage";
 
 const RAW_API_URL = (import.meta.env.VITE_API_URL as string | undefined)?.trim();
 const API_URL = RAW_API_URL ? RAW_API_URL.replace(/\/$/, "") : "";
@@ -25,12 +16,27 @@ const getApiOrigin = (): string => {
 };
 export const API_ORIGIN = getApiOrigin();
 
-/** Resolve /uploads/… paths for img src (same-origin or dev backend). */
-export function resolveUploadUrl(url: string | null | undefined): string | undefined {
+/** Resolve /uploads/… paths for img src (same-origin or dev backend).
+ *  Optionally appends ?v=<epoch> so updated images bust the SW cache
+ *  immediately rather than waiting for expiration.
+ */
+export function resolveUploadUrl(
+  url: string | null | undefined,
+  updatedAt?: Date | string | number | null
+): string | undefined {
   if (!url) return undefined;
-  if (!url.startsWith("/uploads")) return url;
-  if (API_URL) return `${API_URL}${url}`;
-  return url;
+  const base = url.startsWith("/uploads")
+    ? API_URL ? `${API_URL}${url}` : url
+    : url;
+  if (!updatedAt) return base;
+  const epoch =
+    updatedAt instanceof Date
+      ? updatedAt.getTime()
+      : typeof updatedAt === "string"
+        ? new Date(updatedAt).getTime()
+        : Number(updatedAt);
+  if (!Number.isFinite(epoch)) return base;
+  return `${base}?v=${epoch}`;
 }
 
 const buildUrl = (path: string, query?: Record<string, string | number | undefined>): string => {
@@ -54,6 +60,7 @@ const buildUrl = (path: string, query?: Record<string, string | number | undefin
 export interface CatalogVariant {
   id: string;
   sku: string;
+  barcode: string | null;
   size: string | null;
   color: string | null;
   grade: string | null;
@@ -69,11 +76,23 @@ export interface StorefrontCategory {
   name: string;
   sortOrder: number;
   imageUrl: string | null;
+  updatedAt?: string | null;
+}
+
+export interface StorefrontConcern {
+  id: string;
+  slug: string;
+  name: string;
+  description: string | null;
+  icon: string | null;
+  sortOrder: number;
+  imageUrl: string | null;
 }
 
 export interface CatalogProduct {
   id: string;
   sku: string;
+  barcode: string;
   name: string;
   categoryId: string | null;
   categorySlug: string | null;
@@ -86,7 +105,10 @@ export interface CatalogProduct {
   description: string | null;
   imageHint: string | null;
   imageUrl: string | null;
+  imageUpdatedAt?: number | null;
   tags: string[];
+  concernSlugs?: string[];
+  concernNames?: string[];
   variants: CatalogVariant[];
 }
 
@@ -100,11 +122,11 @@ export interface ProductDetail extends CatalogProduct {
 
 export interface CartLine {
   productId: string;
-  productSku: string;
   productName: string;
   variantId: string | null;
-  variantSku: string | null;
   variantSize: string | null;
+  variantLabel: string | null;
+  barcode: string | null;
   qty: number;
   rate: number;
   available: number;
@@ -113,16 +135,88 @@ export interface CartLine {
 
 export interface PlaceOrderInput {
   name: string;
-  email: string;
+  email?: string;
   phone: string;
+  addressLine?: string;
   city?: string;
+  state?: string;
+  pincode?: string;
+  addressId?: string;
   notes?: string;
+  deliveryMethod?: "standard" | "express";
+  shippingFee?: number;
   items: { productId: string; variantId: string | null; qty: number }[];
 }
 
+export interface ShippingQuoteOption {
+  id: "standard" | "express";
+  label: string;
+  fee: number;
+  transportTax: number;
+  payableTotal: number;
+  etaDays: number | null;
+  courierName: string | null;
+  mode: string;
+  freeShippingApplied: boolean;
+}
+
+export interface ShippingQuoteResult {
+  pickupPincode: string;
+  deliveryPincode: string;
+  distanceKm?: number | null;
+  weightKg: number;
+  subTotal: number;
+  goodsTax: number;
+  cgstTotal?: number;
+  sgstTotal?: number;
+  igstTotal?: number;
+  taxKind?: "intra" | "inter";
+  source: "shiprocket" | "fallback";
+  options: ShippingQuoteOption[];
+}
+
+export interface StorefrontCustomer {
+  id: string;
+  accountId: string;
+  name: string;
+  email: string | null;
+  phone: string | null;
+}
+
+export interface CustomerAddress {
+  id: string;
+  label: string | null;
+  name: string;
+  phone: string;
+  addressLine: string;
+  city: string;
+  state: string | null;
+  pincode: string;
+  /** Km from dispatch location — saved when address is created/updated. */
+  distanceKm?: number | null;
+  dispatchPincode?: string | null;
+  isDefault: boolean;
+}
+
+export interface OtpSendResult {
+  ok: boolean;
+  expiresInSec: number;
+  resendInSec?: number;
+  attemptsLeft?: number;
+  devOtp?: string;
+}
+
+export interface OtpVerifyResult {
+  token: string;
+  customer: StorefrontCustomer;
+  addresses: CustomerAddress[];
+  recentOrders: CustomerOrderRow[];
+}
+
+/** @deprecated Use initRazorpayOrder + confirmRazorpayOrder instead. */
 export interface PlaceOrderResult {
   customer: { id: string; code: string; name: string };
-  customerAccount: { id: string; email: string };
+  customerAccount: { id: string; email: string | null; phone?: string | null };
   salesOrder: {
     id: string;
     soNo: string;
@@ -140,6 +234,17 @@ export interface PlaceOrderResult {
   pickList:
     | { id: string; pickListNo: string }
     | { error: { code: string; message: string } };
+}
+
+export interface CustomerOrderItem {
+  productId: string;
+  productName: string;
+  variantId: string | null;
+  variantSize: string | null;
+  barcode: string | null;
+  qty: number;
+  rate: number;
+  amount: number;
 }
 
 export interface CustomerOrderRow {
@@ -160,7 +265,51 @@ export interface CustomerOrderRow {
     deliveredAt: string | null;
   } | null;
   itemCount: number;
+  items: CustomerOrderItem[];
 }
+
+export interface RazorpayInitResult {
+  gateway?: "razorpay";
+  intentId: string;
+  razorpayOrderId: string;
+  keyId: string;
+  amount: number;
+  currency: string;
+  totals: {
+    subTotal: number;
+    tax: number;
+    transportTax: number;
+    shippingFee: number;
+    total: number;
+  };
+  prefill: {
+    name: string;
+    email: string;
+    contact: string;
+  };
+}
+
+export interface PayuInitResult {
+  gateway: "payu";
+  intentId: string;
+  checkoutUrl: string;
+  fields: Record<string, string>;
+  totals: RazorpayInitResult["totals"];
+  prefill: RazorpayInitResult["prefill"];
+}
+
+export type CheckoutInitResult = RazorpayInitResult | PayuInitResult;
+
+export type StorefrontPaymentGateway = "razorpay" | "payu";
+
+export interface RazorpayConfirmInput {
+  intentId: string;
+  razorpay_payment_id: string;
+  razorpay_order_id: string;
+  razorpay_signature: string;
+}
+
+export type RazorpayConfirmResult = PlaceOrderResult;
 
 // =====================================================================
 // Error wrapper - all API helpers throw ApiError, so callers can do
@@ -173,6 +322,15 @@ export class ApiError extends Error {
   }
 }
 
+const getAuthHeaders = (): Record<string, string> => {
+  try {
+    const token = window.localStorage.getItem(AUTH_TOKEN_KEY);
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  } catch {
+    return {};
+  }
+};
+
 const fetchJson = async <T,>(
   url: string,
   init?: RequestInit
@@ -181,6 +339,7 @@ const fetchJson = async <T,>(
     ...init,
     headers: {
       "content-type": "application/json",
+      ...getAuthHeaders(),
       ...(MOCK_TOKEN ? { "x-mock-token": MOCK_TOKEN } : {}),
       ...(init?.headers ?? {}),
     },
@@ -204,12 +363,19 @@ const fetchJson = async <T,>(
 
 const mapCatalogProduct = (p: CatalogProduct): CatalogProduct => ({
   ...p,
-  imageUrl: resolveUploadUrl(p.imageUrl) ?? null,
+  imageUrl: resolveUploadUrl(p.imageUrl, p.imageUpdatedAt) ?? null,
 });
 
 export const api = {
   categories: async () => {
     const list = await fetchJson<StorefrontCategory[]>(buildUrl("/storefront-mock/categories"));
+    return list.map((c) => ({
+      ...c,
+      imageUrl: resolveUploadUrl(c.imageUrl, c.updatedAt) ?? null,
+    }));
+  },
+  concerns: async () => {
+    const list = await fetchJson<StorefrontConcern[]>(buildUrl("/storefront-mock/concerns"));
     return list.map((c) => ({
       ...c,
       imageUrl: resolveUploadUrl(c.imageUrl) ?? null,
@@ -225,6 +391,37 @@ export const api = {
     );
     return mapCatalogProduct(p) as ProductDetail;
   },
+  shippingQuote: (input: {
+    pincode: string;
+    state?: string;
+    addressId?: string;
+    subTotal: number;
+    items: { productId: string; variantId: string | null; qty: number }[];
+  }) =>
+    fetchJson<ShippingQuoteResult>(buildUrl("/storefront-mock/shipping/quote"), {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  activePaymentGateways: () =>
+    fetchJson<{ active: StorefrontPaymentGateway[] }>(
+      buildUrl("/storefront-mock/payment/gateways")
+    ),
+  initCheckoutOrder: (input: PlaceOrderInput & { gateway?: StorefrontPaymentGateway }) =>
+    fetchJson<CheckoutInitResult>(buildUrl("/storefront-mock/order/init"), {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  initRazorpayOrder: (input: PlaceOrderInput) =>
+    fetchJson<RazorpayInitResult>(buildUrl("/storefront-mock/order/init"), {
+      method: "POST",
+      body: JSON.stringify({ ...input, gateway: "razorpay" }),
+    }),
+  confirmRazorpayOrder: (input: RazorpayConfirmInput) =>
+    fetchJson<RazorpayConfirmResult>(buildUrl("/storefront-mock/order/confirm"), {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  /** @deprecated Use initRazorpayOrder + confirmRazorpayOrder. */
   placeOrder: (input: PlaceOrderInput) =>
     fetchJson<PlaceOrderResult>(buildUrl("/storefront-mock/order"), {
       method: "POST",
@@ -234,6 +431,53 @@ export const api = {
     fetchJson<CustomerOrderRow[]>(
       buildUrl("/storefront-mock/orders", { email })
     ),
+  myOrders: () => fetchJson<CustomerOrderRow[]>(buildUrl("/storefront-mock/orders")),
+  myOrder: (soNo: string) =>
+    fetchJson<CustomerOrderRow>(buildUrl(`/storefront-mock/orders/${encodeURIComponent(soNo)}`)),
+  lookupOrder: (input: { soNo: string; phone: string; code: string }) =>
+    fetchJson<CustomerOrderRow>(buildUrl("/storefront-mock/orders/lookup"), {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  sendOtp: (phone: string, purpose: "login" | "track" = "login") =>
+    fetchJson<OtpSendResult>(buildUrl("/storefront-auth/otp/send"), {
+      method: "POST",
+      body: JSON.stringify({ phone, purpose }),
+    }),
+  verifyOtp: (phone: string, code: string, name?: string, purpose: "login" | "track" = "login") =>
+    fetchJson<OtpVerifyResult>(buildUrl("/storefront-auth/otp/verify"), {
+      method: "POST",
+      body: JSON.stringify({ phone, code, name, purpose }),
+    }),
+  me: () => fetchJson<{ customer: StorefrontCustomer; addresses: CustomerAddress[] }>(
+    buildUrl("/storefront-auth/me")
+  ),
+  updateProfile: (input: { name?: string; email?: string }) =>
+    fetchJson<{ customer: StorefrontCustomer; addresses: CustomerAddress[] }>(
+      buildUrl("/storefront-auth/me"),
+      { method: "PATCH", body: JSON.stringify(input) }
+    ),
+  logout: () =>
+    fetchJson<{ ok: boolean }>(buildUrl("/storefront-auth/logout"), { method: "POST" }),
+  listAddresses: () => fetchJson<CustomerAddress[]>(buildUrl("/storefront-auth/addresses")),
+  createAddress: (input: Omit<CustomerAddress, "id" | "isDefault"> & { isDefault?: boolean }) =>
+    fetchJson<CustomerAddress>(buildUrl("/storefront-auth/addresses"), {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+  updateAddress: (id: string, input: Partial<Omit<CustomerAddress, "id">>) =>
+    fetchJson<CustomerAddress>(buildUrl(`/storefront-auth/addresses/${id}`), {
+      method: "PATCH",
+      body: JSON.stringify(input),
+    }),
+  deleteAddress: (id: string) =>
+    fetchJson<{ ok: boolean }>(buildUrl(`/storefront-auth/addresses/${id}`), {
+      method: "DELETE",
+    }),
+  setDefaultAddress: (id: string) =>
+    fetchJson<{ ok: boolean }>(buildUrl(`/storefront-auth/addresses/${id}/default`), {
+      method: "POST",
+    }),
   submitEnquiry: (input: EnquiryFormInput) =>
     fetchJson<{ ok: boolean; enquiryNo: string }>(
       buildUrl("/storefront-mock/enquiries"),

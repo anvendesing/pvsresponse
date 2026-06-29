@@ -16,12 +16,12 @@ export const AccountOverview = () => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!auth.user?.email) return;
+    if (!auth.isAuthed) return;
     let cancelled = false;
     setLoading(true);
     setError(null);
     api
-      .ordersByEmail(auth.user.email)
+      .myOrders()
       .then((rows) => {
         if (!cancelled) setOrders(rows);
       })
@@ -39,7 +39,7 @@ export const AccountOverview = () => {
     return () => {
       cancelled = true;
     };
-  }, [auth.user?.email]);
+  }, [auth.isAuthed]);
 
   const activeOrder = orders.find(
     (o) => !o.packingSlip?.deliveredAt && o.status !== "cancelled"
@@ -52,7 +52,7 @@ export const AccountOverview = () => {
           className="serif-title"
           style={{ fontSize: "1.6rem", color: "var(--forest-green-dark)", marginBottom: "0.4rem" }}
         >
-          Namaste, {auth.user?.name.split(" ")[0]}!
+          Namaste, {auth.customer?.name.split(" ")[0] ?? auth.user?.name.split(" ")[0]}!
         </h2>
         <p className="muted">
           Glad to have you back. Here's a quick look at your activity.

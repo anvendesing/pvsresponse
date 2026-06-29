@@ -479,6 +479,7 @@ const MultiContainerPack = ({
   const [types, setTypes] = useState<ContainerTypeRow[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [showTypePicker, setShowTypePicker] = useState(false);
+  const [showContainerPicker, setShowContainerPicker] = useState(false);
   const [pad, setPad] = useState<{ itemId: string; max: number } | null>(null);
   const [sealAsk, setSealAsk] = useState<PackingContainerRow | null>(null);
   const [scanMode, setScanMode] = useState(false);
@@ -903,9 +904,11 @@ const MultiContainerPack = ({
                         }
                         className={[
                           "rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1",
-                          c.status === "sealed"
-                            ? "bg-emerald-100 text-emerald-800 ring-emerald-200"
-                            : "bg-amber-100 text-amber-800 ring-amber-200",
+                          c.id === activeId
+                            ? "bg-[#003087] text-white ring-[#003087]"
+                            : c.status === "sealed"
+                              ? "bg-emerald-100 text-emerald-800 ring-emerald-200"
+                              : "bg-amber-100 text-amber-800 ring-amber-200",
                         ].join(" ")}
                         title={c.status === "open" ? "Tap to remove from this container" : ""}
                       >
@@ -915,35 +918,45 @@ const MultiContainerPack = ({
                     ))}
                   </div>
                 </div>
-                {myQty > 0 && active?.id && (
-                  <div className="shrink-0 rounded-full bg-[#003087] px-2 py-0.5 text-[10px] font-bold text-white">
-                    in {active.label}: {myQty}
-                  </div>
-                )}
               </div>
-              {!isLocked && active && active.status === "open" && remaining > 0 && (
+              {!isLocked && remaining > 0 && (
                 <div className="mt-2 flex items-stretch gap-2">
-                  <button
-                    onClick={() => void addToActive(it.id, 1)}
-                    disabled={busy}
-                    className="flex-[2] rounded-xl bg-emerald-500 py-2 text-sm font-bold text-white disabled:opacity-50"
-                  >
-                    +1
-                  </button>
-                  <button
-                    onClick={() => setPad({ itemId: it.id, max: remaining })}
-                    disabled={busy}
-                    className="flex-1 rounded-xl border border-slate-300 py-2 text-xs font-semibold text-slate-700"
-                  >
-                    Qty…
-                  </button>
-                  <button
-                    onClick={() => void addToActive(it.id, remaining)}
-                    disabled={busy}
-                    className="flex-1 rounded-xl border border-slate-300 py-2 text-xs font-semibold text-slate-700"
-                  >
-                    All ({remaining})
-                  </button>
+                  <ActiveContainerSlot
+                    active={active}
+                    myQty={myQty}
+                    onTap={() => setShowContainerPicker(true)}
+                  />
+                  {active && active.status === "open" ? (
+                    <>
+                      <button
+                        onClick={() => void addToActive(it.id, 1)}
+                        disabled={busy}
+                        className="flex-[2] rounded-xl bg-emerald-500 py-2 text-sm font-bold text-white disabled:opacity-50"
+                      >
+                        +1
+                      </button>
+                      <button
+                        onClick={() => setPad({ itemId: it.id, max: remaining })}
+                        disabled={busy}
+                        className="flex-1 rounded-xl border border-slate-300 py-2 text-xs font-semibold text-slate-700"
+                      >
+                        Qty…
+                      </button>
+                      <button
+                        onClick={() => void addToActive(it.id, remaining)}
+                        disabled={busy}
+                        className="flex-1 rounded-xl border border-slate-300 py-2 text-xs font-semibold text-slate-700"
+                      >
+                        All ({remaining})
+                      </button>
+                    </>
+                  ) : (
+                    <div className="flex flex-1 items-center rounded-xl bg-amber-50 px-3 text-xs text-amber-800 ring-1 ring-amber-200">
+                      {active
+                        ? "Container is sealed — tap the box on the left to switch."
+                        : "Add a container on the left before packing."}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -957,6 +970,18 @@ const MultiContainerPack = ({
           types={types}
           onPick={(id) => void addContainer(id)}
           onClose={() => setShowTypePicker(false)}
+        />
+      )}
+      {showContainerPicker && (
+        <ContainerPickerSheet
+          containers={containers}
+          activeId={activeId}
+          onPick={(id) => setActiveId(id)}
+          onAddNew={() => {
+            setShowContainerPicker(false);
+            setShowTypePicker(true);
+          }}
+          onClose={() => setShowContainerPicker(false)}
         />
       )}
       {pad && (
@@ -1006,6 +1031,131 @@ const MultiContainerPack = ({
 const SHEET_OVERLAY = "fixed inset-0 z-50 flex items-end bg-black/40";
 const SHEET_PANEL =
   "w-full rounded-t-3xl bg-white p-4 pb-[calc(16px+env(safe-area-inset-bottom))]";
+
+/** Left slot on each pack line — shows where +1 / scan will land. */
+const ActiveContainerSlot = ({
+  active,
+  myQty,
+  onTap,
+}: {
+  active: PackingContainerRow | null;
+  myQty: number;
+  onTap: () => void;
+}) => {
+  if (!active) {
+    return (
+      <button
+        type="button"
+        onClick={onTap}
+        className="flex shrink-0 flex-col items-center justify-center rounded-xl px-2.5 py-2 min-w-[76px] ring-2 ring-dashed ring-amber-400 bg-amber-50"
+      >
+        <span className="text-2xl leading-none">＋</span>
+        <span className="mt-1 text-[10px] font-bold text-amber-800">Add container</span>
+      </button>
+    );
+  }
+
+  const sealed = active.status === "sealed";
+  return (
+    <button
+      type="button"
+      onClick={onTap}
+      className={[
+        "flex shrink-0 flex-col items-center justify-center rounded-xl px-2.5 py-2 min-w-[76px] ring-2 transition-colors",
+        sealed
+          ? "ring-emerald-400 bg-emerald-50"
+          : "ring-[#003087] bg-[#003087]/5",
+      ].join(" ")}
+    >
+      <span className="text-[9px] font-bold uppercase tracking-wide text-slate-500">
+        Packing into
+      </span>
+      <span className="text-xl leading-none">{kindEmoji(active.containerType?.kind)}</span>
+      <span className="font-mono text-base font-bold tnum text-[#003087]">{active.label}</span>
+      {myQty > 0 && (
+        <span className="text-[9px] font-semibold text-[#003087]">{myQty} in here</span>
+      )}
+      <span className={`text-[9px] font-semibold ${sealed ? "text-emerald-700" : "text-slate-500"}`}>
+        {sealed ? "Sealed · tap to switch" : "Tap to change"}
+      </span>
+    </button>
+  );
+};
+
+const ContainerPickerSheet = ({
+  containers,
+  activeId,
+  onPick,
+  onAddNew,
+  onClose,
+}: {
+  containers: PackingContainerRow[];
+  activeId: string | null;
+  onPick: (id: string) => void;
+  onAddNew: () => void;
+  onClose: () => void;
+}) => (
+  <div className={SHEET_OVERLAY} onClick={onClose}>
+    <div className={SHEET_PANEL} onClick={(e) => e.stopPropagation()}>
+      <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-slate-300" />
+      <div className="text-lg font-bold text-slate-900">Active container</div>
+      <div className="mt-1 mb-3 text-sm text-slate-600">
+        Items you pack go into the selected container. Pick the box you are filling now.
+      </div>
+      <div className="max-h-[60vh] space-y-2 overflow-y-auto">
+        {containers.map((c) => {
+          const isActive = c.id === activeId;
+          const isSealed = c.status === "sealed";
+          return (
+            <button
+              key={c.id}
+              type="button"
+              disabled={isSealed}
+              onClick={() => {
+                onPick(c.id);
+                onClose();
+              }}
+              className={[
+                "flex w-full items-center gap-3 rounded-2xl p-3 text-left ring-1 transition-colors",
+                isActive
+                  ? "bg-[#003087] text-white ring-[#003087]"
+                  : isSealed
+                    ? "bg-emerald-50 text-emerald-900 ring-emerald-200 opacity-70"
+                    : "bg-white text-slate-800 ring-slate-200",
+              ].join(" ")}
+            >
+              <span className="text-2xl">{kindEmoji(c.containerType?.kind)}</span>
+              <div className="min-w-0 flex-1">
+                <div className="font-mono text-lg font-bold tnum">{c.label}</div>
+                <div className={`text-xs ${isActive ? "text-white/80" : "text-slate-500"}`}>
+                  {c.containerType?.name ?? "No type"} · {c.items.length} item
+                  {c.items.length === 1 ? "" : "s"} · est {fmtKg(c.estWeightKg)}
+                </div>
+              </div>
+              {isActive && !isSealed && (
+                <span className="rounded-full bg-white/20 px-2 py-0.5 text-[10px] font-bold">
+                  ACTIVE
+                </span>
+              )}
+              {isSealed && (
+                <span className="rounded-full bg-emerald-200 px-2 py-0.5 text-[10px] font-bold text-emerald-900">
+                  SEALED
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+      <button
+        type="button"
+        onClick={onAddNew}
+        className="mt-3 w-full rounded-2xl border border-dashed border-[#003087] py-3 text-sm font-semibold text-[#003087]"
+      >
+        ＋ New container
+      </button>
+    </div>
+  </div>
+);
 
 const TypePickerSheet = ({
   types,

@@ -7,30 +7,79 @@ type Props = {
   /** One-line caption for KPI cards */
   variant?: "stack" | "inline";
   goodsSubLabel?: string;
-  goodsTaxLabel?: string;
   totalLabel?: string;
   className?: string;
+};
+
+const TaxRows = ({ totals }: { totals: BillingTotals }) => {
+  if (totals.taxKind === "inter") {
+    return (
+      <div className="flex justify-between gap-4">
+        <span className="text-ink-muted">IGST (goods)</span>
+        <span className="tnum">{inr(totals.igst)}</span>
+      </div>
+    );
+  }
+  return (
+    <>
+      <div className="flex justify-between gap-4">
+        <span className="text-ink-muted">CGST (goods)</span>
+        <span className="tnum">{inr(totals.cgst)}</span>
+      </div>
+      <div className="flex justify-between gap-4">
+        <span className="text-ink-muted">SGST (goods)</span>
+        <span className="tnum">{inr(totals.sgst)}</span>
+      </div>
+    </>
+  );
+};
+
+const FreightTaxRows = ({ totals }: { totals: BillingTotals }) => {
+  if (totals.transportTax <= 0) return null;
+  if (totals.taxKind === "inter") {
+    return (
+      <div className="flex justify-between gap-4">
+        <span className="text-ink-muted">IGST on freight (18%)</span>
+        <span className="tnum">{inr(totals.transportIgst)}</span>
+      </div>
+    );
+  }
+  return (
+    <>
+      <div className="flex justify-between gap-4">
+        <span className="text-ink-muted">CGST on freight (9%)</span>
+        <span className="tnum">{inr(totals.transportCgst)}</span>
+      </div>
+      <div className="flex justify-between gap-4">
+        <span className="text-ink-muted">SGST on freight (9%)</span>
+        <span className="tnum">{inr(totals.transportSgst)}</span>
+      </div>
+    </>
+  );
 };
 
 export const BillingTotalsBreakdown = ({
   totals,
   variant = "stack",
-  goodsSubLabel = "Sub-total (goods)",
-  goodsTaxLabel = "GST (goods)",
+  goodsSubLabel = "Sub-total (goods, excl. GST)",
   totalLabel = "Total",
   className,
 }: Props) => {
   const hasFreight = totals.transportCharge > 0 || totals.transportTax > 0;
 
   if (variant === "inline") {
+    const taxLabel =
+      totals.taxKind === "inter"
+        ? `IGST ${inr(totals.igst)}`
+        : `CGST ${inr(totals.cgst)} · SGST ${inr(totals.sgst)}`;
     return (
       <div className={cn("text-caption text-ink-muted", className)}>
-        Sub {inr(totals.goodsSubTotal)} · Tax {inr(totals.goodsTax)}
+        Sub {inr(totals.goodsSubTotal)} · {taxLabel}
         {hasFreight && (
           <>
             {" "}
             · Freight {inr(totals.transportCharge)}
-            {totals.transportTax > 0 && <> · GST (freight) {inr(totals.transportTax)}</>}
+            {totals.transportTax > 0 && <> · Freight GST {inr(totals.transportTax)}</>}
           </>
         )}
       </div>
@@ -43,22 +92,14 @@ export const BillingTotalsBreakdown = ({
         <span className="text-ink-muted">{goodsSubLabel}</span>
         <span className="tnum">{inr(totals.goodsSubTotal)}</span>
       </div>
-      <div className="flex justify-between gap-4">
-        <span className="text-ink-muted">{goodsTaxLabel}</span>
-        <span className="tnum">{inr(totals.goodsTax)}</span>
-      </div>
+      <TaxRows totals={totals} />
       {hasFreight && (
         <>
           <div className="flex justify-between gap-4">
             <span className="text-ink-muted">Freight / transport</span>
             <span className="tnum">{inr(totals.transportCharge)}</span>
           </div>
-          {totals.transportTax > 0 && (
-            <div className="flex justify-between gap-4">
-              <span className="text-ink-muted">GST on freight (18%)</span>
-              <span className="tnum">{inr(totals.transportTax)}</span>
-            </div>
-          )}
+          <FreightTaxRows totals={totals} />
         </>
       )}
       <div className="flex justify-between gap-4 pt-1 border-t border-border font-bold">

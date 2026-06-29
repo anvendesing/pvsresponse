@@ -54,6 +54,12 @@ import { productMatchesTerm, variantMatchesTerm } from "@/lib/productSearch";
 import { useBrand } from "@/hooks/useBrand";
 import { UserManager } from "@/components/settings/UserManager";
 import { CategoryManager } from "@/components/settings/CategoryManager";
+import { ConcernManager } from "@/components/settings/ConcernManager";
+import { RazorpaySettings } from "@/components/settings/RazorpaySettings";
+import { PayuSettings } from "@/components/settings/PayuSettings";
+import { ShiprocketSettings } from "@/components/settings/ShiprocketSettings";
+import { SmsProviderSettings } from "@/components/settings/SmsProviderSettings";
+import { SystemLogsViewer } from "@/components/settings/SystemLogsViewer";
 import { DispatchOptionManager } from "@/components/settings/DispatchOptionManager";
 import { ChannelMappingManager } from "@/components/settings/ChannelMappingManager";
 import { ContainerTypeManager } from "@/components/settings/ContainerTypeManager";
@@ -88,6 +94,7 @@ const SECTION_GROUPS: { heading: string; sections: SettingsSection[] }[] = [
     heading: "Catalog & access",
     sections: [
       { id: "categories", label: "Categories", icon: Tags },
+      { id: "concerns", label: "Concerns", icon: Tags },
       { id: "users", label: "Users & Roles", icon: Users },
       { id: "security", label: "Security", icon: Shield },
     ],
@@ -98,6 +105,10 @@ const SECTION_GROUPS: { heading: string; sections: SettingsSection[] }[] = [
       { id: "scanner", label: "Scanner", icon: ScanLine },
       { id: "sms", label: "SMS (SMSIdea)", icon: MessageSquare },
       { id: "payment", label: "Payment (CCAvenue)", icon: Key },
+      { id: "razorpay", label: "Payment (Razorpay)", icon: Key },
+      { id: "payu", label: "Payment (PayU)", icon: Key },
+      { id: "shiprocket", label: "Shipping (Shiprocket)", icon: Truck },
+      { id: "systemlogs", label: "System logs", icon: Database },
       { id: "sync", label: "Sync & Offline", icon: Wifi },
       { id: "backup", label: "Backup", icon: Database },
     ],
@@ -181,6 +192,7 @@ export const Settings = () => {
           {active === "stockrules" && <StockRulesManager />}
 
           {active === "categories" && <CategoryManager />}
+          {active === "concerns" && <ConcernManager />}
           {active === "dispatch" && <DispatchOptionManager />}
           {active === "packing" && <PackingSettings />}
           {active === "containerTypes" && <ContainerTypeManager />}
@@ -215,27 +227,7 @@ export const Settings = () => {
             </Card>
           )}
 
-          {active === "sms" && (
-            <Card title="SMS — SMSIdea Integration" actions={<Chip tone="success">Connected</Chip>}>
-              <div className="grid grid-cols-2 gap-3">
-                <Input label="API key" type="password" defaultValue="************K23" />
-                <Input label="Sender ID" defaultValue="NOVAMF" />
-                <Input label="DLT Template ID" defaultValue="1107171234567890123" />
-                <Input label="Default route" defaultValue="Transactional" />
-              </div>
-              <div className="mt-3 grid grid-cols-2 gap-2">
-                {[
-                  "Invoice Generated",
-                  "Dispatch Updates",
-                  "OTP Verification",
-                  "Worker Alerts",
-                  "PO Approved",
-                ].map((t) => (
-                  <Toggle key={t} label={t} on />
-                ))}
-              </div>
-            </Card>
-          )}
+          {active === "sms" && <SmsProviderSettings />}
 
           {active === "payment" && (
             <Card title="Payment — CCAvenue" actions={<Chip tone="success">Live</Chip>}>
@@ -247,6 +239,14 @@ export const Settings = () => {
               </div>
             </Card>
           )}
+
+          {active === "razorpay" && <RazorpaySettings />}
+
+          {active === "payu" && <PayuSettings />}
+
+          {active === "shiprocket" && <ShiprocketSettings />}
+
+          {active === "systemlogs" && <SystemLogsViewer />}
 
           {active === "sync" && (
             <Card title="Sync & Offline">
@@ -402,7 +402,7 @@ type FormState = Pick<
   | "bankIfsc"
   | "bankBranch"
   | "upi"
-> & { defaultTaxRate: number };
+> & { defaultTaxRate: number; pricingIncludesGst: boolean };
 
 const blankForm: FormState = {
   legalName: "",
@@ -424,6 +424,7 @@ const blankForm: FormState = {
   currency: "INR",
   fiscalYearStart: "04-01",
   defaultTaxRate: 18,
+  pricingIncludesGst: false,
   termsDefault: "",
   bankName: "",
   bankAccountNo: "",
@@ -454,6 +455,7 @@ const toForm = (p: CompanyProfile): FormState => ({
   currency: p.currency ?? "INR",
   fiscalYearStart: p.fiscalYearStart ?? "04-01",
   defaultTaxRate: p.defaultTaxRate ?? 18,
+  pricingIncludesGst: p.pricingIncludesGst ?? false,
   termsDefault: p.termsDefault ?? "",
   bankName: p.bankName ?? "",
   bankAccountNo: p.bankAccountNo ?? "",
@@ -485,6 +487,7 @@ const toPayload = (s: FormState): CompanyProfileUpdate => {
     currency: trim(s.currency) || "INR",
     fiscalYearStart: trim(s.fiscalYearStart) || "04-01",
     defaultTaxRate: Number.isFinite(s.defaultTaxRate) ? s.defaultTaxRate : 18,
+    pricingIncludesGst: s.pricingIncludesGst,
     termsDefault: nz(s.termsDefault ?? ""),
     bankName: nz(s.bankName ?? ""),
     bankAccountNo: nz(s.bankAccountNo ?? ""),
@@ -686,6 +689,23 @@ const CompanyForm = () => {
             }
             helper="Falls back when a product has no GST set"
           />
+          <label className="col-span-3 flex items-start gap-3 rounded-md border border-border px-3 py-2.5 cursor-pointer hover:bg-canvas">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={form.pricingIncludesGst}
+              onChange={(e) => update("pricingIncludesGst", e.target.checked)}
+            />
+            <span>
+              <span className="block text-body-sm font-semibold text-ink">
+                Prices include GST
+              </span>
+              <span className="block text-caption text-ink-muted mt-0.5">
+                When ON, catalog and price-list prices are treated as already including GST.
+                Invoices show the pre-tax line amount and itemise CGST+SGST (or IGST) below.
+              </span>
+            </span>
+          </label>
           <Input
             label="Currency"
             value={form.currency}

@@ -2,15 +2,28 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport: no-zoom so it feels native on mobile -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <title>Prakruthivanam · Connecting to nature</title>
     <meta
       name="description"
       content="Shop 100% chemical-free organic millets, cold-pressed oils, natural sweeteners, and handmade personal care products from Prakruthivanam."
     />
-    <!-- Favicon from downloaded brand assets -->
+
+    <!-- PWA manifest -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+
+    <!-- Favicon -->
     <link rel="icon" type="image/png" href="/brand/logo.png" />
-    <link rel="apple-touch-icon" href="/brand/logo.png" />
+
+    <!-- iOS PWA -->
+    <link rel="apple-touch-icon" sizes="180x180" href="/brand/icons/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Prakruthivanam" />
+
+    <!-- Theme colour (browser chrome + Android task switcher) -->
+    <meta name="theme-color" content="#385f1c" />
 
     <!-- Fonts: Lato (matches actual Prakruthivanam.com) + Playfair Display for display headings -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />

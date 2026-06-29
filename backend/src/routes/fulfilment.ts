@@ -18,6 +18,7 @@ import { db } from "../db.js";
 import { mintShareToken } from "../lib/share.js";
 import {
   nextFulfilmentDocNo,
+  sortPickListItemsByBinWalkPath,
   splitAcrossBins,
 } from "../lib/pick-list-helpers.js";
 import { createPickListForSalesOrder } from "../services/pick-list-create.js";
@@ -181,18 +182,15 @@ export const fulfilmentRoutes = async (app: FastifyInstance) => {
     const id = (req.params as { id: string }).id;
     const pl = await db.pickList.findUnique({ where: { id }, include: fullPickInclude });
     if (!pl) return reply.code(404).send({ error: { code: "not_found" } });
-    // Walk-path ordering: sort lines by the bin's zone/shelf/bin
-    // so the mobile picker walks the warehouse in a predictable
-    // serpentine instead of zig-zagging. Lines without a bin go last.
-    pl.items.sort((a, b) => {
-      const aKey = a.bin
-        ? `${a.bin.zone}|${a.bin.shelf}|${a.bin.bin}`
-        : "~";
-      const bKey = b.bin
-        ? `${b.bin.zone}|${b.bin.shelf}|${b.bin.bin}`
-        : "~";
-      return aKey.localeCompare(bKey);
+    const profile = await db.companyProfile.findUnique({
+      where: { key: "default" },
+      select: { pickSortByBinEnabled: true },
     });
+    // Walk-path ordering is optional — disable in Settings when variants
+    // are not yet mapped to bins and SO line order is clearer.
+    if (profile?.pickSortByBinEnabled !== false) {
+      sortPickListItemsByBinWalkPath(pl.items);
+    }
     return pl;
   });
 
@@ -1842,7 +1840,7 @@ export const fulfilmentRoutes = async (app: FastifyInstance) => {
   const COURIERS = [
     {
       code: "shiprocket",
-      name: "Shiprocket (mock)",
+      name: "Shiprocket",
       trackingUrlTemplate: "https://app.shiprocket.in/courier-tracking/{AWB}",
     },
     {

@@ -9,6 +9,7 @@ import { Warehouse } from "./pages/Warehouse";
 import { Transfers } from "./pages/Transfers";
 import { Manufacturing } from "./pages/Manufacturing";
 import { ProductionLog } from "./pages/ProductionLog";
+import { DailyProduction } from "./pages/DailyProduction";
 import { Boms } from "./pages/Boms";
 import { Procurement } from "./pages/Procurement";
 import { Productivity } from "./pages/Productivity";
@@ -145,6 +146,7 @@ const App = () => {
 
         <Route path="/manufacturing"  element={<RequireRole roles={["supervisor"]}><Manufacturing /></RequireRole>} />
         <Route path="/manufacturing/log" element={<RequireRole roles={["supervisor"]}><ProductionLog /></RequireRole>} />
+        <Route path="/manufacturing/daily" element={<RequireRole roles={["supervisor"]}><DailyProduction /></RequireRole>} />
         <Route path="/manufacturing/boms/new" element={<RequireRole roles={["supervisor"]}><Boms /></RequireRole>} />
         <Route path="/manufacturing/boms/:bomId" element={<RequireRole roles={["supervisor"]}><Boms /></RequireRole>} />
         <Route path="/manufacturing/boms" element={<RequireRole roles={["supervisor"]}><Boms /></RequireRole>} />

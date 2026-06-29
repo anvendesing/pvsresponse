@@ -4,7 +4,9 @@ import { db } from "../db.js";
 import { mintShareToken } from "../lib/share.js";
 import { recordChange } from "../sync/log.js";
 import { checkStockRules } from "../lib/stock-rules.js";
-import { resolveGstRate, computeTax, lineTax } from "../lib/tax.js";
+import { resolveGstRate } from "../lib/tax.js";
+import { getCompanyTaxContext } from "../lib/company-tax.js";
+import { computeDocumentTax, lineTaxDbFields } from "../lib/document-tax.js";
 import { evaluateCreditGate } from "./sales.js";
 import { applyAdvancesToInvoice } from "./customer-payments.js";
 import { formatCustomerDestination } from "../lib/customer-address.js";
@@ -161,17 +163,30 @@ export const billingRoutes = async (app: FastifyInstance) => {
     const gstPMap = new Map(gstProducts.map((p) => [p.id, p.gstRate]));
     const gstVMap = new Map(gstVariants.map((v) => [v.id, v.gstRate]));
 
-    const itemsWithGst = body.items.map((i) => ({
-      ...i,
-      lineAmount: i.qty * i.rate,
-      lineGstRate: resolveGstRate(
-        { gstRate: gstPMap.get(i.productId) ?? 18 },
-        i.variantId ? { gstRate: gstVMap.get(i.variantId) } : null
-      ),
-    }));
+    const baseCtx = await getCompanyTaxContext();
+    // Walk-in POS: default intra-state (place of supply = seller state).
+    const taxCtx = {
+      ...baseCtx,
+      placeOfSupplyState: baseCtx.sellerState,
+      taxKind: "intra" as const,
+    };
 
-    const sub = itemsWithGst.reduce((s, i) => s + i.lineAmount, 0);
-    const tax = computeTax(itemsWithGst.map((i) => ({ amount: i.lineAmount, gstRate: i.lineGstRate })));
+    const doc = computeDocumentTax({
+      items: body.items.map((i) => ({
+        qty: i.qty,
+        rate: i.rate,
+        gstRate: resolveGstRate(
+          { gstRate: gstPMap.get(i.productId) ?? baseCtx.defaultGstRate ?? 18 },
+          i.variantId ? { gstRate: gstVMap.get(i.variantId) } : null,
+          baseCtx.defaultGstRate ?? 18
+        ),
+      })),
+      transportCharge: 0,
+      taxCtx,
+    });
+
+    const sub = doc.subTotal;
+    const tax = doc.tax;
 
     // -------- Credit-limit gate (credit-mode invoices only) --------
     // Cash / card / UPI / split invoices are paid at the till and
@@ -190,7 +205,7 @@ export const billingRoutes = async (app: FastifyInstance) => {
         });
       }
       const limit = customer.creditLimit ?? 0;
-      const total = sub + tax;
+      const total = doc.total;
       const gate = await evaluateCreditGate(customer.id, total, customer.name, limit);
       const force = (req.body as { force?: boolean } | null)?.force === true;
       if (!gate.allowed && !force) {
@@ -215,20 +230,28 @@ export const billingRoutes = async (app: FastifyInstance) => {
         invoiceNo: `INV-2026-${String(5500 + next)}`,
         shareToken: mintShareToken(),
         customerId: body.customerId,
-        amount: sub + tax,
-        tax,
+        amount: doc.total,
+        tax: doc.tax,
+        cgstTotal: doc.cgstTotal,
+        sgstTotal: doc.sgstTotal,
+        igstTotal: doc.igstTotal,
+        taxKind: doc.taxKind,
+        placeOfSupplyState: doc.placeOfSupplyState,
+        sellerState: doc.sellerState,
+        pricingInclusive: doc.pricingInclusive,
         paymentMode: body.paymentMode,
         status: "issued",
         items: {
-          create: itemsWithGst.map((i) => ({
-            productId: i.productId,
-            variantId: i.variantId ?? null,
-            qty: i.qty,
-            rate: i.rate,
-            amount: i.lineAmount,
-            gstRate: i.lineGstRate,
-            taxAmount: lineTax(i.lineAmount, i.lineGstRate),
-          })),
+          create: doc.lineResults.map((line, idx) => {
+            const src = body.items[idx];
+            const fields = lineTaxDbFields(line);
+            return {
+              productId: src.productId,
+              variantId: src.variantId ?? null,
+              qty: src.qty,
+              ...fields,
+            };
+          }),
         },
       },
       include: {

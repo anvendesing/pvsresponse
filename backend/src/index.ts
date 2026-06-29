@@ -11,8 +11,10 @@ import { registerOpenApi } from "./openapi.js";
 import { authRoutes } from "./routes/auth.js";
 import { catalogRoutes } from "./routes/catalog.js";
 import { categoriesRoutes } from "./routes/categories.js";
+import { concernsRoutes } from "./routes/concerns.js";
 import { inventoryRoutes } from "./routes/inventory.js";
 import { mfgRoutes } from "./routes/manufacturing.js";
+import { dailyProductionRoutes } from "./routes/daily-production.js";
 import { procurementRoutes } from "./routes/procurement.js";
 import { workforceRoutes } from "./routes/workforce.js";
 import { billingRoutes } from "./routes/billing.js";
@@ -28,6 +30,12 @@ import { syncRoutes } from "./routes/sync.js";
 import { uomRoutes } from "./routes/uoms.js";
 import { locationsRoutes } from "./routes/locations.js";
 import { storefrontMockRoutes } from "./routes/storefront-mock.js";
+import { storefrontAuthRoutes } from "./routes/storefront-auth.js";
+import { paymentGatewayRoutes } from "./routes/payment-gateways.js";
+import { smsProviderRoutes } from "./routes/sms-provider.js";
+import { shiprocketProviderRoutes } from "./routes/shiprocket-provider.js";
+import { razorpayWebhookRoutes } from "./routes/razorpay-webhook.js";
+import { payuWebhookRoutes } from "./routes/payu-webhook.js";
 import { bulkOrderRoutes } from "./routes/bulk-order.js";
 import { customerPaymentRoutes } from "./routes/customer-payments.js";
 import { returnsRoutes } from "./routes/returns.js";
@@ -36,6 +44,7 @@ import { enquiriesRoutes } from "./routes/enquiries.js";
 import { stockRulesRoutes } from "./routes/stock-rules.js";
 import { channelMappingRoutes } from "./routes/channel-mappings.js";
 import { importedOrderRoutes } from "./routes/imported-orders.js";
+import { adminLogsRoutes } from "./routes/admin-logs.js";
 import { startStockRulesInterval } from "./lib/stock-rules-runner.js";
 import multipart from "@fastify/multipart";
 import fastifyStatic from "@fastify/static";
@@ -80,6 +89,48 @@ app.setErrorHandler((err, _req, reply) => {
 });
 
 app.get("/health", async () => ({ status: "ok", time: new Date().toISOString() }));
+
+// ── Android App Links (TWA / deep links) ──────────────────────────────────
+// Replace "SHA256_CERT_FINGERPRINT" with the output of:
+//   keytool -list -v -keystore keystore/release.jks | grep "SHA256:"
+app.get("/.well-known/assetlinks.json", async (_req, reply) => {
+  reply.header("Content-Type", "application/json");
+  return reply.send([{
+    relation: ["delegate_permission/common.handle_all_urls"],
+    target: {
+      namespace: "android_app",
+      package_name: "com.prakruthivanam.shop",
+      sha256_cert_fingerprints: [
+        process.env.ANDROID_CERT_SHA256 ?? "REPLACE_WITH_SHA256_FROM_KEYSTORE",
+      ],
+    },
+  }]);
+});
+
+// ── iOS Universal Links (Checkout return + deep links) ───────────────────
+app.get("/.well-known/apple-app-site-association", async (_req, reply) => {
+  reply.header("Content-Type", "application/json");
+  return reply.send({
+    applinks: {
+      apps: [],
+      details: [{
+        appIDs: [
+          `${process.env.APPLE_TEAM_ID ?? "TEAMID"}.com.prakruthivanam.shop`,
+        ],
+        components: [
+          { "/": "/order/*",    comment: "Order confirmation deep link" },
+          { "/": "/track",      comment: "Order tracking" },
+          { "/": "/checkout*",  comment: "Payment return" },
+        ],
+      }],
+    },
+    webcredentials: {
+      apps: [
+        `${process.env.APPLE_TEAM_ID ?? "TEAMID"}.com.prakruthivanam.shop`,
+      ],
+    },
+  });
+});
 
 // Friendly index so visiting the root in a browser doesn't 404.
 // Returns JSON by default; for browsers (Accept: text/html) we return
@@ -175,11 +226,15 @@ await app.register(
     await api.register(authRoutes);
     await api.register(shareRoutes);         // public share links (/public/*)
     await api.register(storefrontMockRoutes); // ecommerce storefront (public)
+    await api.register(storefrontAuthRoutes); // storefront OTP auth + addresses
+    await api.register(razorpayWebhookRoutes); // payment webhooks (public, signed)
+    await api.register(payuWebhookRoutes); // PayU return + webhook
     await api.register(syncRoutes);           // any authenticated user
 
     // Catalog — read-only by everyone; write protected per-route inside catalog.ts
     await api.register(catalogRoutes);
     await api.register(categoriesRoutes);
+    await api.register(concernsRoutes);
 
     // Sales & order management
     await withRole(api, enquiriesRoutes,     "supervisor", "billing");
@@ -210,6 +265,7 @@ await app.register(
 
     // Manufacturing & workforce
     await withRole(api, mfgRoutes,           "supervisor");
+    await withRole(api, dailyProductionRoutes, "supervisor");
     await withRole(api, workforceRoutes,     "supervisor");
 
     // Transfers & putaway rules (warehouse + supervisor)
@@ -221,6 +277,10 @@ await app.register(
 
     // Settings — admin only (user management, company config)
     await withRole(api, settingsRoutes,      "admin");
+    await withRole(api, paymentGatewayRoutes, "admin");
+    await withRole(api, smsProviderRoutes, "admin");
+    await withRole(api, shiprocketProviderRoutes, "admin");
+    await withRole(api, adminLogsRoutes, "admin");
   },
   { prefix: "/v1" }
 );

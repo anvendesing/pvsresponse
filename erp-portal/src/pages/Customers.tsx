@@ -2,7 +2,7 @@
 // for create/update, and a soft-delete that preserves history when there
 // are linked quotes / sales orders / invoices.
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState, useEffect } from "react";
 import { AlertTriangle, BookOpen, DollarSign, Filter, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Chip } from "@/components/common/Chip";
@@ -21,6 +21,7 @@ import {
 import { inr, arBalanceInr } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { formatCustomerSummary, validatePincode } from "@/lib/customerAddress";
+import { PINCODE_PLACE_HINT, pincodeFieldUpdate } from "@/lib/pincodeLookup";
 import { RecordPaymentModal } from "@/components/customers/RecordPaymentModal";
 
 type ActiveFilter = "all" | "active" | "inactive";
@@ -436,14 +437,22 @@ const CustomerEditor = ({
   const [gst, setGst] = useState(customer?.gst ?? "");
   const [addressLine, setAddressLine] = useState(customer?.addressLine ?? customer?.city ?? "");
   const [city, setCity] = useState(customer?.city ?? "");
+  const [district, setDistrict] = useState(customer?.district ?? "");
   const [state, setState] = useState(customer?.state ?? "");
   const [pincode, setPincode] = useState(customer?.pincode ?? "");
+  const [previewDistanceKm, setPreviewDistanceKm] = useState<number | null>(
+    customer?.distanceKm ?? null
+  );
+  const [previewDispatchPin, setPreviewDispatchPin] = useState<string | null>(
+    customer?.dispatchPincode ?? null
+  );
   const [contact, setContact] = useState(customer?.contact ?? "");
   const [creditLimit, setCreditLimit] = useState<number>(customer?.creditLimit ?? 0);
   const [priceListId, setPriceListId] = useState<string>(customer?.priceListId ?? "");
   const [active, setActive] = useState<boolean>(customer?.active !== false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const lastAutofillPinRef = useRef(customer?.pincode?.replace(/\D/g, "").slice(0, 6) ?? "");
 
   const pincodeError = validatePincode(pincode);
   const canSave =
@@ -452,6 +461,40 @@ const CustomerEditor = ({
     city.trim().length >= 2 &&
     !pincodeError &&
     !busy;
+
+  const onPincodeChange = (raw: string) => {
+    const base = { pincode, city, district, state };
+    const { next, lastAutofillPin } = pincodeFieldUpdate(base, raw, lastAutofillPinRef.current);
+    lastAutofillPinRef.current = lastAutofillPin;
+    setPincode(next.pincode);
+    if (next.city !== city) setCity(next.city);
+    if (next.district !== district) setDistrict(next.district);
+    if (next.state !== state) setState(next.state);
+    if (next.pincode.length < 6) {
+      setPreviewDistanceKm(null);
+      setPreviewDispatchPin(null);
+    }
+  };
+
+  useEffect(() => {
+    const pin = pincode.replace(/\D/g, "").slice(0, 6);
+    if (!/^[1-9]\d{5}$/.test(pin)) return;
+
+    const timer = window.setTimeout(() => {
+      void api
+        .pincodeLookup(pin)
+        .then((place) => {
+          setPreviewDistanceKm(place.distanceKm);
+          setPreviewDispatchPin(place.dispatchPincode);
+        })
+        .catch(() => {
+          setPreviewDistanceKm(null);
+          setPreviewDispatchPin(null);
+        });
+    }, 350);
+
+    return () => window.clearTimeout(timer);
+  }, [pincode]);
 
   const submit = async () => {
     setBusy(true);
@@ -463,6 +506,7 @@ const CustomerEditor = ({
         gst: gst.trim() || null,
         addressLine: addressLine.trim(),
         city: city.trim(),
+        district: district.trim() || null,
         state: state.trim() || null,
         pincode: pincode.trim(),
         contact: contact.trim() || null,
@@ -590,10 +634,38 @@ const CustomerEditor = ({
                 disabled={busy}
               />
             </Field>
+            <Field label="Pincode *" hint={PINCODE_PLACE_HINT} className="col-span-2">
+              <Input
+                value={pincode}
+                onChange={(e) => onPincodeChange(e.target.value)}
+                placeholder="524004"
+                disabled={busy}
+              />
+              {pincode && pincodeError && (
+                <div className="text-caption text-danger mt-1">{pincodeError}</div>
+              )}
+              {previewDistanceKm != null && (
+                <div className="text-caption text-ink-muted mt-1">
+                  Approx.{" "}
+                  <span className="font-semibold tnum">{Math.round(previewDistanceKm)} km</span>{" "}
+                  from dispatch
+                  {previewDispatchPin ? ` (${previewDispatchPin})` : ""}
+                  {" · saved when you create/update this customer"}
+                </div>
+              )}
+            </Field>
             <Field label="City / town *">
               <Input
                 value={city}
                 onChange={(e) => setCity(e.target.value)}
+                placeholder="Nellore"
+                disabled={busy}
+              />
+            </Field>
+            <Field label="District">
+              <Input
+                value={district}
+                onChange={(e) => setDistrict(e.target.value)}
                 placeholder="Nellore"
                 disabled={busy}
               />
@@ -605,17 +677,6 @@ const CustomerEditor = ({
                 placeholder="Andhra Pradesh"
                 disabled={busy}
               />
-            </Field>
-            <Field label="Pincode *" hint="Required for courier posting and address slips">
-              <Input
-                value={pincode}
-                onChange={(e) => setPincode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                placeholder="524004"
-                disabled={busy}
-              />
-              {pincode && pincodeError && (
-                <div className="text-caption text-danger mt-1">{pincodeError}</div>
-              )}
             </Field>
             <Field label="Credit limit (₹)" hint="0 = cash only">
               <Input

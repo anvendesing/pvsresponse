@@ -13,7 +13,8 @@ export const PackingSettings = () => {
   const [loading, setLoading] = useState(true);
   const [multi, setMulti] = useState(true);
   const [seal, setSeal] = useState(true);
-  const [pristine, setPristine] = useState({ multi: true, seal: true });
+  const [binSort, setBinSort] = useState(true);
+  const [pristine, setPristine] = useState({ multi: true, seal: true, binSort: true });
   const [saving, setSaving] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -26,9 +27,11 @@ export const PackingSettings = () => {
         if (!alive) return;
         const m = p.packMultiContainerEnabled !== false;
         const s = p.packRequireSealConfirmation !== false;
+        const b = p.pickSortByBinEnabled !== false;
         setMulti(m);
         setSeal(s);
-        setPristine({ multi: m, seal: s });
+        setBinSort(b);
+        setPristine({ multi: m, seal: s, binSort: b });
       } catch (e) {
         setError((e as Error).message);
       } finally {
@@ -40,7 +43,10 @@ export const PackingSettings = () => {
     };
   }, []);
 
-  const dirty = multi !== pristine.multi || seal !== pristine.seal;
+  const dirty =
+    multi !== pristine.multi ||
+    seal !== pristine.seal ||
+    binSort !== pristine.binSort;
 
   const save = async () => {
     setSaving(true);
@@ -49,8 +55,9 @@ export const PackingSettings = () => {
       await api.updateCompanyProfile({
         packMultiContainerEnabled: multi,
         packRequireSealConfirmation: seal,
+        pickSortByBinEnabled: binSort,
       });
-      setPristine({ multi, seal });
+      setPristine({ multi, seal, binSort });
       setBanner("Packing settings saved.");
     } catch (e) {
       setError((e as Error).message);
@@ -72,7 +79,7 @@ export const PackingSettings = () => {
   return (
     <Card
       title="Packing"
-      subtitle="Controls the multi-container pack workflow for desktop and mobile."
+      subtitle="Picking walk-path order and multi-container pack workflow for desktop and mobile."
       actions={
         dirty ? (
           <Button size="sm" onClick={save} disabled={saving}>
@@ -93,6 +100,12 @@ export const PackingSettings = () => {
       )}
 
       <div className="space-y-3">
+        <ToggleRow
+          label="Sort pick lists by bin location"
+          description="When on, mobile and print pick lists order lines by warehouse walk path (zone → shelf → bin). Turn off to keep sales-order line order — useful while variants are not yet mapped to bins."
+          checked={binSort}
+          onChange={setBinSort}
+        />
         <ToggleRow
           label="Multi-container packing"
           description="Packers split orders across boxes / bags / sacks. The slip can't be packed until every unit is allocated into a sealed container. Trip weight rolls up from container weights."

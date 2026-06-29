@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from "react";
 import { ApiError, api, resolveUploadUrl, type StorefrontCategory } from "@/lib/api";
+import { categoryStaticImageSlug } from "@/data/categories";
 
 interface CategoriesContextValue {
   categories: StorefrontCategory[];
@@ -53,7 +54,8 @@ export const CategoriesProvider = ({ children }: { children: ReactNode }) => {
   }, [categories]);
 
   const categoryImageUrl = useCallback((c: StorefrontCategory): string => {
-    return resolveUploadUrl(c.imageUrl) ?? `/images/category_${c.slug}.png`;
+    const imageSlug = categoryStaticImageSlug(c.slug);
+    return resolveUploadUrl(c.imageUrl, c.updatedAt) ?? `/images/category_${imageSlug}.png`;
   }, []);
 
   const value = useMemo(

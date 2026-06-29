@@ -6,10 +6,12 @@ import { useParams, useNavigate, Link } from "react-router-dom";
 import type { ProductDetail, CatalogVariant } from "@/lib/api";
 import { api } from "@/lib/api";
 import { inr, packagingFromName } from "@/lib/format";
+import { lineBarcode } from "@/lib/scanCode";
 import { useCart } from "@/state/CartContext";
 import { useWishlist } from "@/state/WishlistContext";
 import { useToast } from "@/state/ToastContext";
 import { useCatalog } from "@/state/CatalogContext";
+import { usePlatform } from "@/state/PlatformContext";
 import { PackagingArt } from "@/components/PackagingArt";
 import { HeartIcon } from "@/assets/icons";
 
@@ -20,6 +22,7 @@ export const ProductDetailPage = () => {
   const wishlist = useWishlist();
   const toast = useToast();
   const { products: allProducts } = useCatalog();
+  const { isPhone } = usePlatform();
 
   const [product, setProduct] = useState<ProductDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -74,6 +77,10 @@ export const ProductDetailPage = () => {
   const wishlistKey = variant?.id ?? product.id;
   const isWished = wishlist.has(wishlistKey);
   const packagingKind = packagingFromName(product.name);
+  const scanCode = lineBarcode({
+    barcode: variant?.barcode,
+    productBarcode: product.barcode,
+  });
 
   const onAdd = () => {
     cart.add(product, variant, qty);
@@ -144,9 +151,9 @@ export const ProductDetailPage = () => {
           <p className="pdp-category">{product.category}</p>
           <h1 className="pdp-title">{product.name}</h1>
 
-          {/* Wishlist + sku */}
+          {/* Wishlist + barcode */}
           <div className="pdp-meta-row">
-            <span className="pdp-sku">SKU: {variant?.sku ?? product.sku}</span>
+            {scanCode && <span className="pdp-sku">{scanCode}</span>}
             <button
               type="button"
               className={`pdp-wishlist-btn ${isWished ? "active" : ""}`}
@@ -187,7 +194,7 @@ export const ProductDetailPage = () => {
                       setQty(1);
                     }}
                   >
-                    {v.size ?? v.sku}
+                    {v.size ?? lineBarcode({ barcode: v.barcode, productBarcode: product.barcode }) ?? ""}
                     {v.stockOnHand <= 0 && (
                       <span className="pdp-chip-sold"> · Sold out</span>
                     )}
@@ -347,6 +354,24 @@ export const ProductDetailPage = () => {
             })}
           </div>
         </section>
+      )}
+
+      {/* Sticky bottom CTA on phone */}
+      {isPhone && stock > 0 && (
+        <div className="sticky-bottom-cta">
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: "0.75rem", color: "var(--neutral-gray)", marginBottom: "0.1rem" }}>{product.name}</div>
+            <div style={{ fontSize: "1rem", fontWeight: 700, color: "var(--forest-green)" }}>{inr(price)}</div>
+          </div>
+          <button
+            type="button"
+            className="btn btn-green"
+            style={{ flex: "none", padding: "0.75rem 1.5rem" }}
+            onClick={onAdd}
+          >
+            Add to Cart
+          </button>
+        </div>
       )}
     </main>
   );

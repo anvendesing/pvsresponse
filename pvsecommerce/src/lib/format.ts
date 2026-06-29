@@ -1,5 +1,23 @@
 // Formatting helpers shared across pages.
 
+import type { CartLine, CatalogVariant } from "@/lib/api";
+
+export const variantLabelFrom = (variant: CatalogVariant | null): string | null => {
+  if (!variant) return null;
+  const label = [variant.size, variant.color, variant.grade].filter(Boolean).join(" · ");
+  return label || null;
+};
+
+/** Product name with variant size / grade when present. */
+export const cartLineDescription = (line: CartLine): string => {
+  const params = line.variantLabel ?? line.variantSize;
+  return params ? `${line.productName} · ${params}` : line.productName;
+};
+
+/** Checkout / summary line: "Amla Powder · 100g × 8" */
+export const cartLineSummary = (line: CartLine): string =>
+  `${cartLineDescription(line)} × ${line.qty}`;
+
 export const inr = (n: number): string =>
   new Intl.NumberFormat("en-IN", {
     style: "currency",

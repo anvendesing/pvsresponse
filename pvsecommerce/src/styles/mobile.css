@@ -1,0 +1,429 @@
+/* =============================================================
+   MOBILE SHELL STYLES
+   Imported by theme.css — keep all mobile-first overrides here.
+   ============================================================= */
+
+/* ── Safe-area helpers ─────────────────────────────────────── */
+.native-app {
+  --sai-top: env(safe-area-inset-top, 0px);
+  --sai-bottom: env(safe-area-inset-bottom, 0px);
+  --sai-left: env(safe-area-inset-left, 0px);
+  --sai-right: env(safe-area-inset-right, 0px);
+}
+
+/* ── Mobile header ─────────────────────────────────────────── */
+.mobile-header {
+  position: sticky;
+  top: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: calc(var(--sai-top, 0px) + 0.55rem) 1rem 0.55rem;
+  background: var(--forest-green);
+  color: #fff;
+  min-height: 56px;
+}
+
+.mobile-header__brand {
+  flex-shrink: 0;
+}
+
+.mobile-header__logo {
+  height: 36px;
+  width: auto;
+  display: block;
+  /* light logo on dark bg — invert if the logo is dark */
+  filter: brightness(0) invert(1);
+}
+
+.mobile-header__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-left: auto;
+}
+
+.mobile-header__search-form {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: rgba(255,255,255,0.15);
+  border-radius: var(--radius-full);
+  padding: 0.25rem 0.75rem;
+}
+
+.mobile-header__search-input {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: #fff;
+  font-size: 0.9rem;
+}
+
+.mobile-header__search-input::placeholder { color: rgba(255,255,255,0.6); }
+
+.mobile-header__icon-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: none;
+  background: transparent;
+  color: #fff;
+  cursor: pointer;
+  border-radius: var(--radius-full);
+  -webkit-tap-highlight-color: transparent;
+  transition: background var(--transition-fast);
+}
+
+.mobile-header__icon-btn:active { background: rgba(255,255,255,0.2); }
+
+.mobile-header__icon-btn svg {
+  width: 22px;
+  height: 22px;
+}
+
+.mobile-header__badge {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  min-width: 16px;
+  height: 16px;
+  background: var(--primary-gold);
+  color: var(--neutral-dark);
+  border-radius: var(--radius-full);
+  font-size: 0.62rem;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 3px;
+  line-height: 1;
+}
+
+/* ── Category chip strip ───────────────────────────────────── */
+.category-chip-strip {
+  position: sticky;
+  /* sits right below the mobile header */
+  top: 56px;
+  z-index: 190;
+  background: var(--neutral-white);
+  border-bottom: 1px solid rgba(0,0,0,0.06);
+}
+
+.category-chip-strip__scroll {
+  display: flex;
+  gap: 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  padding: 0.55rem 0.75rem;
+  gap: 0.5rem;
+}
+
+.category-chip-strip__scroll::-webkit-scrollbar { display: none; }
+
+.category-chip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.3rem;
+  flex-shrink: 0;
+  text-decoration: none;
+  color: var(--neutral-dark);
+  min-width: 52px;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.category-chip__icon {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-full);
+  overflow: hidden;
+  border: 2px solid transparent;
+  background: var(--forest-green-soft);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: border-color var(--transition-fast), transform var(--transition-fast);
+}
+
+.category-chip.active .category-chip__icon {
+  border-color: var(--forest-green);
+  transform: scale(1.06);
+}
+
+.category-chip__img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.category-chip__img-placeholder {
+  width: 100%;
+  height: 100%;
+  background: var(--primary-gold-soft);
+}
+
+.all-icon svg {
+  width: 20px;
+  height: 20px;
+  color: var(--forest-green);
+}
+
+.category-chip__label {
+  font-size: 0.62rem;
+  font-weight: 600;
+  color: var(--neutral-gray);
+  text-align: center;
+  max-width: 52px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+}
+
+.category-chip.active .category-chip__label {
+  color: var(--forest-green);
+  font-weight: 700;
+}
+
+/* ── Bottom navigation bar ─────────────────────────────────── */
+.mobile-bottom-nav {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 300;
+  display: flex;
+  background: var(--neutral-white);
+  border-top: 1px solid rgba(0,0,0,0.08);
+  /* extend flush to the bottom gesture bar */
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  box-shadow: 0 -2px 16px rgba(34,37,31,0.08);
+}
+
+.mobile-bottom-nav__tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.25rem;
+  padding: 0.55rem 0.25rem 0.4rem;
+  text-decoration: none;
+  color: var(--neutral-gray);
+  font-size: 0.62rem;
+  font-weight: 600;
+  -webkit-tap-highlight-color: transparent;
+  transition: color var(--transition-fast);
+  min-height: 56px;
+}
+
+.mobile-bottom-nav__tab.active {
+  color: var(--forest-green);
+}
+
+.mobile-bottom-nav__icon {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mobile-bottom-nav__icon svg {
+  width: 22px;
+  height: 22px;
+  stroke-width: 1.75;
+}
+
+.mobile-bottom-nav__tab.active .mobile-bottom-nav__icon svg {
+  stroke-width: 2.25;
+}
+
+.mobile-bottom-nav__badge {
+  position: absolute;
+  top: -4px;
+  right: -8px;
+  min-width: 16px;
+  height: 16px;
+  background: var(--forest-green);
+  color: #fff;
+  border-radius: var(--radius-full);
+  font-size: 0.6rem;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 3px;
+  line-height: 1;
+}
+
+.mobile-bottom-nav__label {
+  line-height: 1;
+}
+
+/* ── Main content on phone: clear fixed header + chip + bottom nav ─ */
+.main-phone {
+  /* mobile-header (≈56) + chip strip (≈64) */
+  padding-top: 0;
+  /* bottom nav (≈56) + safe area */
+  padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px) + 0.5rem);
+}
+
+/* ── Sticky bottom CTA (PDP, Cart, Checkout on phone) ─────── */
+.sticky-bottom-cta {
+  position: fixed;
+  bottom: calc(56px + env(safe-area-inset-bottom, 0px));
+  left: 0;
+  right: 0;
+  z-index: 250;
+  padding: 0.75rem 1rem;
+  background: var(--neutral-white);
+  border-top: 1px solid rgba(0,0,0,0.08);
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  box-shadow: 0 -4px 20px rgba(34,37,31,0.1);
+}
+
+.sticky-bottom-cta .btn {
+  flex: 1;
+  justify-content: center;
+  padding: 0.85rem 1rem;
+  font-size: 1rem;
+}
+
+/* ── Offline banner ────────────────────────────────────────── */
+.app-offline-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 9999;
+  background: #b91c1c;
+  color: #fff;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-align: center;
+  padding: 0.5rem 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+}
+
+.app-offline-banner svg { width: 16px; height: 16px; }
+
+/* ── SW update toast ───────────────────────────────────────── */
+.sw-update-toast {
+  position: fixed;
+  bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+  left: 1rem;
+  right: 1rem;
+  z-index: 9000;
+  background: var(--forest-green);
+  color: #fff;
+  border-radius: var(--radius-md);
+  padding: 0.85rem 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.85rem;
+  box-shadow: var(--shadow-lg);
+}
+
+.sw-update-toast span { flex: 1; }
+
+.sw-update-toast__btn {
+  background: var(--primary-gold);
+  color: var(--neutral-dark);
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 0.4rem 0.85rem;
+  font-weight: 700;
+  font-size: 0.82rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sw-update-toast__dismiss {
+  background: transparent;
+  border: none;
+  color: rgba(255,255,255,0.7);
+  font-size: 1.2rem;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0 0.25rem;
+}
+
+/* ── PWA install banner ─────────────────────────────────────── */
+.pwa-install-banner {
+  position: fixed;
+  bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+  left: 1rem;
+  right: 1rem;
+  z-index: 8999;
+  background: var(--neutral-white);
+  border: 1.5px solid var(--primary-gold);
+  border-radius: var(--radius-md);
+  padding: 0.75rem 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  box-shadow: var(--shadow-lg);
+}
+
+.pwa-install-banner__logo {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-sm);
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.pwa-install-banner__text {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  font-size: 0.82rem;
+}
+
+.pwa-install-banner__text strong {
+  font-weight: 700;
+  color: var(--neutral-dark);
+}
+
+.pwa-install-banner__text span {
+  color: var(--neutral-gray);
+  font-size: 0.75rem;
+}
+
+.pwa-install-banner__btn {
+  background: var(--forest-green);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 0.45rem 0.9rem;
+  font-weight: 700;
+  font-size: 0.82rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.pwa-install-banner__dismiss {
+  background: transparent;
+  border: none;
+  color: var(--neutral-gray);
+  font-size: 1.3rem;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0 0.15rem;
+}

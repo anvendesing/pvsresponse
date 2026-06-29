@@ -2,7 +2,7 @@
 // followed by the (desktop) primary nav. Search submits a query that
 // the home page uses to filter; for now it just navigates to /?q=...
 
-import { Link, NavLink, useNavigate } from "react-router-dom";
+import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useState, type FormEvent } from "react";
 import {
   CartIcon,
@@ -25,6 +25,9 @@ export const Header = ({ onOpenMobileDrawer }: HeaderProps) => {
   const auth = useAuth();
   const [query, setQuery] = useState("");
   const navigate = useNavigate();
+  const location = useLocation();
+  const concernNavActive =
+    location.pathname === "/concerns" || location.pathname.startsWith("/concern/");
 
   const submitSearch = (e: FormEvent) => {
     e.preventDefault();
@@ -36,7 +39,7 @@ export const Header = ({ onOpenMobileDrawer }: HeaderProps) => {
     <>
       <div className="announcement-bar">
         <span className="announcement-text">
-          Free shipping on all orders above ₹3000/-
+          Free shipping on all orders above ₹3,000/-
         </span>
         <span className="announcement-socials">
           <a href="#" aria-label="Instagram">
@@ -126,7 +129,7 @@ export const Header = ({ onOpenMobileDrawer }: HeaderProps) => {
           </li>
           <li>
             <NavLink
-              to="/category/oils"
+              to="/category/grains-pulses-flours"
               className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}
             >
               Shop by Category
@@ -134,18 +137,18 @@ export const Header = ({ onOpenMobileDrawer }: HeaderProps) => {
           </li>
           <li>
             <NavLink
-              to="/category/wellness"
-              className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}
+              to="/concerns"
+              className={`nav-link ${concernNavActive ? "active" : ""}`}
             >
               Shop by Concern
             </NavLink>
           </li>
           <li>
             <NavLink
-              to="/category/snacks"
+              to="/bulk-order"
               className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}
             >
-              Combos
+              Bulk Order
             </NavLink>
           </li>
           <li>

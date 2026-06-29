@@ -204,6 +204,33 @@ model ProductCategory {
   products  Product[]
 }
 
+// Storefront "Shop by Concern" buckets (Diabetes, Heart Health, …).
+// Unlike ProductCategory, a product may belong to many concerns.
+model ProductConcern {
+  id          String               @id @default(cuid())
+  slug        String               @unique
+  name        String
+  description String?
+  icon        String?
+  sortOrder   Int                  @default(0)
+  active      Boolean              @default(true)
+  imageUrl    String?
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+  products    ProductConcernLink[]
+}
+
+model ProductConcernLink {
+  productId String
+  concernId String
+  product   Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  concern   ProductConcern @relation(fields: [concernId], references: [id], onDelete: Cascade)
+
+  @@id([productId, concernId])
+  @@index([concernId])
+  @@index([productId])
+}
+
 model Product {
   id                 String               @id @default(cuid())
   sku                String               @unique
@@ -256,6 +283,7 @@ model Product {
   priceListItems     PriceListItem[]
   putawayRules       PutawayRule[]
   stockRules         StockRule[]
+  concernLinks       ProductConcernLink[]
   transferOrderItems TransferOrderItem[]
   enquiryItems       EnquiryItem[]
   stockLots          StockLot[]
@@ -400,8 +428,12 @@ model Customer {
   // Structured ship-to / billing address (Indian postal format).
   addressLine     String?
   city            String?
+  district        String?
   state           String?
   pincode         String?
+  // Approx. km from company dispatch pincode — computed when address is saved.
+  distanceKm      Float?
+  dispatchPincode String?
   contact         String?
   // Total credit we extend to this customer. Outstanding (unpaid) invoice
   // balance is computed at runtime and compared against this when accepting
@@ -418,6 +450,7 @@ model Customer {
   quotes          Quote[]
   salesOrders     SalesOrder[]
   account         CustomerAccount?
+  addresses       CustomerAddress[]
   payments        CustomerPayment[]
   customerReturns CustomerReturn[]
   creditNotes     CreditNote[]
@@ -524,8 +557,11 @@ model CustomerPayment {
   paymentNo   String                      @unique
   customerId  String
   amount      Float // total amount of this payment
-  mode        String // cash | upi | bank_transfer | cheque | credit_note
+  mode        String // cash | upi | bank_transfer | cheque | credit_note | razorpay
   reference   String? // cheque no / UTR / bank ref number
+  gateway          String? // razorpay | ccavenue | null (manual)
+  gatewayPaymentId String? // rzp pay_XXX
+  gatewayOrderId   String? // rzp order_XXX
   notes       String?
   paymentDate DateTime                    @default(now())
   createdAt   DateTime                    @default(now())
@@ -559,15 +595,119 @@ model CustomerPaymentAllocation {
 // because the current mock storefront does not require login; a
 // future signup flow will populate it.
 model CustomerAccount {
-  id           String   @id @default(cuid())
-  customerId   String   @unique
-  email        String   @unique
-  passwordHash String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  customer     Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  id              String    @id @default(cuid())
+  customerId      String    @unique
+  email           String?
+  phone           String?   @unique
+  phoneVerifiedAt DateTime?
+  passwordHash    String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  customer        Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
 
   @@index([email])
+  @@index([phone])
+}
+
+model CustomerAddress {
+  id          String   @id @default(cuid())
+  customerId  String
+  label       String?
+  name        String
+  phone       String
+  addressLine String
+  city        String
+  district    String?
+  state           String?
+  pincode     String
+  distanceKm      Float?
+  dispatchPincode String?
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([customerId])
+}
+
+model OtpToken {
+  id         String    @id @default(cuid())
+  phone      String
+  purpose    String // login | track
+  codeHash   String
+  attempts   Int       @default(0)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([phone, purpose, expiresAt])
+}
+
+model SmsProviderConfig {
+  id           String   @id @default("default")
+  provider     String   @default("smsidea")
+  mode         String   @default("test") // test | live
+  username     String?
+  password     String?
+  senderId     String?
+  templateId   String?
+  templateText String?
+  active       Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model ShiprocketConfig {
+  id            String   @id @default("default")
+  email         String?
+  password      String?
+  pickupPincode String?
+  active        Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model DevOtpLog {
+  id        String   @id @default(cuid())
+  phone     String
+  purpose   String
+  code      String
+  createdAt DateTime @default(now())
+
+  @@index([phone, createdAt])
+}
+
+// Razorpay / gateway checkout session before SO is created.
+model PaymentIntent {
+  id               String   @id @default(cuid())
+  gateway          String // razorpay | payu
+  gatewayOrderId   String   @unique
+  amount           Float
+  currency         String   @default("INR")
+  status           String   @default("created") // created | paid | failed | abandoned
+  email            String?
+  phone            String?
+  cartSnapshot     String // JSON: items, ship-to, totals
+  salesOrderId     String?
+  gatewayPaymentId String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([email])
+  @@index([status])
+}
+
+// Admin-configured payment gateway credentials (Razorpay, future CCAvenue).
+model PaymentGatewayConfig {
+  id            String   @id @default(cuid())
+  gateway       String   @unique // razorpay | ccavenue | payu
+  mode          String   @default("test") // test | live
+  keyId         String?
+  keySecret     String?
+  webhookSecret String?
+  active        Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 }
 
 // =====================================================================
@@ -889,6 +1029,7 @@ model BomByproduct {
   bom       Bom             @relation(fields: [bomId], references: [id], onDelete: Cascade)
   product   Product         @relation(fields: [productId], references: [id])
   variant   ProductVariant? @relation(fields: [variantId], references: [id])
+  runYields WorkOrderRunByproduct[]
 
   @@index([bomId])
   @@index([productId])
@@ -980,6 +1121,8 @@ model WorkOrderRun {
   workOrderId  String
   machineId    String
   lineId       String?
+  // Sequential batch number within this work order (batch 1, 2, 3…).
+  batchSeq     Int       @default(1)
   // Planner-set qty allocated to this machine (optional — used to show
   // a per-run progress bar; rollup uses goodQty regardless).
   plannedQty   Float?
@@ -997,10 +1140,26 @@ model WorkOrderRun {
   workOrder    WorkOrder @relation(fields: [workOrderId], references: [id], onDelete: Cascade)
   machine      Machine   @relation(fields: [machineId], references: [id])
   line         ProductionLine? @relation(fields: [lineId], references: [id])
+  byproducts   WorkOrderRunByproduct[]
 
   @@index([workOrderId])
   @@index([machineId])
   @@index([status])
+}
+
+// By-product yields tied to a specific machine run (batch). Posted to
+// inventory when the run is completed, same as MO log-output byproducts.
+model WorkOrderRunByproduct {
+  id             String       @id @default(cuid())
+  workOrderRunId String
+  bomByproductId String
+  qty            Float
+  posted         Boolean      @default(false)
+  workOrderRun   WorkOrderRun @relation(fields: [workOrderRunId], references: [id], onDelete: Cascade)
+  bomByproduct   BomByproduct @relation(fields: [bomByproductId], references: [id])
+
+  @@unique([workOrderRunId, bomByproductId])
+  @@index([workOrderRunId])
 }
 
 // =====================================================================
@@ -1368,6 +1527,13 @@ model Invoice {
   date               DateTime                    @default(now())
   amount             Float
   tax                Float
+  cgstTotal          Float                       @default(0)
+  sgstTotal          Float                       @default(0)
+  igstTotal          Float                       @default(0)
+  taxKind            String                      @default("intra") // intra | inter
+  placeOfSupplyState String?
+  sellerState        String?
+  pricingInclusive   Boolean                     @default(false)
   transportCharge    Float                       @default(0)
   transportTax       Float                       @default(0)
   // Estimated shipping weight in kg. For invoices generated from a
@@ -1410,10 +1576,14 @@ model InvoiceItem {
   qty               Float
   rate              Float
   amount            Float
+  taxableValue      Float?
   // Snapshot of the GST rate at time of invoicing so historical accuracy is
   // preserved even if the product rate is changed later.
   gstRate           Float?           @default(18)
   taxAmount         Float?
+  cgstAmount        Float?
+  sgstAmount        Float?
+  igstAmount        Float?
   invoice           Invoice          @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
   product           Product          @relation(fields: [productId], references: [id])
   variant           ProductVariant?  @relation(fields: [variantId], references: [id])
@@ -1573,6 +1743,13 @@ model Quote {
   validUntil            DateTime
   subTotal              Float           @default(0)
   tax                   Float           @default(0)
+  cgstTotal             Float           @default(0)
+  sgstTotal             Float           @default(0)
+  igstTotal             Float           @default(0)
+  taxKind               String          @default("intra") // intra | inter
+  placeOfSupplyState    String?
+  sellerState           String?
+  pricingInclusive      Boolean         @default(false)
   // Freight / transport charge (excl. GST). GST on freight is stored in
   // transportTax at 18% (SAC 9965 — goods transport agency services).
   transportCharge       Float           @default(0)
@@ -1615,6 +1792,11 @@ model QuoteItem {
   rate       Float
   discount   Float           @default(0) // percent (0-100)
   amount     Float
+  taxableValue Float?
+  gstRate    Float?
+  cgstAmount Float?
+  sgstAmount Float?
+  igstAmount Float?
   requiredBy DateTime?
   quote      Quote           @relation(fields: [quoteId], references: [id], onDelete: Cascade)
   product    Product         @relation(fields: [productId], references: [id])
@@ -1667,6 +1849,13 @@ model SalesOrder {
   orderDate        DateTime         @default(now())
   subTotal         Float            @default(0)
   tax              Float            @default(0)
+  cgstTotal        Float            @default(0)
+  sgstTotal        Float            @default(0)
+  igstTotal        Float            @default(0)
+  taxKind          String           @default("intra") // intra | inter
+  placeOfSupplyState String?
+  sellerState      String?
+  pricingInclusive Boolean          @default(false)
   transportCharge  Float            @default(0)
   transportTax     Float            @default(0)
   total            Float            @default(0)
@@ -1703,6 +1892,11 @@ model SalesOrderItem {
   qtyCancelled     Float                   @default(0)
   rate             Float
   amount           Float
+  taxableValue     Float?
+  gstRate          Float?
+  cgstAmount       Float?
+  sgstAmount       Float?
+  igstAmount       Float?
   salesOrder       SalesOrder              @relation(fields: [salesOrderId], references: [id], onDelete: Cascade)
   product          Product                 @relation(fields: [productId], references: [id])
   variant          ProductVariant?         @relation(fields: [variantId], references: [id])
@@ -2074,6 +2268,24 @@ model ScanEvent {
   @@index([createdAt])
 }
 
+// Append-only operational log for admin debugging (storefront, Shiprocket,
+// Razorpay, OTP/SMS). Distinct from AuditLog (entity mutations) and
+// ChangeLog (sync deltas).
+model SystemEventLog {
+  id        String   @id @default(cuid())
+  level     String // error | warn | info
+  source    String // shiprocket | storefront | razorpay | otp | sms | billing
+  action    String // quote | order_init | order_confirm | auth | serviceability
+  message   String
+  context   String? // JSON — request/response summary, secrets redacted
+  refId     String? // payment intent id, SO no, phone tail, etc.
+  createdAt DateTime @default(now())
+
+  @@index([source, createdAt])
+  @@index([level, createdAt])
+  @@index([createdAt])
+}
+
 // =====================================================================
 // Sync engine
 // =====================================================================
@@ -2166,6 +2378,7 @@ model CompanyProfile {
   currency                    String   @default("INR")
   fiscalYearStart             String   @default("04-01") // MM-DD; India default = 1 Apr
   defaultTaxRate              Float    @default(18) // % GST applied if product has none
+  pricingIncludesGst          Boolean  @default(false) // when true, catalog/list prices include GST
   termsDefault                String?
   bankName                    String?
   bankAccountNo               String?
@@ -2183,6 +2396,10 @@ model CompanyProfile {
   // When true, mobile/desktop "Seal" actions on a container open a
   // confirmation modal showing item count + est weight before locking.
   packRequireSealConfirmation Boolean  @default(true)
+  // When true (default), GET pick-list responses sort lines by bin
+  // zone/shelf/bin for warehouse walk-path picking. When false, lines
+  // stay in sales-order / creation order until variants are mapped.
+  pickSortByBinEnabled        Boolean  @default(true)
   createdAt                   DateTime @default(now())
   updatedAt                   DateTime @updatedAt
 }
@@ -2260,6 +2477,13 @@ model CreditNote {
   customerPaymentId String?          @unique
   subTotal          Float
   tax               Float
+  cgstTotal         Float            @default(0)
+  sgstTotal         Float            @default(0)
+  igstTotal         Float            @default(0)
+  taxKind           String           @default("intra") // intra | inter
+  placeOfSupplyState String?
+  sellerState       String?
+  pricingInclusive  Boolean          @default(false)
   total             Float
   status            String           @default("issued") // issued | applied
   notes             String?
@@ -2282,8 +2506,12 @@ model CreditNoteItem {
   qty          Float
   rate         Float
   amount       Float
+  taxableValue Float?
   gstRate      Float?          @default(18)
   taxAmount    Float?
+  cgstAmount   Float?
+  sgstAmount   Float?
+  igstAmount   Float?
   reason       String
   returnItemId String? // back-link to the source CustomerReturnItem
 

@@ -297,8 +297,11 @@ export interface CustomerRow {
   name: string;
   addressLine?: string | null;
   city?: string | null;
+  district?: string | null;
   state?: string | null;
   pincode?: string | null;
+  distanceKm?: number | null;
+  dispatchPincode?: string | null;
   gst?: string | null;
   contact?: string | null;
   creditLimit?: number;
@@ -403,6 +406,7 @@ export interface CustomerInput {
   name: string;
   addressLine: string;
   city: string;
+  district?: string | null;
   state?: string | null;
   pincode: string;
   gst?: string | null;
@@ -1432,6 +1436,10 @@ export interface InvoiceItemDetail {
   amount: number;
   gstRate?: number | null;
   taxAmount?: number | null;
+  taxableValue?: number | null;
+  cgstAmount?: number | null;
+  sgstAmount?: number | null;
+  igstAmount?: number | null;
   product: { id: string; sku: string; name: string; uom: string; hsn?: string | null; gstRate?: number | null; barcode?: string };
   variant?: {
     id: string;
@@ -1513,6 +1521,13 @@ export interface InvoiceDetail {
   date: string;
   amount: number;
   tax: number;
+  cgstTotal?: number;
+  sgstTotal?: number;
+  igstTotal?: number;
+  taxKind?: "intra" | "inter";
+  placeOfSupplyState?: string | null;
+  sellerState?: string | null;
+  pricingInclusive?: boolean;
   transportCharge?: number;
   transportTax?: number;
   // Estimated shipping weight (kg). For pack-derived invoices this
@@ -1536,6 +1551,11 @@ export interface PublicInvoicePayload {
   paymentMode: string;
   notes?: string | null;
   tax: number;
+  cgstTotal?: number;
+  sgstTotal?: number;
+  igstTotal?: number;
+  taxKind?: "intra" | "inter";
+  placeOfSupplyState?: string | null;
   amount: number;
   transportCharge?: number;
   transportTax?: number;
@@ -1559,6 +1579,11 @@ export interface PublicSalesOrderPayload {
   notes?: string | null;
   subTotal: number;
   tax: number;
+  cgstTotal?: number;
+  sgstTotal?: number;
+  igstTotal?: number;
+  taxKind?: "intra" | "inter";
+  placeOfSupplyState?: string | null;
   transportCharge?: number;
   transportTax?: number;
   total: number;
@@ -1798,6 +1823,13 @@ export interface SalesOrderRow {
   orderDate: string;
   subTotal: number;
   tax: number;
+  cgstTotal?: number;
+  sgstTotal?: number;
+  igstTotal?: number;
+  taxKind?: "intra" | "inter";
+  placeOfSupplyState?: string | null;
+  sellerState?: string | null;
+  pricingInclusive?: boolean;
   transportCharge?: number;
   transportTax?: number;
   total: number;
@@ -2033,6 +2065,10 @@ export interface PackingSlipRow {
     customerId: string;
     subTotal?: number;
     tax?: number;
+    cgstTotal?: number;
+    sgstTotal?: number;
+    igstTotal?: number;
+    taxKind?: "intra" | "inter";
     total?: number;
     transportCharge?: number;
     transportTax?: number;
@@ -2051,6 +2087,10 @@ export interface PackingSlipRow {
     invoiceNo: string;
     amount: number;
     tax?: number;
+    cgstTotal?: number;
+    sgstTotal?: number;
+    igstTotal?: number;
+    taxKind?: "intra" | "inter";
     transportCharge?: number;
     transportTax?: number;
     status: string;
@@ -2116,6 +2156,79 @@ export interface DispatchOptionRow {
   defaultCharge: number;
   active?: boolean;
   sortOrder?: number;
+}
+
+export interface PaymentGatewayConfigRow {
+  id: string;
+  gateway: string;
+  mode: string;
+  keyId: string | null;
+  keySecret: string | null;
+  webhookSecret: string | null;
+  active: boolean;
+  updatedAt: string;
+}
+
+export interface SmsProviderConfigRow {
+  id: string;
+  provider: string;
+  mode: string;
+  username: string | null;
+  password: string | null;
+  senderId: string | null;
+  templateId: string | null;
+  templateText: string | null;
+  active: boolean;
+  hasPassword?: boolean;
+  updatedAt?: string;
+}
+
+export interface ShiprocketConfigRow {
+  id: string;
+  email: string | null;
+  password: string | null;
+  pickupPincode: string | null;
+  active: boolean;
+  hasPassword?: boolean;
+  updatedAt: string;
+}
+
+export interface SystemEventLogRow {
+  id: string;
+  level: string;
+  source: string;
+  action: string;
+  message: string;
+  context: unknown;
+  refId: string | null;
+  createdAt: string;
+}
+
+export interface SystemLogSummary {
+  since: string;
+  counts: { source: string; level: string; count: number }[];
+  recentErrors: {
+    id: string;
+    source: string;
+    action: string;
+    message: string;
+    refId: string | null;
+    createdAt: string;
+  }[];
+}
+
+export interface PaymentIntentRow {
+  id: string;
+  gateway: string;
+  gatewayOrderId: string;
+  gatewayPaymentId: string | null;
+  amount: number;
+  status: string;
+  email: string | null;
+  phone: string | null;
+  salesOrderId: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 // External-channel barcode/SKU mapping (Settings → Channel mappings).
@@ -2262,6 +2375,7 @@ export interface CompanyProfile {
   currency: string;
   fiscalYearStart: string;
   defaultTaxRate: number;
+  pricingIncludesGst?: boolean;
   termsDefault: string | null;
   bankName: string | null;
   bankAccountNo: string | null;
@@ -2272,6 +2386,7 @@ export interface CompanyProfile {
   requireMoReleaseBeforeIssue?: boolean;
   packMultiContainerEnabled?: boolean;
   packRequireSealConfirmation?: boolean;
+  pickSortByBinEnabled?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -2370,6 +2485,42 @@ export const api = {
     }),
   deleteProductCategory: (id: string) =>
     fetcher<{ deleted: true }>(`/categories/${id}`, { method: "DELETE" }),
+
+  productConcerns: (opts?: { active?: boolean }) =>
+    fetcher<import("@/data/types").ProductConcern[]>("/concerns", {
+      query: opts?.active ? { active: "1" } : undefined,
+    }),
+  productConcern: (id: string) =>
+    fetcher<import("@/data/types").ProductConcern>(`/concerns/${id}`),
+  createProductConcern: (body: {
+    slug: string;
+    name: string;
+    description?: string | null;
+    icon?: string | null;
+    sortOrder?: number;
+    active?: boolean;
+  }) =>
+    fetcher<import("@/data/types").ProductConcern>("/concerns", {
+      method: "POST",
+      body,
+    }),
+  updateProductConcern: (
+    id: string,
+    body: Partial<{
+      slug: string;
+      name: string;
+      description: string | null;
+      icon: string | null;
+      sortOrder: number;
+      active: boolean;
+    }>
+  ) =>
+    fetcher<import("@/data/types").ProductConcern>(`/concerns/${id}`, {
+      method: "PATCH",
+      body,
+    }),
+  deleteProductConcern: (id: string) =>
+    fetcher<{ deleted: true }>(`/concerns/${id}`, { method: "DELETE" }),
 
   // ---------- channel mappings (external SKU ↔ internal SKU) -----------
   channelMappings: (params?: { channel?: string; q?: string; onlyUnresolved?: boolean }) =>
@@ -2475,11 +2626,112 @@ export const api = {
   deleteDispatchOption: (id: string) =>
     fetcher<{ ok: true }>(`/settings/dispatch-options/${id}`, { method: "DELETE" }),
 
+  paymentGateways: () => fetcher<PaymentGatewayConfigRow[]>("/settings/payment-gateways"),
+  paymentGateway: (gateway: string) =>
+    fetcher<PaymentGatewayConfigRow>(`/settings/payment-gateways/${gateway}`),
+  updatePaymentGateway: (
+    gateway: string,
+    body: Partial<{
+      mode: "test" | "live";
+      keyId: string | null;
+      keySecret: string | null;
+      webhookSecret: string | null;
+      active: boolean;
+    }>
+  ) =>
+    fetcher<PaymentGatewayConfigRow>(`/settings/payment-gateways/${gateway}`, {
+      method: "PATCH",
+      body,
+    }),
+  smsProvider: () => fetcher<SmsProviderConfigRow>("/settings/sms-provider"),
+  updateSmsProvider: (
+    body: Partial<{
+      provider: "smsidea";
+      mode: "test" | "live";
+      username: string | null;
+      password: string | null;
+      senderId: string | null;
+      templateId: string | null;
+      templateText: string | null;
+      active: boolean;
+    }>
+  ) =>
+    fetcher<SmsProviderConfigRow>("/settings/sms-provider", {
+      method: "PATCH",
+      body,
+    }),
+  testSmsProvider: (body: { phone: string; message?: string }) =>
+    fetcher<{ ok: boolean; ref?: string }>("/settings/sms-provider/test", {
+      method: "POST",
+      body,
+    }),
+
+  shiprocketConfig: () => fetcher<ShiprocketConfigRow>("/settings/shiprocket"),
+  updateShiprocketConfig: (
+    body: Partial<{
+      email: string | null;
+      password: string | null;
+      pickupPincode: string | null;
+      active: boolean;
+    }>
+  ) =>
+    fetcher<ShiprocketConfigRow>("/settings/shiprocket", {
+      method: "PATCH",
+      body,
+    }),
+  testShiprocketConfig: () =>
+    fetcher<{ ok: boolean; message?: string }>("/settings/shiprocket/test", {
+      method: "POST",
+      body: {},
+    }),
+
+  systemLogs: (params?: {
+    level?: "error" | "warn" | "info";
+    source?: string;
+    q?: string;
+    limit?: number;
+    before?: string;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.level) qs.set("level", params.level);
+    if (params?.source) qs.set("source", params.source);
+    if (params?.q) qs.set("q", params.q);
+    if (params?.limit) qs.set("limit", String(params.limit));
+    if (params?.before) qs.set("before", params.before);
+    const tail = qs.toString();
+    return fetcher<{ rows: SystemEventLogRow[]; nextBefore: string | null }>(
+      `/admin/system-logs${tail ? `?${tail}` : ""}`
+    );
+  },
+  systemLogSummary: () => fetcher<SystemLogSummary>("/admin/system-logs/summary"),
+  paymentIntents: (params?: { status?: string; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set("status", params.status);
+    if (params?.limit) qs.set("limit", String(params.limit));
+    const tail = qs.toString();
+    return fetcher<{ rows: PaymentIntentRow[] }>(`/admin/payment-intents${tail ? `?${tail}` : ""}`);
+  },
+
   uploadCategoryImage: async (categoryId: string, file: File): Promise<{ imageUrl: string }> => {
     const token = auth.token();
     const form = new FormData();
     form.append("image", file);
     const res = await fetch(buildUrl(`/categories/${categoryId}/image`), {
+      method: "POST",
+      headers: token ? { authorization: `Bearer ${token}` } : {},
+      body: form,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new ApiError(res.status, body?.error?.message ?? `${res.status}`, body?.error);
+    }
+    return res.json();
+  },
+  uploadConcernImage: async (concernId: string, file: File): Promise<{ imageUrl: string }> => {
+    const token = auth.token();
+    const form = new FormData();
+    form.append("image", file);
+    const res = await fetch(buildUrl(`/concerns/${concernId}/image`), {
       method: "POST",
       headers: token ? { authorization: `Bearer ${token}` } : {},
       body: form,
@@ -3156,6 +3408,7 @@ export const api = {
       inputQty?: number;
       notes?: string | null;
       operator?: string | null;
+      byproducts?: Array<{ bomByproductId: string; qty: number }>;
     }
   ) =>
     fetcher<Raw>(
@@ -3171,6 +3424,7 @@ export const api = {
       scrapQty?: number;
       inputQty?: number;
       notes?: string | null;
+      byproducts?: Array<{ bomByproductId: string; qty: number }>;
     }
   ) =>
     fetcher<Raw>(
@@ -4344,6 +4598,15 @@ export const api = {
   getCompanyProfile: () => fetcher<CompanyProfile>("/settings/company"),
   updateCompanyProfile: (body: CompanyProfileUpdate) =>
     fetcher<CompanyProfile>("/settings/company", { method: "PUT", body }),
+  pincodeLookup: (pin: string) =>
+    fetcher<{
+      pincode: string;
+      city: string;
+      district: string;
+      state: string;
+      distanceKm: number | null;
+      dispatchPincode: string | null;
+    }>(`/pincode-lookup?pin=${encodeURIComponent(pin)}`),
   publicCompany: () => publicFetcher<PublicCompany>("/public/company"),
 
   // Sales: Sales Orders
@@ -4974,6 +5237,57 @@ export const api = {
         qty: number;
       }>;
     }>("/zone-pr-variants/capture", { method: "POST", body }),
+
+  dailyProductionLogs: (q?: { limit?: number }) =>
+    fetcher<
+      Array<{
+        logNo: string;
+        loggedAt: string;
+        loggedBy: string;
+        notes: string | null;
+        outputs: Array<{ sku: string; name: string; qty: number }>;
+        postings: Array<{ sku: string; binCode: string; warehouseCode: string; qty: number }>;
+      }>
+    >("/daily-production/logs", { query: q }),
+
+  previewDailyProduction: (body: {
+    outputs: Array<{ barcode: string; qty: number }>;
+    materialScans?: Array<{ barcode: string }>;
+  }) =>
+    fetcher<{
+      outputs: Array<{
+        sku: string;
+        name: string;
+        qty: number;
+        materials: Array<{
+          sku: string;
+          name: string;
+          required: number;
+          available: number;
+          uom: string;
+        }>;
+      }>;
+      totals: Array<{
+        sku: string;
+        name: string;
+        required: number;
+        available: number;
+        uom: string;
+      }>;
+    }>("/daily-production/preview", { method: "POST", body }),
+
+  postDailyProduction: (body: {
+    outputs: Array<{ barcode: string; qty: number }>;
+    materialScans?: Array<{ barcode: string }>;
+    notes?: string | null;
+    allowShortMaterials?: boolean;
+    clientOpId?: string;
+  }) =>
+    fetcher<{
+      logNo: string;
+      consumptions: Array<{ sku: string; qty: number; uom: string; source: string }>;
+      postings: Array<{ sku: string; binCode: string; warehouseCode: string; qty: number }>;
+    }>("/daily-production/log", { method: "POST", body }),
 
   bulkZoneStock: (
     warehouseId: string,

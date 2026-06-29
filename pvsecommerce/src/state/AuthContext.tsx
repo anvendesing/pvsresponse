@@ -1,10 +1,3 @@
-// Dummy auth. The customer dashboard / order history needs *some*
-// way to identify "you", but real auth is out of scope for the demo.
-// We collect name/email/phone from the login form, persist them to
-// localStorage, and treat that as a logged-in session. Backend
-// endpoints are public; the email is sent along with order-history
-// requests so the customer only sees their own orders.
-
 import {
   createContext,
   useCallback,
@@ -14,72 +7,150 @@ import {
   useState,
   type ReactNode,
 } from "react";
+import { api, type CustomerAddress, type StorefrontCustomer } from "@/lib/api";
+import { AUTH_TOKEN_KEY } from "@/lib/auth-storage";
+import { tokenStorage } from "@/lib/native";
 
-const STORAGE_KEY = "pv_auth_v1";
-
-export interface AuthUser {
-  name: string;
-  email: string;
-  phone: string;
-}
-
-const readStored = (): AuthUser | null => {
+// Synchronous read from localStorage for the initial render (Preferences
+// is async; we hydrate the async value in useEffect below).
+const readTokenSync = (): string | null => {
   if (typeof window === "undefined") return null;
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as AuthUser;
-    if (
-      parsed &&
-      typeof parsed.name === "string" &&
-      typeof parsed.email === "string" &&
-      typeof parsed.phone === "string"
-    ) {
-      return parsed;
-    }
+    return window.localStorage.getItem(AUTH_TOKEN_KEY);
   } catch {
-    /* noop */
+    return null;
   }
-  return null;
 };
 
 interface AuthContextValue {
-  user: AuthUser | null;
+  token: string | null;
+  customer: StorefrontCustomer | null;
+  addresses: CustomerAddress[];
   isAuthed: boolean;
-  signIn: (u: AuthUser) => void;
+  loading: boolean;
+  requestOtp: (phone: string, purpose?: "login" | "track") => Promise<{ devOtp?: string; resendInSec?: number }>;
+  verifyOtp: (phone: string, code: string, name?: string, purpose?: "login" | "track") => Promise<void>;
+  refreshMe: () => Promise<void>;
   signOut: () => void;
+  setAddresses: (rows: CustomerAddress[]) => void;
+  /** @deprecated use customer */
+  user: { name: string; email: string; phone: string } | null;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
-  const [user, setUser] = useState<AuthUser | null>(() => readStored());
+  const [token, setToken] = useState<string | null>(() => readTokenSync());
+  const [customer, setCustomer] = useState<StorefrontCustomer | null>(null);
+  const [addresses, setAddresses] = useState<CustomerAddress[]>([]);
+  const [loading, setLoading] = useState(Boolean(readTokenSync()));
 
+  // On native (Capacitor) the authoritative store is Preferences (survives
+  // WebView reinstalls on iOS). We sync it to state on first mount.
   useEffect(() => {
-    try {
-      if (user) {
-        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(user));
-      } else {
-        window.localStorage.removeItem(STORAGE_KEY);
+    tokenStorage.getItem(AUTH_TOKEN_KEY).then((stored) => {
+      if (stored && !token) {
+        setToken(stored);
+        setLoading(true);
       }
-    } catch {
-      /* noop */
-    }
-  }, [user]);
-
-  const signIn = useCallback((u: AuthUser) => {
-    setUser({
-      name: u.name.trim(),
-      email: u.email.trim().toLowerCase(),
-      phone: u.phone.trim(),
-    });
+    }).catch(() => undefined);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const signOut = useCallback(() => setUser(null), []);
+  const persistToken = useCallback((next: string | null) => {
+    setToken(next);
+    void tokenStorage.setItem(AUTH_TOKEN_KEY, next ?? "").catch(() => undefined);
+    if (!next) void tokenStorage.removeItem(AUTH_TOKEN_KEY).catch(() => undefined);
+    // Keep localStorage in sync so the sync readTokenSync() path still works on web.
+    try {
+      if (next) window.localStorage.setItem(AUTH_TOKEN_KEY, next);
+      else window.localStorage.removeItem(AUTH_TOKEN_KEY);
+    } catch { /* noop */ }
+  }, []);
+
+  const refreshMe = useCallback(async () => {
+    const t = readTokenSync();
+    if (!t) {
+      setCustomer(null);
+      setAddresses([]);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    try {
+      const me = await api.me();
+      setCustomer(me.customer);
+      setAddresses(me.addresses);
+    } catch {
+      persistToken(null);
+      setCustomer(null);
+      setAddresses([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [persistToken]);
+
+  useEffect(() => {
+    if (token) void refreshMe();
+    else setLoading(false);
+  }, [token, refreshMe]);
+
+  const requestOtp = useCallback(async (phone: string, purpose: "login" | "track" = "login") => {
+    const res = await api.sendOtp(phone, purpose);
+    return { devOtp: res.devOtp, resendInSec: res.resendInSec };
+  }, []);
+
+  const verifyOtp = useCallback(
+    async (phone: string, code: string, name?: string, purpose: "login" | "track" = "login") => {
+      const res = await api.verifyOtp(phone, code, name, purpose);
+      persistToken(res.token);
+      setCustomer(res.customer);
+      setAddresses(res.addresses);
+    },
+    [persistToken]
+  );
+
+  const signOut = useCallback(() => {
+    persistToken(null);
+    setCustomer(null);
+    setAddresses([]);
+    void api.logout().catch(() => undefined);
+  }, [persistToken]);
+
+  const legacyUser = useMemo(() => {
+    if (!customer) return null;
+    return {
+      name: customer.name,
+      email: customer.email ?? "",
+      phone: customer.phone ?? "",
+    };
+  }, [customer]);
 
   const value = useMemo<AuthContextValue>(
-    () => ({ user, isAuthed: user !== null, signIn, signOut }),
-    [user, signIn, signOut]
+    () => ({
+      token,
+      customer,
+      addresses,
+      isAuthed: Boolean(token && customer),
+      loading,
+      requestOtp,
+      verifyOtp,
+      refreshMe,
+      signOut,
+      setAddresses,
+      user: legacyUser,
+    }),
+    [
+      token,
+      customer,
+      addresses,
+      loading,
+      requestOtp,
+      verifyOtp,
+      refreshMe,
+      signOut,
+      legacyUser,
+    ]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

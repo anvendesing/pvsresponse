@@ -22,14 +22,21 @@ import { Toolbar } from "@/components/common/Toolbar";
 import { api, auth, type TransferOrderRow, type TransferOrderItem } from "@/lib/api";
 import { useApi } from "@/hooks/useApi";
 import { cn } from "@/lib/cn";
+import { formatLocationPath } from "@/lib/locationDisplay";
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
 const fmtDate = (s: string | null) =>
   s ? new Date(s).toLocaleString("en-IN", { dateStyle: "short", timeStyle: "short" }) : "—";
 
-const fmtBin = (b: { zone: string; shelf: string; bin: string } | null) =>
-  b ? `${b.zone}-${b.shelf}-${b.bin}` : "—";
+const fmtBin = (
+  b: { zone: string; shelf: string; bin: string; code?: string | null } | null,
+  warehouseName?: string | null
+) => {
+  if (!b) return "—";
+  if (b.code) return b.code;
+  return formatLocationPath(b, warehouseName);
+};
 
 type StatusTone = "neutral" | "info" | "success" | "warning" | "danger" | "primary";
 
@@ -175,7 +182,12 @@ const DetailSlideOver = ({
               <p className="text-caption text-ink-muted">No items.</p>
             )}
             {order.items.map((item) => (
-              <ItemCard key={item.id} item={item} />
+              <ItemCard
+                key={item.id}
+                item={item}
+                fromWarehouse={order.fromWarehouse?.name}
+                toWarehouse={order.toWarehouse?.name}
+              />
             ))}
           </div>
         </div>
@@ -405,7 +417,15 @@ const MetaRow = ({
   </div>
 );
 
-const ItemCard = ({ item }: { item: TransferOrderItem }) => (
+const ItemCard = ({
+  item,
+  fromWarehouse,
+  toWarehouse,
+}: {
+  item: TransferOrderItem;
+  fromWarehouse?: string;
+  toWarehouse?: string;
+}) => (
   <div className="border border-border rounded-md p-3 bg-canvas text-caption space-y-1">
     <div className="flex items-center justify-between gap-2">
       <span className="font-semibold text-ink">
@@ -420,12 +440,20 @@ const ItemCard = ({ item }: { item: TransferOrderItem }) => (
       <StatCell label="Picked" value={item.qtyPicked} />
       <StatCell label="Dropped" value={item.qtyDropped} />
     </div>
-    <div className="pt-1 flex gap-4">
+    <div className="pt-1 flex flex-col gap-1 sm:flex-row sm:gap-4">
       <span className="text-ink-muted">
-        From: <span className="font-mono text-ink">{fmtBin(item.fromBin ?? null)}</span>
+        From:{" "}
+        <span className="font-mono text-ink">
+          {fmtBin(item.fromBin ?? null, fromWarehouse)}
+        </span>
+        {item.fromBin && (
+          <span className="text-ink-muted ml-1">
+            (free {Math.max(0, item.fromBin.qty - (item.fromBin.reservedQty ?? 0))} {item.product.uom})
+          </span>
+        )}
       </span>
       <span className="text-ink-muted">
-        To: <span className="font-mono text-ink">{fmtBin(item.tobin ?? null)}</span>
+        To: <span className="font-mono text-ink">{fmtBin(item.tobin ?? null, toWarehouse)}</span>
       </span>
     </div>
   </div>

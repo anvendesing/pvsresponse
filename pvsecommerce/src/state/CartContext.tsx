@@ -13,7 +13,7 @@ import {
   type ReactNode,
 } from "react";
 import type { CartLine, CatalogProduct, CatalogVariant } from "@/lib/api";
-import { packagingFromName } from "@/lib/format";
+import { packagingFromName, variantLabelFrom } from "@/lib/format";
 
 const STORAGE_KEY = "pv_cart_v1";
 
@@ -44,6 +44,10 @@ interface CartContextValue {
   openDrawer: () => void;
   closeDrawer: () => void;
   add: (product: CatalogProduct, variant: CatalogVariant | null, qty?: number) => void;
+  /** Merge multiple lines in one update; does not open the cart drawer. */
+  addMany: (
+    items: { product: CatalogProduct; variant: CatalogVariant | null; qty: number }[]
+  ) => void;
   setQty: (lineKey: string, qty: number) => void;
   remove: (lineKey: string) => void;
   clear: () => void;
@@ -53,6 +57,44 @@ interface CartContextValue {
 
 export const lineKeyFor = (line: CartLine): string =>
   line.variantId ?? line.productId;
+
+export const lineKeyForProduct = (
+  productId: string,
+  variantId: string | null
+): string => variantId ?? productId;
+
+const mergeLineInto = (
+  prev: CartLine[],
+  product: CatalogProduct,
+  variant: CatalogVariant | null,
+  qty: number
+): CartLine[] => {
+  const key = lineKeyForProduct(product.id, variant?.id ?? null);
+  const idx = prev.findIndex((l) => (l.variantId ?? l.productId) === key);
+  const available = variant ? variant.stockOnHand : product.stockOnHand;
+  if (idx >= 0) {
+    const next = [...prev];
+    const want = Math.min(next[idx].qty + qty, available);
+    next[idx] = { ...next[idx], qty: want };
+    return next;
+  }
+  const rate = variant?.price ?? product.sellingPrice;
+  return [
+    ...prev,
+    {
+      productId: product.id,
+      productName: product.name,
+      variantId: variant?.id ?? null,
+      variantSize: variant?.size ?? null,
+      variantLabel: variantLabelFrom(variant),
+      barcode: variant?.barcode?.trim() || product.barcode?.trim() || null,
+      qty: Math.min(qty, available),
+      rate,
+      available,
+      packagingHint: packagingFromName(product.name),
+    },
+  ];
+};
 
 const CartContext = createContext<CartContextValue | null>(null);
 
@@ -71,38 +113,22 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
 
   const add = useCallback(
     (product: CatalogProduct, variant: CatalogVariant | null, qty = 1) => {
-      setLines((prev) => {
-        const key = variant?.id ?? product.id;
-        const idx = prev.findIndex(
-          (l) => (l.variantId ?? l.productId) === key
-        );
-        const available = variant
-          ? variant.stockOnHand
-          : product.stockOnHand;
-        if (idx >= 0) {
-          const next = [...prev];
-          const want = Math.min(next[idx].qty + qty, available);
-          next[idx] = { ...next[idx], qty: want };
-          return next;
-        }
-        const rate = variant?.price ?? product.sellingPrice;
-        return [
-          ...prev,
-          {
-            productId: product.id,
-            productSku: product.sku,
-            productName: product.name,
-            variantId: variant?.id ?? null,
-            variantSku: variant?.sku ?? null,
-            variantSize: variant?.size ?? null,
-            qty: Math.min(qty, available),
-            rate,
-            available,
-            packagingHint: packagingFromName(product.name),
-          },
-        ];
-      });
+      setLines((prev) => mergeLineInto(prev, product, variant, qty));
       setDrawerOpen(true);
+    },
+    []
+  );
+
+  const addMany = useCallback(
+    (items: { product: CatalogProduct; variant: CatalogVariant | null; qty: number }[]) => {
+      if (items.length === 0) return;
+      setLines((prev) =>
+        items.reduce(
+          (acc, { product, variant, qty }) =>
+            qty > 0 ? mergeLineInto(acc, product, variant, qty) : acc,
+          prev
+        )
+      );
     },
     []
   );
@@ -139,11 +165,12 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
       openDrawer: () => setDrawerOpen(true),
       closeDrawer: () => setDrawerOpen(false),
       add,
+      addMany,
       setQty,
       remove,
       clear,
     };
-  }, [lines, drawerOpen, add, setQty, remove, clear]);
+  }, [lines, drawerOpen, add, addMany, setQty, remove, clear]);
 
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>;
 };

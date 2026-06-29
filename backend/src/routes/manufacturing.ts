@@ -44,7 +44,7 @@ import {
   abandonWorkOrderRun,
   deleteWorkOrderRun,
 } from "../lib/mo-work-orders.js";
-import { facilityReplenishCodes, findReplenishmentSourceBin } from "../lib/facility-ops.js";
+import { facilityReplenishCodes, allocateReplenishmentForProduct, stockMapForMoLeaves } from "../lib/facility-ops.js";
 import { generatePackBomsForProduct } from "../lib/generate-pack-boms.js";
 import { resolveComponentVariantIdForMoIssue } from "../lib/soap-semi.js";
 import {
@@ -297,6 +297,16 @@ const woInclude = {
       include: {
         machine: { select: { id: true, code: true, name: true } },
         line: { select: { id: true, code: true, name: true } },
+        byproducts: {
+          include: {
+            bomByproduct: {
+              include: {
+                product: { select: { id: true, sku: true, name: true, uom: true } },
+                variant: { select: { id: true, sku: true, size: true } },
+              },
+            },
+          },
+        },
       },
     },
   },
@@ -1737,7 +1747,7 @@ export const mfgRoutes = async (app: FastifyInstance) => {
       const po = await db.productionOrder.findUnique({
         where: { id },
         include: {
-          bom: { select: { id: true } },
+          bom: { select: { id: true, variantId: true } },
           facility: { select: { productionLineWarehouseId: true } },
         },
       });
@@ -1746,25 +1756,12 @@ export const mfgRoutes = async (app: FastifyInstance) => {
       const remaining = Math.max(0, po.plannedQty - po.actualQty);
       const planQty = remaining > 0 ? remaining : po.plannedQty;
       const leaves = await explodeMoBom(po.bom.id, planQty);
-      const productIds = leaves.map((l) => l.productId);
-      const stockWhere = lineWhId
-        ? { productId: { in: productIds }, warehouseId: lineWhId }
-        : { productId: { in: productIds } };
-      const stock = await db.bin.groupBy({
-        by: ["productId"],
-        where: stockWhere,
-        _sum: { qty: true, reservedQty: true },
-      });
-      const stockMap = new Map(
-        stock.map((s) => [
-          s.productId,
-          {
-            onHand: s._sum.qty ?? 0,
-            reserved: s._sum.reservedQty ?? 0,
-          },
-        ])
+      const stockMap = await stockMapForMoLeaves(
+        leaves,
+        lineWhId,
+        po.bom.variantId ?? null
       );
-      const issuedMap = await issuedQtyByProduct(po.orderNo, productIds);
+      const issuedMap = await issuedQtyByProduct(po.orderNo, leaves.map((l) => l.productId));
       const lines = leaves.map((l) => {
         const s = stockMap.get(l.productId) ?? { onHand: 0, reserved: 0 };
         const free = s.onHand - s.reserved;
@@ -2248,26 +2245,10 @@ export const mfgRoutes = async (app: FastifyInstance) => {
       const planQty = remaining > 0 ? remaining : po.plannedQty;
       const leaves = await explodeMoBom(po.bom.id, planQty);
 
-      // Calculate on-hand at the production-line warehouse (if set),
-      // else fall back to all bins (same as requirements check).
-      const productIds = leaves.map((l) => l.productId);
-      const stockWhere = productionLineWhId
-        ? { productId: { in: productIds }, warehouseId: productionLineWhId }
-        : { productId: { in: productIds } };
-
-      const stock = await db.bin.groupBy({
-        by: ["productId"],
-        where: stockWhere,
-        _sum: { qty: true, reservedQty: true },
-      });
-      const stockMap = new Map(
-        stock.map((s) => [
-          s.productId,
-          {
-            onHand: s._sum.qty ?? 0,
-            reserved: s._sum.reservedQty ?? 0,
-          },
-        ])
+      const stockMap = await stockMapForMoLeaves(
+        leaves,
+        productionLineWhId,
+        po.bom.variantId ?? null
       );
 
       const shortages: Array<{
@@ -2301,58 +2282,71 @@ export const mfgRoutes = async (app: FastifyInstance) => {
       const transferOrderIds: string[] = [];
 
       // Create replenishment TOs for each shortage when a production-line
-      // warehouse is configured. Group all shortages into a single TO
-      // pulling from configured source warehouses (godowns + local storage).
+      // warehouse is configured. Allocates **free** qty across bins and
+      // source warehouses; refuses when configured sources cannot cover
+      // the full shortage (avoids TO lines that exceed STR holdings).
       if (productionLineWhId && shortages.length > 0) {
-        const toItems: Array<{
+        type ToLine = {
           productId: string;
           qtyRequested: number;
-          fromBinId: string | null;
+          fromBinId: string;
+          fromWarehouseId: string;
+        };
+        const toLines: ToLine[] = [];
+        const unallocated: Array<{
+          productId: string;
+          sku: string;
+          shortage: number;
+          remaining: number;
         }> = [];
 
         for (const sh of shortages) {
-          const srcBin = await findReplenishmentSourceBin(
+          const { allocations, remaining } = await allocateReplenishmentForProduct(
             sh.productId,
             replenishCodes,
-            sh.shortage
+            sh.shortage,
+            [productionLineWhId]
           );
-          toItems.push({
-            productId: sh.productId,
-            qtyRequested: sh.shortage,
-            fromBinId: srcBin?.id ?? null,
-          });
+          for (const a of allocations) {
+            toLines.push({
+              productId: a.productId,
+              qtyRequested: a.qtyRequested,
+              fromBinId: a.fromBinId,
+              fromWarehouseId: a.fromWarehouseId,
+            });
+          }
+          if (remaining > 1e-6) {
+            unallocated.push({
+              productId: sh.productId,
+              sku: sh.sku,
+              shortage: sh.shortage,
+              remaining: Math.round(remaining * 1000) / 1000,
+            });
+          }
         }
 
-        const unresolved = toItems.filter((it) => !it.fromBinId);
-        if (unresolved.length > 0) {
-          const skus = await db.product.findMany({
-            where: { id: { in: unresolved.map((it) => it.productId) } },
-            select: { id: true, sku: true },
-          });
-          const skuById = new Map(skus.map((p) => [p.id, p.sku]));
+        if (unallocated.length > 0) {
           return reply.code(409).send({
             error: {
-              code: "replenish_source_not_found",
+              code: "insufficient_replenish_stock",
               message:
-                "Cannot create replenishment transfer: no source bin with stock for " +
-                unresolved
-                  .map((it) => skuById.get(it.productId) ?? it.productId)
-                  .join(", ") +
-                ". Check STR / configured replenish warehouses.",
+                "Cannot create replenishment transfer: configured source warehouses do not have enough free stock for " +
+                unallocated.map((u) => `${u.sku} (need ${u.shortage}, short ${u.remaining})`).join("; ") +
+                ". Check STR / replenish warehouse settings or add another source (e.g. milling WH).",
             },
             shortages,
-            unresolvedSkus: unresolved.map(
-              (it) => skuById.get(it.productId) ?? it.productId
-            ),
+            unallocated,
           });
         }
 
-        const firstSrcBin = await db.bin.findUnique({
-          where: { id: toItems[0]!.fromBinId! },
-          select: { warehouseId: true },
-        });
-        const fromWhId = firstSrcBin?.warehouseId;
-        if (fromWhId) {
+        const byFromWh = new Map<string, ToLine[]>();
+        for (const line of toLines) {
+          const list = byFromWh.get(line.fromWarehouseId) ?? [];
+          list.push(line);
+          byFromWh.set(line.fromWarehouseId, list);
+        }
+
+        for (const [fromWhId, lines] of byFromWh) {
           const transferNo = await nextTransferNo();
           const toOrder = await db.transferOrder.create({
             data: {
@@ -2364,7 +2358,7 @@ export const mfgRoutes = async (app: FastifyInstance) => {
               productionOrderId: id,
               notes: `Replenishment for MO ${po.orderNo}`,
               items: {
-                create: toItems.map((it) => ({
+                create: lines.map((it) => ({
                   productId: it.productId,
                   qtyRequested: it.qtyRequested,
                   fromBinId: it.fromBinId,
@@ -3468,6 +3462,14 @@ export const mfgRoutes = async (app: FastifyInstance) => {
     inputQty: z.number().nonnegative().optional(),
     notes: z.string().max(500).nullable().optional(),
     operator: z.string().max(120).nullable().optional(),
+    byproducts: z
+      .array(
+        z.object({
+          bomByproductId: z.string().min(1),
+          qty: z.number().nonnegative(),
+        })
+      )
+      .optional(),
   });
 
   const runErr = (e: unknown, fallback: string) => {

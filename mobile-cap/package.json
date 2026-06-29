@@ -1,16 +1,32 @@
 {
   "name": "prakruthivanam-mobile",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "private": true,
-  "description": "Prakruthivanam mobile shop - Capacitor wrap of app.html",
+  "description": "Prakruthivanam storefront — Capacitor shell over the React PWA",
   "scripts": {
-    "sync": "cap sync android",
-    "build:android": "cap sync android && cd android && gradlew.bat assembleDebug",
-    "open:android": "cap open android"
+    "build:web": "cd ../pvsecommerce && npm run build",
+    "copy:dist": "node scripts/copy-dist.js",
+    "sync:android": "npx cap sync android",
+    "sync:ios": "npx cap sync ios",
+    "build:debug": "npm run build:web && npm run copy:dist && npm run sync:android",
+    "open:android": "npx cap open android",
+    "open:ios": "npx cap open ios"
   },
   "dependencies": {
-    "@capacitor/android": "^6.2.1",
-    "@capacitor/cli": "^6.2.1",
-    "@capacitor/core": "^6.2.1"
+    "@capacitor/android": "8.4.1",
+    "@capacitor/app": "^8.1.0",
+    "@capacitor/browser": "^8.0.3",
+    "@capacitor/cli": "8.4.1",
+    "@capacitor/core": "8.4.1",
+    "@capacitor/network": "^8.0.1",
+    "@capacitor/preferences": "^8.0.1",
+    "@capacitor/push-notifications": "^8.1.1",
+    "@capacitor/share": "^8.0.1",
+    "@capacitor/splash-screen": "^8.0.1",
+    "@capacitor/status-bar": "^8.0.2"
+  },
+  "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
+    "shx": "^0.3.4"
   }
 }

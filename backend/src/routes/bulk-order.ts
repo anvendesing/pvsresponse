@@ -21,7 +21,8 @@ import { resolveEffectivePrice } from "./pricing.js";
 import { mintShareToken } from "../lib/share.js";
 import { recordChange } from "../sync/log.js";
 import { nextDocNo } from "./sales.js";
-import { computeTax } from "../lib/tax.js";
+import { computeDocumentTax, documentTaxHeaderFields, lineTaxDbFields } from "../lib/document-tax.js";
+import { getTaxContextForCustomer } from "../lib/company-tax.js";
 
 // ------------------------------------------------------------------- Config ---
 
@@ -41,7 +42,7 @@ const COL = {
   SUBTOTAL: 8,   // H
 } as const;
 
-const FIRST_DATA_ROW = 5; // rows 1-4 are header/title/instructions/column-header
+const FIRST_DATA_ROW = 6; // rows 1-5 are title / transport notice / instructions / spacer / column-header
 
 // ----------------------------------------------------------------- Helpers ---
 
@@ -103,9 +104,9 @@ async function buildWorkbook(
       {
         state: "frozen",
         xSplit: 0,
-        ySplit: 4,        // freeze header rows 1-4
+        ySplit: 5,        // freeze header rows 1-5
         topLeftCell: `A${FIRST_DATA_ROW}`,
-        activeCell: "G5",
+        activeCell: "G6",
         zoomScale: 110,
       },
     ],
@@ -126,32 +127,42 @@ async function buildWorkbook(
   ws.getColumn(COL.QTY).width = 11;
   ws.getColumn(COL.SUBTOTAL).width = 13;
 
-  // ── Row 1: Title ──
+  // ── Row 1: Price list name ──
   ws.mergeCells(1, 1, 1, 8);
   const titleCell = ws.getCell(1, 1);
-  titleCell.value = `${brandName}  ·  Bulk Order  ·  ${priceList.name} (${priceList.code})  ·  ${new Date(exportedAt).toLocaleDateString("en-IN")}`;
-  titleCell.font = { bold: true, size: 14, color: { argb: "FF1E3A5F" } };
+  titleCell.value = priceList.name;
+  titleCell.font = { bold: true, size: 16, color: { argb: "FF1E3A5F" } };
   titleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE8F0FE" } };
   titleCell.alignment = { vertical: "middle", horizontal: "center" };
-  ws.getRow(1).height = 28;
+  ws.getRow(1).height = 30;
 
-  // ── Row 2: Instruction ──
+  // ── Row 2: Transport charges notice ──
   ws.mergeCells(2, 1, 2, 8);
-  const instrCell = ws.getCell(2, 1);
+  const transportCell = ws.getCell(2, 1);
+  transportCell.value =
+    "Transport charges will be extra, based on the mode of transport and customer profile.";
+  transportCell.font = { bold: true, size: 12, color: { argb: "FFFFFFFF" } };
+  transportCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE65100" } };
+  transportCell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+  ws.getRow(2).height = 28;
+
+  // ── Row 3: Instruction ──
+  ws.mergeCells(3, 1, 3, 8);
+  const instrCell = ws.getCell(3, 1);
   instrCell.value =
     "Enter quantity in the yellow QTY column only  •  Leave blank or 0 to skip  •  Save and import via Quotes → Import from Excel";
   instrCell.font = { italic: true, size: 10, color: { argb: "FF555555" } };
   instrCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFFFFDE7" } };
   instrCell.alignment = { vertical: "middle", horizontal: "center" };
-  ws.getRow(2).height = 18;
+  ws.getRow(3).height = 18;
 
-  // ── Row 3: Spacer ──
-  ws.getRow(3).height = 4;
+  // ── Row 4: Spacer ──
+  ws.getRow(4).height = 4;
 
-  // ── Row 4: Column headers ──
+  // ── Row 5: Column headers ──
   const headers = ["SKU", "Product", "Variant", "Pack / UoM", "Stock", "Rate (₹)", "QTY ✏", "Subtotal"];
   for (let c = 1; c <= 8; c++) {
-    const cell = ws.getCell(4, c);
+    const cell = ws.getCell(5, c);
     cell.value = headers[c - 1];
     cell.font = { bold: true, size: 10, color: { argb: "FFFFFFFF" } };
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1E3A5F" } };
@@ -162,9 +173,9 @@ async function buildWorkbook(
     lockCell(cell);
   }
   // Override QTY header background to yellow
-  ws.getCell(4, COL.QTY).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE65100" } };
-  ws.getCell(4, COL.QTY).font = { bold: true, size: 10, color: { argb: "FFFFFFFF" } };
-  ws.getRow(4).height = 20;
+  ws.getCell(5, COL.QTY).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE65100" } };
+  ws.getCell(5, COL.QTY).font = { bold: true, size: 10, color: { argb: "FFFFFFFF" } };
+  ws.getRow(5).height = 20;
 
   // ── Group rows by category ──
   const categories = [...new Set(rows.map((r) => r.category))].sort();
@@ -346,6 +357,7 @@ async function buildWorkbook(
     ["Step 4", "Leave other rows at 0 or blank — they will be ignored on import."],
     ["Step 5", "Save the file (Ctrl+S) and upload it via  Quotes → Import from Excel  in the ERP portal."],
     ["Note",   "Prices shown are from pricelist '" + priceList.name + "' and will be re-validated server-side on import."],
+    ["Note",   "Transport charges are extra and depend on dispatch mode and customer profile — not included in the rates below."],
     ["Note",   "Do NOT rename the file tabs or the import will fail."],
   ];
   wsHelp.getColumn(1).width = 10;
@@ -627,7 +639,7 @@ export const bulkOrderRoutes = async (app: FastifyInstance) => {
 
       const customer = await db.customer.findUnique({
         where: { id: customerId },
-        select: { id: true, name: true, active: true, creditLimit: true },
+        select: { id: true, name: true, active: true, creditLimit: true, state: true },
       });
       if (!customer) {
         return reply.code(400).send({ error: { code: "customer_not_found", message: `Customer ${customerId} not found.` } });
@@ -810,9 +822,20 @@ export const bulkOrderRoutes = async (app: FastifyInstance) => {
         });
       }
 
-      const subTotal = accepted.reduce((s, l) => s + l.amount, 0);
-      const tax = computeTax(accepted.map((l) => ({ amount: l.amount, gstRate: l.gstRate })));
-      const total = subTotal + tax;
+      const taxCtx = await getTaxContextForCustomer(customer.state);
+      const doc = computeDocumentTax({
+        items: accepted.map((l) => ({
+          qty: l.qty,
+          rate: l.rate,
+          discount: l.discount,
+          gstRate: l.gstRate,
+        })),
+        transportCharge: 0,
+        taxCtx,
+      });
+      const subTotal = doc.subTotal;
+      const tax = doc.tax;
+      const total = doc.total;
 
       if (isDryRun) {
         return reply.send({
@@ -841,19 +864,25 @@ export const bulkOrderRoutes = async (app: FastifyInstance) => {
           customerId,
           validUntil,
           notes: notes ?? `Imported from bulk order Excel – pricelist ${priceList.code}`,
-          subTotal,
-          tax,
-          total,
+          ...documentTaxHeaderFields(doc),
           createdById: req.user.sub,
           items: {
-            create: accepted.map((l) => ({
-              productId: l.productId,
-              variantId: l.variantId,
-              qty: l.qty,
-              rate: l.rate,
-              discount: l.discount,
-              amount: l.amount,
-            })),
+            create: accepted.map((l, i) => {
+              const line = lineTaxDbFields(doc.lineResults[i]);
+              return {
+                productId: l.productId,
+                variantId: l.variantId,
+                qty: l.qty,
+                rate: line.rate,
+                discount: l.discount,
+                amount: line.amount,
+                taxableValue: line.taxableValue,
+                gstRate: line.gstRate,
+                cgstAmount: line.cgstAmount,
+                sgstAmount: line.sgstAmount,
+                igstAmount: line.igstAmount,
+              };
+            }),
           },
         },
         include: {

@@ -128,3 +128,29 @@ export const splitAcrossBins = async (
   }
   return splits;
 };
+
+/** Bin key for walk-path ordering (zone → shelf → bin). Lines without a bin sort last. */
+export const comparePickItemsByBinWalkPath = <
+  T extends {
+    bin?: { zone?: string | null; shelf?: string | null; bin?: string | null } | null;
+  },
+>(
+  a: T,
+  b: T
+): number => {
+  const aKey = a.bin ? `${a.bin.zone}|${a.bin.shelf}|${a.bin.bin}` : "~";
+  const bKey = b.bin ? `${b.bin.zone}|${b.bin.shelf}|${b.bin.bin}` : "~";
+  return aKey.localeCompare(bKey);
+};
+
+/** In-place sort for pick-list lines when walk-path ordering is enabled. */
+export const sortPickListItemsByBinWalkPath = <
+  T extends {
+    bin?: { zone?: string | null; shelf?: string | null; bin?: string | null } | null;
+  },
+>(
+  items: T[]
+): T[] => {
+  items.sort(comparePickItemsByBinWalkPath);
+  return items;
+};

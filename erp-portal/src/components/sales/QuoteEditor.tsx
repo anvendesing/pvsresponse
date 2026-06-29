@@ -24,6 +24,7 @@ import { cn } from "@/lib/cn";
 import { formatScanRef, primaryScanCode } from "@/lib/scanCode";
 import { fmtKg, sumLinesWeightKg } from "@/lib/itemWeight";
 import { searchProductsForSale } from "@/lib/productSearch";
+import { computeLineTax, computeTransportTax, resolveTaxKind } from "@/lib/documentTax";
 import { RevisionHistory } from "./RevisionHistory";
 import { ShareQuoteMenu } from "./ShareQuoteMenu";
 
@@ -136,6 +137,8 @@ export const QuoteEditor = ({
   const [error, setError] = useState<string | null>(null);
   const [showRevisions, setShowRevisions] = useState(false);
   const [atpCache, setAtpCache] = useState<Record<string, AtpResult>>({});
+  const [pricingIncludesGst, setPricingIncludesGst] = useState(false);
+  const [companyState, setCompanyState] = useState<string | null>(null);
   const searchRef = useRef<HTMLDivElement | null>(null);
 
   const isSubmitted = mode === "edit" && quote && quote.status === "submitted";
@@ -147,6 +150,13 @@ export const QuoteEditor = ({
   useEffect(() => {
     if (!open) return;
     void api.dispatchOptions().then(setDispatchOptions).catch(() => {});
+    void api
+      .getCompanyProfile()
+      .then((p) => {
+        setPricingIncludesGst(p.pricingIncludesGst ?? false);
+        setCompanyState(p.state ?? null);
+      })
+      .catch(() => {});
   }, [open]);
 
   useEffect(() => {
@@ -209,26 +219,47 @@ export const QuoteEditor = ({
     return list;
   }, [customers, mode, quote]);
 
-  // ---- Totals ----
-  const subTotal = useMemo(
-    () => lines.reduce((s, l) => s + l.qty * l.rate * (1 - l.discount / 100), 0),
-    [lines]
+  const taxKind = useMemo(
+    () => resolveTaxKind(companyState, customer?.state ?? companyState),
+    [companyState, customer?.state]
   );
-  const tax = useMemo(() => {
-    // Resolve effective GST rate per line from the products prop.
+
+  const lineTaxes = useMemo(() => {
     const productMap = new Map((products ?? []).map((p) => [p.id, p]));
-    const lineTaxes = lines.map((l) => {
-      const amount = l.qty * l.rate * (1 - l.discount / 100);
+    return lines.map((l) => {
       const product = productMap.get(l.productId);
       const variant = product?.variants?.find((v) => v.id === l.variantId);
-      const rate = (variant?.gstRate ?? null) ?? product?.gstRate ?? 18;
-      return amount * (rate / 100);
+      const gstRate = (variant?.gstRate ?? null) ?? product?.gstRate ?? 18;
+      return computeLineTax(
+        { qty: l.qty, rate: l.rate, discount: l.discount, gstRate },
+        { inclusive: pricingIncludesGst, taxKind }
+      );
     });
-    return Math.round(lineTaxes.reduce((s, t) => s + t, 0));
-  }, [lines, products]);
+  }, [lines, products, pricingIncludesGst, taxKind]);
+
+  const subTotal = useMemo(
+    () => Math.round(lineTaxes.reduce((s, l) => s + l.taxableValue, 0) * 100) / 100,
+    [lineTaxes]
+  );
+  const tax = useMemo(
+    () => Math.round(lineTaxes.reduce((s, l) => s + l.totalTax, 0) * 100) / 100,
+    [lineTaxes]
+  );
+  const cgstTotal = useMemo(
+    () => Math.round(lineTaxes.reduce((s, l) => s + l.cgst, 0) * 100) / 100,
+    [lineTaxes]
+  );
+  const sgstTotal = useMemo(
+    () => Math.round(lineTaxes.reduce((s, l) => s + l.sgst, 0) * 100) / 100,
+    [lineTaxes]
+  );
+  const igstTotal = useMemo(
+    () => Math.round(lineTaxes.reduce((s, l) => s + l.igst, 0) * 100) / 100,
+    [lineTaxes]
+  );
   const transportTax = useMemo(
-    () => Math.round(transportCharge * 0.18 * 100) / 100,
-    [transportCharge]
+    () => computeTransportTax(transportCharge, taxKind).totalTax,
+    [transportCharge, taxKind]
   );
   const total = subTotal + tax + transportCharge + transportTax;
 
@@ -1053,15 +1084,29 @@ export const QuoteEditor = ({
 
           <section className="border-t border-border pt-4">
             <div className="grid grid-cols-2 gap-x-8 max-w-md ml-auto text-body-sm">
-              <Row k="Subtotal" v={inr(subTotal)} />
-              <Row k="GST (goods)" v={inr(tax)} />
+              <Row k="Subtotal (excl. GST)" v={inr(subTotal)} />
+              {taxKind === "inter" ? (
+                <Row k="IGST (goods)" v={inr(igstTotal)} />
+              ) : (
+                <>
+                  <Row k="CGST (goods)" v={inr(cgstTotal)} />
+                  <Row k="SGST (goods)" v={inr(sgstTotal)} />
+                </>
+              )}
               {transportCharge > 0 && (
                 <>
                   <Row
                     k={`Transport${selectedDispatch ? ` · ${selectedDispatch.name}` : ""}`}
                     v={inr(transportCharge)}
                   />
-                  <Row k="GST (freight)" v={inr(transportTax)} />
+                  {taxKind === "inter" ? (
+                    <Row k="IGST (freight)" v={inr(transportTax)} />
+                  ) : (
+                    <>
+                      <Row k="CGST (freight)" v={inr(Math.round(transportTax / 2))} />
+                      <Row k="SGST (freight)" v={inr(transportTax - Math.round(transportTax / 2))} />
+                    </>
+                  )}
                 </>
               )}
               <Row k="Total" v={inr(total)} big />

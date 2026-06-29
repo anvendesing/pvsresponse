@@ -53,7 +53,9 @@ type BomByproductDef = {
 };
 
 async function ensureCategoryId() {
-  const cat = await db.productCategory.findUnique({ where: { slug: "oils" } });
+  const cat = await db.productCategory.findFirst({
+    where: { slug: { in: ["oils-oil-seeds", "oils"] } },
+  });
   if (!cat) throw new Error('Category "oils" not found.');
   return cat.id;
 }

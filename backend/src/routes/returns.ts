@@ -30,7 +30,9 @@ import { mintShareToken } from "../lib/share.js";
 import { nextDocNo } from "./sales.js";
 import { nextPaymentNo, invoiceOpenAmount } from "./customer-payments.js";
 import { recordChange } from "../sync/log.js";
-import { computeTax } from "../lib/tax.js";
+import { computeDocumentTax, lineTaxDbFields } from "../lib/document-tax.js";
+import { getCompanyTaxContext, getTaxContextForCustomer } from "../lib/company-tax.js";
+import { computeTax, type TaxKind } from "../lib/tax.js";
 
 // ------------------------------------------------------------------ helpers ---
 
@@ -726,15 +728,42 @@ export const returnsRoutes = async (app: FastifyInstance) => {
         : [];
       const invItemGstMap = new Map(invItemsGst.map((ii) => [ii.id, ii.gstRate ?? 18]));
 
-      const cnSubTotal =
-        Math.round(approvedItems.reduce((s, i) => s + i.amount, 0) * 100) / 100;
-      const cnTax = computeTax(
-        approvedItems.map((i) => ({
-          amount: i.amount,
+      const anchorInvoice = doc.invoiceId
+        ? await db.invoice.findUnique({
+            where: { id: doc.invoiceId },
+            select: {
+              taxKind: true,
+              sellerState: true,
+              placeOfSupplyState: true,
+              pricingInclusive: true,
+            },
+          })
+        : null;
+      const baseCtx = await getCompanyTaxContext();
+      const customerRow = await db.customer.findUnique({
+        where: { id: doc.customerId },
+        select: { state: true },
+      });
+      const taxCtx = {
+        sellerState: anchorInvoice?.sellerState ?? baseCtx.sellerState,
+        placeOfSupplyState:
+          anchorInvoice?.placeOfSupplyState ?? customerRow?.state ?? baseCtx.sellerState,
+        pricingInclusive: false,
+        taxKind: (anchorInvoice?.taxKind ?? "intra") as TaxKind,
+        defaultGstRate: baseCtx.defaultGstRate,
+      };
+      const cnDoc = computeDocumentTax({
+        items: approvedItems.map((i) => ({
+          qty: i.qty,
+          rate: i.rate,
           gstRate: i.invoiceItemId ? (invItemGstMap.get(i.invoiceItemId) ?? 18) : 18,
-        }))
-      );
-      const cnTotal = Math.round((cnSubTotal + cnTax) * 100) / 100;
+        })),
+        transportCharge: 0,
+        taxCtx,
+      });
+      const cnSubTotal = cnDoc.subTotal;
+      const cnTax = cnDoc.tax;
+      const cnTotal = cnDoc.total;
 
       // ── Run everything in a single transaction ───────────────────────────────
       const result = await db.$transaction(async (tx) => {
@@ -753,20 +782,25 @@ export const returnsRoutes = async (app: FastifyInstance) => {
               invoiceId: doc.invoiceId ?? null,
               subTotal: cnSubTotal,
               tax: cnTax,
+              cgstTotal: cnDoc.cgstTotal,
+              sgstTotal: cnDoc.sgstTotal,
+              igstTotal: cnDoc.igstTotal,
+              taxKind: cnDoc.taxKind,
+              placeOfSupplyState: cnDoc.placeOfSupplyState,
+              sellerState: cnDoc.sellerState,
+              pricingInclusive: cnDoc.pricingInclusive,
               total: cnTotal,
               createdById: req.user.sub,
               notes: `Credit note for return ${doc.returnNo}`,
               items: {
-                create: approvedItems.map((li) => {
-                  const lineGst = li.invoiceItemId ? (invItemGstMap.get(li.invoiceItemId) ?? 18) : 18;
+                create: cnDoc.lineResults.map((line, idx) => {
+                  const li = approvedItems[idx];
+                  const fields = lineTaxDbFields(line);
                   return {
                     productId: li.productId,
                     variantId: li.variantId,
                     qty: li.qty,
-                    rate: li.rate,
-                    amount: li.amount,
-                    gstRate: lineGst,
-                    taxAmount: Math.round(li.amount * (lineGst / 100) * 100) / 100,
+                    ...fields,
                     reason: li.reason,
                     returnItemId: li.id,
                   };

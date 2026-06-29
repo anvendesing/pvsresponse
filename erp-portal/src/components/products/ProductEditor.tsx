@@ -7,7 +7,7 @@ import { UomPicker } from "@/components/common/UomPicker";
 import type { Product, ProductState, ProductType, ProductVariant, StockLedgerEntry } from "@/data/types";
 import { api, resolveUploadUrl } from "@/lib/api";
 import { useApi } from "@/hooks/useApi";
-import type { ProductCategory } from "@/data/types";
+import type { ProductCategory, ProductConcern } from "@/data/types";
 import { cn } from "@/lib/cn";
 import { dd, num } from "@/lib/format";
 
@@ -37,6 +37,7 @@ const emptyForm = (): Product => ({
   costPrice: 0,
   sellingPrice: 0,
   categoryId: "",
+  concernIds: [],
   hsn: "",
   gstRate: 18,
   batchTracked: false,
@@ -71,6 +72,8 @@ const emptyVariant = (_parent: { sku: string; barcode: string }): ProductVariant
 export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) => {
   const categoriesQuery = useApi(() => api.productCategories({ active: true }), []);
   const categories = categoriesQuery.data ?? [];
+  const concernsQuery = useApi(() => api.productConcerns({ active: true }), []);
+  const concerns = concernsQuery.data ?? [];
 
   const [form, setForm] = useState<Product>(() => emptyForm());
   const [submitting, setSubmitting] = useState(false);
@@ -92,6 +95,10 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
       setForm({
         ...product,
         categoryId: product.categoryId ?? product.category?.id ?? "",
+        concernIds:
+          product.concernIds ??
+          product.concernLinks?.map((l) => l.concern.id) ??
+          [],
         variants: product.variants ?? [],
       });
     } else {
@@ -216,6 +223,7 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
         barcode: form.barcode.trim(),
         state: form.state,
         categoryId: form.categoryId?.trim() || undefined,
+        concernIds: form.concernIds ?? [],
         hsn: form.hsn.trim(),
         gstRate: Number(form.gstRate) || 18,
         costPrice: Number(form.costPrice) || 0,
@@ -283,6 +291,15 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
       setSubmitting(false);
     }
   };
+
+  const toggleConcern = (id: string) =>
+    setForm((f) => {
+      const ids = f.concernIds ?? [];
+      return {
+        ...f,
+        concernIds: ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id],
+      };
+    });
 
   const canSave = useMemo(() => {
     return (
@@ -430,6 +447,33 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
                   </option>
                 ))}
               </select>
+            </Field>
+            <Field label="Concerns" full>
+              <div
+                className={cn(
+                  "border border-border rounded-md p-3 bg-canvas min-h-[2.25rem]",
+                  concernsQuery.loading && "opacity-60"
+                )}
+              >
+                {concerns.length === 0 ? (
+                  <p className="text-body-sm text-ink-muted">
+                    No concerns configured — add them in Settings → Concerns.
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-x-4 gap-y-2">
+                    {concerns.map((c: ProductConcern) => (
+                      <label key={c.id} className="flex items-center gap-2 text-body-sm cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={(form.concernIds ?? []).includes(c.id)}
+                          onChange={() => toggleConcern(c.id)}
+                        />
+                        <span>{c.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+              </div>
             </Field>
             <Field label="HSN">
               <Input value={form.hsn} onChange={(e) => update("hsn", e.target.value)} />

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Merge these keys into ios/App/App/Info.plist after running 'npx cap add ios'.
+
+  1. Open ios/App/App/Info.plist in Xcode or a text editor.
+  2. Add the following keys inside the root <dict> element.
+-->
+<plist version="1.0">
+<dict>
+
+    <!-- Allow HTTP during development / before HTTPS is set up. REMOVE for App Store submission. -->
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoads</key>
+        <false/>
+        <key>NSExceptionDomains</key>
+        <dict>
+            <!-- Replace with your production API domain, then remove before shipping -->
+            <key>217.216.78.119</key>
+            <dict>
+                <key>NSExceptionAllowsInsecureHTTPLoads</key>
+                <true/>
+                <key>NSIncludesSubdomains</key>
+                <false/>
+            </dict>
+        </dict>
+    </dict>
+
+    <!-- Push notifications -->
+    <key>UIBackgroundModes</key>
+    <array>
+        <string>remote-notification</string>
+        <string>fetch</string>
+    </array>
+
+    <!-- Camera (if product photos are ever captured in-app) -->
+    <!-- <key>NSCameraUsageDescription</key>
+    <string>Used to scan product barcodes and upload photos.</string> -->
+
+    <!-- Status bar style -->
+    <key>UIStatusBarStyle</key>
+    <string>UIStatusBarStyleLightContent</string>
+    <key>UIViewControllerBasedStatusBarAppearance</key>
+    <false/>
+
+</dict>
+</plist>

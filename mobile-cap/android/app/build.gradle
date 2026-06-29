@@ -3,12 +3,27 @@ apply plugin: 'com.android.application'
 android {
     namespace "com.prakruthivanam.shop"
     compileSdk rootProject.ext.compileSdkVersion
+    signingConfigs {
+        release {
+            // Populated from KEYSTORE_PATH / KEYSTORE_PASSWORD / KEY_ALIAS /
+            // KEY_PASSWORD environment variables (or keystore.properties file).
+            // The keystore itself is never committed to git.
+            def props = new Properties()
+            def propsFile = rootProject.file('../keystore/keystore.properties')
+            if (propsFile.exists()) props.load(propsFile.newDataInputStream())
+            storeFile     file(props.getProperty('storeFile',   System.getenv('KEYSTORE_PATH')   ?: 'keystore/release.jks'))
+            storePassword props.getProperty('storePassword', System.getenv('KEYSTORE_PASSWORD') ?: '')
+            keyAlias      props.getProperty('keyAlias',      System.getenv('KEY_ALIAS')         ?: 'prakruthivanam')
+            keyPassword   props.getProperty('keyPassword',   System.getenv('KEY_PASSWORD')      ?: '')
+        }
+    }
+
     defaultConfig {
         applicationId "com.prakruthivanam.shop"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0"
+        versionCode 2
+        versionName "2.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -18,8 +33,13 @@ android {
     }
     buildTypes {
         release {
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            signingConfig signingConfigs.release
+        }
+        debug {
             minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
     }
 }

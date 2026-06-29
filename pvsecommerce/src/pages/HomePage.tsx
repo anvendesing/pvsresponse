@@ -1,16 +1,12 @@
-// Home page. Shows the hero, the 10-category grid, and two
-// underlined sections: Best Sellers and Combos. Both sections pull
-// from /storefront-mock/catalog - we don't curate them server-side
-// yet, so:
-//   - Best sellers = first 4 in-stock single-or-variant products
-//   - Combos       = first 4 products whose name contains "combo"
-//                    (falls back to the next 4 if none match).
+// Home page: hero, category grid (desktop), and a full best-sellers catalog
+// grid. Combos are deferred — nav links to /bulk-order instead.
 
 import { useMemo } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { getCategoryIcon } from "@/data/categories";
 import { useCatalog } from "@/state/CatalogContext";
 import { useCategories } from "@/state/CategoriesContext";
+import { usePlatform } from "@/state/PlatformContext";
 import { ProductCard } from "@/components/ProductCard";
 import type { CatalogProduct } from "@/lib/api";
 
@@ -28,20 +24,14 @@ const matches = (p: CatalogProduct, q: string): boolean => {
 export const HomePage = () => {
   const { products, loading, error } = useCatalog();
   const { categories, categoryImageUrl } = useCategories();
+  const { isPhone } = usePlatform();
   const [params] = useSearchParams();
   const q = params.get("q") ?? "";
 
-  const filtered = useMemo(() => products.filter((p) => matches(p, q)), [products, q]);
-
-  const bestSellers = useMemo(() => filtered.slice(0, 4), [filtered]);
-  const combos = useMemo(() => {
-    const direct = filtered.filter((p) => /combo/i.test(p.name));
-    if (direct.length >= 4) return direct.slice(0, 4);
-    return [...direct, ...filtered.filter((p) => !/combo/i.test(p.name))].slice(
-      0,
-      4
-    );
-  }, [filtered]);
+  const bestSellers = useMemo(
+    () => products.filter((p) => matches(p, q)),
+    [products, q]
+  );
 
   return (
     <>
@@ -58,7 +48,7 @@ export const HomePage = () => {
               Shop wood-pressed oils, sprouted millet flours, herbal soaps,
               and more from our family of small farmers.
             </p>
-            <Link to="/category/millets" className="btn btn-green">
+            <Link to="/category/grains-pulses-flours" className="btn btn-green">
               Shop Now
             </Link>
           </div>
@@ -73,84 +63,58 @@ export const HomePage = () => {
         </div>
       </section>
 
-      <section className="categories-section section-padding" id="categories">
-        <header className="section-header">
-          <span className="section-eyebrow">Shop by Category</span>
-          <h2 className="section-title">A garden's worth of goodness</h2>
-        </header>
-        <div className="categories-exact-grid">
-          {categories.map((c) => {
-            const Icon = getCategoryIcon(c.slug);
-            return (
-              <Link key={c.id} to={`/category/${c.slug}`} className="category-card">
-                <div className="category-card-inner">
-                  <img
-                    src={categoryImageUrl(c)}
-                    alt={c.name}
-                    className="category-card-img"
-                    onError={(e) => {
-                      e.currentTarget.style.display = "none";
-                      (e.currentTarget.nextElementSibling as HTMLElement | null)?.style.setProperty(
-                        "display",
-                        "flex"
-                      );
-                    }}
-                  />
-                  {Icon && (
-                    <span className="category-card-icon-fallback" style={{ display: "none" }}>
-                      <Icon />
-                    </span>
-                  )}
-                </div>
-                <span className="category-card-badge">{c.name}</span>
-              </Link>
-            );
-          })}
-        </div>
-      </section>
+      {!isPhone && (
+        <section className="categories-section section-padding" id="categories">
+          <header className="section-header">
+            <span className="section-eyebrow">Shop by Category</span>
+            <h2 className="section-title">A garden's worth of goodness</h2>
+          </header>
+          <div className="categories-exact-grid">
+            {categories.map((c) => {
+              const Icon = getCategoryIcon(c.slug);
+              return (
+                <Link key={c.id} to={`/category/${c.slug}`} className="category-card">
+                  <div className="category-card-inner">
+                    <img
+                      src={categoryImageUrl(c)}
+                      alt={c.name}
+                      className="category-card-img"
+                      onError={(e) => {
+                        e.currentTarget.style.display = "none";
+                        (e.currentTarget.nextElementSibling as HTMLElement | null)?.style.setProperty(
+                          "display",
+                          "flex"
+                        );
+                      }}
+                    />
+                    {Icon && (
+                      <span className="category-card-icon-fallback" style={{ display: "none" }}>
+                        <Icon />
+                      </span>
+                    )}
+                  </div>
+                  <span className="category-card-badge">{c.name}</span>
+                </Link>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       <section className="catalog-columns-section section-padding" id="catalog">
-        <div className="catalog-columns-row">
-          <div>
-            <h2 className="catalog-column-title">Best Selling Products</h2>
-            {loading ? (
-              <SkeletonGrid />
-            ) : (
-              <div className="catalog-column-grid">
-                {bestSellers.length > 0 ? (
-                  bestSellers.map((p) => (
-                    <ProductCard
-                      key={p.id}
-                      product={p}
-                      badge={badgeFor(p, "best")}
-                    />
-                  ))
-                ) : (
-                  <EmptyHint message="No best sellers yet." />
-                )}
-              </div>
-            )}
-          </div>
-          <div>
-            <h2 className="catalog-column-title">Combos</h2>
-            {loading ? (
-              <SkeletonGrid />
-            ) : (
-              <div className="catalog-column-grid">
-                {combos.length > 0 ? (
-                  combos.map((p) => (
-                    <ProductCard
-                      key={p.id}
-                      product={p}
-                      badge={badgeFor(p, "combo")}
-                    />
-                  ))
-                ) : (
-                  <EmptyHint message="No combos available." />
-                )}
-              </div>
-            )}
-          </div>
+        <div className="home-catalog-inner">
+          <h2 className="catalog-column-title">Best Selling Products</h2>
+          {loading ? (
+            <SkeletonGrid />
+          ) : bestSellers.length > 0 ? (
+            <div className="listing-products-grid">
+              {bestSellers.map((p) => (
+                <ProductCard key={p.id} product={p} badge={badgeFor(p)} />
+              ))}
+            </div>
+          ) : (
+            <EmptyHint message={q ? "No products match your search." : "No products yet."} />
+          )}
         </div>
         {error && (
           <p
@@ -174,23 +138,22 @@ export const HomePage = () => {
   );
 };
 
-const badgeFor = (p: CatalogProduct, kind: "best" | "combo"): string => {
-  if (kind === "combo") return "Combo Save";
+const badgeFor = (p: CatalogProduct): string => {
   const slug = p.categorySlug ?? "";
-  if (slug === "millets") return "Stone Ground";
-  if (slug === "oils") return "Wood Pressed";
-  if (slug === "wellness") return "Herbal";
-  if (slug === "sweeteners") return "Forest Honey";
+  if (slug === "millets" || slug === "millets-millet-products") return "Stone Ground";
+  if (slug === "oils" || slug === "oils-oil-seeds") return "Wood Pressed";
+  if (slug === "wellness" || slug === "personal-care-wellness") return "Herbal";
+  if (slug === "sweeteners" || slug === "natural-sweeteners") return "Forest Honey";
   return "Best Seller";
 };
 
 const SkeletonGrid = () => (
-  <div className="catalog-column-grid">
-    {[0, 1, 2, 3].map((i) => (
+  <div className="listing-products-grid">
+    {[0, 1, 2, 3, 4, 5].map((i) => (
       <div
         key={i}
         className="product-card"
-        style={{ background: "rgba(255,255,255,0.5)" }}
+        style={{ background: "rgba(255,255,255,0.5)", minHeight: 320 }}
       />
     ))}
   </div>
@@ -199,7 +162,6 @@ const SkeletonGrid = () => (
 const EmptyHint = ({ message }: { message: string }) => (
   <div
     style={{
-      gridColumn: "1 / -1",
       padding: "2rem",
       textAlign: "center",
       background: "var(--neutral-white)",
