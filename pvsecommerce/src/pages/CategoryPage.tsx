@@ -13,9 +13,9 @@ import { CheckIcon, ChevronLeftIcon, ChevronRightIcon } from "@/assets/icons";
 
 const PAGE_SIZE = 9;
 
-const productInStock = (p: { stockOnHand: number; variants: { stockOnHand: number }[] }): boolean => {
-  if (p.variants.length > 0) return p.variants.some((v) => v.stockOnHand > 0);
-  return p.stockOnHand > 0;
+const productInStock = (p: { inStock: boolean; variants: { inStock: boolean }[] }): boolean => {
+  if (p.variants.length > 0) return p.variants.some((v) => v.inStock);
+  return p.inStock;
 };
 
 export const CategoryPage = () => {

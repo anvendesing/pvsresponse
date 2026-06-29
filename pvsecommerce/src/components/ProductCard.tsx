@@ -7,6 +7,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import type { CatalogProduct, CatalogVariant } from "@/lib/api";
+import { resolveImageSet, resolveUploadUrl } from "@/lib/api";
 import { inr, packagingFromName } from "@/lib/format";
 import { lineBarcode } from "@/lib/scanCode";
 import { useCart } from "@/state/CartContext";
@@ -38,18 +39,20 @@ export const ProductCard = ({ product, badge }: Props) => {
 
   const [imgFailed, setImgFailed] = useState(false);
 
-  const stock = variant ? variant.stockOnHand : product.stockOnHand;
+  const stock = variant ? variant.inStock : product.inStock;
   const price = variant ? variant.price : product.sellingPrice;
-  const lowStock = stock <= 5;
   const wishlistKey = variant?.id ?? product.id;
   const isWished = wishlist.has(wishlistKey);
+
+  const imgSet = resolveImageSet(product.imageUrl, product.imageUpdatedAt);
+  const fallbackSrc = resolveUploadUrl(product.imageUrl, product.imageUpdatedAt);
 
   const onAdd = () => {
     cart.add(product, variant, qty);
     toast.show(`Added ${product.name}`, "success");
   };
 
-  const inc = () => setQty((q) => Math.min(q + 1, stock || 1));
+  const inc = () => setQty((q) => q + 1);
   const dec = () => setQty((q) => Math.max(1, q - 1));
 
   const scanCode = lineBarcode({
@@ -67,18 +70,39 @@ export const ProductCard = ({ product, badge }: Props) => {
     >
       <div className="product-card-art">
         {product.imageUrl && !imgFailed ? (
-          <img
-            src={product.imageUrl}
-            alt={product.name}
-            className="product-card-photo"
-            loading="lazy"
-            onError={() => setImgFailed(true)}
-          />
+          imgSet ? (
+            <picture>
+              <source
+                type="image/webp"
+                srcSet={`${imgSet.thumb.webp} 300w, ${imgSet.medium.webp} 600w`}
+                sizes="(max-width: 540px) 50vw, 33vw"
+              />
+              <img
+                src={imgSet.medium.jpeg}
+                srcSet={`${imgSet.thumb.jpeg} 300w, ${imgSet.medium.jpeg} 600w`}
+                sizes="(max-width: 540px) 50vw, 33vw"
+                alt={product.name}
+                className="product-card-photo"
+                loading="lazy"
+                decoding="async"
+                onError={() => setImgFailed(true)}
+              />
+            </picture>
+          ) : (
+            <img
+              src={fallbackSrc}
+              alt={product.name}
+              className="product-card-photo"
+              loading="lazy"
+              decoding="async"
+              onError={() => setImgFailed(true)}
+            />
+          )
         ) : (
           <PackagingArt kind={packagingFromName(product.name)} />
         )}
-        <span className={`product-card-stockbadge ${lowStock ? "low" : ""}`}>
-          {stock > 0 ? (lowStock ? `${stock} left` : "In Stock") : "Sold out"}
+        <span className={`product-card-stockbadge ${!stock ? "low" : ""}`}>
+          {stock ? "In Stock" : "Sold out"}
         </span>
         <button
           type="button"
@@ -147,7 +171,6 @@ export const ProductCard = ({ product, badge }: Props) => {
               type="button"
               aria-label="Increase"
               onClick={inc}
-              disabled={qty >= stock}
             >
               +
             </button>
@@ -155,10 +178,10 @@ export const ProductCard = ({ product, badge }: Props) => {
           <button
             type="button"
             className="add-to-cart-btn"
-            disabled={stock <= 0}
+            disabled={!stock}
             onClick={onAdd}
           >
-            {stock > 0 ? "Add to Cart" : "Sold out"}
+            {stock ? "Add to Cart" : "Sold out"}
           </button>
         </div>
       </div>

@@ -14,6 +14,7 @@ import {
 } from "react";
 import type { CartLine, CatalogProduct, CatalogVariant } from "@/lib/api";
 import { packagingFromName, variantLabelFrom } from "@/lib/format";
+import { track } from "@/lib/activity";
 
 const STORAGE_KEY = "pv_cart_v1";
 
@@ -71,11 +72,12 @@ const mergeLineInto = (
 ): CartLine[] => {
   const key = lineKeyForProduct(product.id, variant?.id ?? null);
   const idx = prev.findIndex((l) => (l.variantId ?? l.productId) === key);
-  const available = variant ? variant.stockOnHand : product.stockOnHand;
+  // inStock is a boolean — no exact count on the storefront.
+  // Qty is unbounded client-side; the backend validates stock at checkout.
+  const available = 9999;
   if (idx >= 0) {
     const next = [...prev];
-    const want = Math.min(next[idx].qty + qty, available);
-    next[idx] = { ...next[idx], qty: want };
+    next[idx] = { ...next[idx], qty: next[idx].qty + qty };
     return next;
   }
   const rate = variant?.price ?? product.sellingPrice;
@@ -88,7 +90,7 @@ const mergeLineInto = (
       variantSize: variant?.size ?? null,
       variantLabel: variantLabelFrom(variant),
       barcode: variant?.barcode?.trim() || product.barcode?.trim() || null,
-      qty: Math.min(qty, available),
+      qty,
       rate,
       available,
       packagingHint: packagingFromName(product.name),
@@ -115,6 +117,7 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
     (product: CatalogProduct, variant: CatalogVariant | null, qty = 1) => {
       setLines((prev) => mergeLineInto(prev, product, variant, qty));
       setDrawerOpen(true);
+      track("add_to_cart", { productId: product.id, meta: { qty, variantId: variant?.id ?? null } });
     },
     []
   );
@@ -147,9 +150,11 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
   }, []);
 
   const remove = useCallback((lineKey: string) => {
-    setLines((prev) =>
-      prev.filter((l) => (l.variantId ?? l.productId) !== lineKey)
-    );
+    setLines((prev) => {
+      const target = prev.find((l) => (l.variantId ?? l.productId) === lineKey);
+      if (target) track("remove_from_cart", { productId: target.productId });
+      return prev.filter((l) => (l.variantId ?? l.productId) !== lineKey);
+    });
   }, []);
 
   const clear = useCallback(() => setLines([]), []);

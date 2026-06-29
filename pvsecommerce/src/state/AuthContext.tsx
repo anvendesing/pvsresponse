@@ -10,6 +10,7 @@ import {
 import { api, type CustomerAddress, type StorefrontCustomer } from "@/lib/api";
 import { AUTH_TOKEN_KEY } from "@/lib/auth-storage";
 import { tokenStorage } from "@/lib/native";
+import { track } from "@/lib/activity";
 
 // Synchronous read from localStorage for the initial render (Preferences
 // is async; we hydrate the async value in useEffect below).
@@ -106,6 +107,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       persistToken(res.token);
       setCustomer(res.customer);
       setAddresses(Array.isArray(res.addresses) ? res.addresses : []);
+      track("login");
     },
     [persistToken]
   );
@@ -114,6 +116,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     persistToken(null);
     setCustomer(null);
     setAddresses([]);
+    track("logout");
     void api.logout().catch(() => undefined);
   }, [persistToken]);
 

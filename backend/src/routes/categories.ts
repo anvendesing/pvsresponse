@@ -7,6 +7,8 @@ import { fileURLToPath } from "url";
 import { pipeline } from "stream/promises";
 import { db } from "../db.js";
 import { recordChange } from "../sync/log.js";
+import { invalidateCatalog } from "../lib/catalog-cache.js";
+import { processImage } from "../lib/image-pipeline.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -104,6 +106,7 @@ export const categoriesRoutes = async (app: FastifyInstance) => {
         select: categorySelect,
       });
       await recordChange("ProductCategory", created.id, "insert", created, req.user!.sub);
+      void invalidateCatalog("categories");
       return created;
     }
   );
@@ -142,6 +145,7 @@ export const categoriesRoutes = async (app: FastifyInstance) => {
         select: categorySelect,
       });
       await recordChange("ProductCategory", before.id, "update", updated, req.user!.sub);
+      void invalidateCatalog("categories");
       return updated;
     }
   );
@@ -167,6 +171,7 @@ export const categoriesRoutes = async (app: FastifyInstance) => {
       }
       await db.productCategory.delete({ where: { id: row.id } });
       await recordChange("ProductCategory", row.id, "delete", row, req.user!.sub);
+      void invalidateCatalog("categories");
       return { deleted: true };
     }
   );
@@ -192,17 +197,9 @@ export const categoriesRoutes = async (app: FastifyInstance) => {
         });
       }
 
-      const ext =
-        data.mimetype === "image/png"
-          ? ".png"
-          : data.mimetype === "image/webp"
-            ? ".webp"
-            : ".jpg";
-      const filename = `${row.id}${ext}`;
-      const dest = join(uploadsRoot, "categories", filename);
-      await pipeline(data.file, createWriteStream(dest));
+      const buf = await data.toBuffer();
+      const { baseUrl: imageUrl } = await processImage(buf, row.id, "categories", uploadsRoot);
 
-      const imageUrl = `/uploads/categories/${filename}`;
       const updated = await db.productCategory.update({
         where: { id: row.id },
         data: { imageUrl },

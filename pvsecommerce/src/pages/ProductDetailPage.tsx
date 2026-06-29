@@ -4,7 +4,8 @@
 import { useState, useEffect } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import type { ProductDetail, CatalogVariant } from "@/lib/api";
-import { api } from "@/lib/api";
+import { api, resolveImageSet, resolveUploadUrl } from "@/lib/api";
+import { track } from "@/lib/activity";
 import { inr, packagingFromName } from "@/lib/format";
 import { lineBarcode } from "@/lib/scanCode";
 import { useCart } from "@/state/CartContext";
@@ -44,6 +45,7 @@ export const ProductDetailPage = () => {
         setProduct(p);
         setVariantId(p.variants.length > 0 ? p.variants[0].id : null);
         setQty(1);
+        track("product_view", { productId: id });
       })
       .catch(() => setError(true))
       .finally(() => setLoading(false));
@@ -72,7 +74,7 @@ export const ProductDetailPage = () => {
     product.variants[0] ??
     null;
 
-  const stock = variant ? variant.stockOnHand : product.stockOnHand;
+  const stock = variant ? variant.inStock : product.inStock;
   const price = variant ? variant.price : product.sellingPrice;
   const wishlistKey = variant?.id ?? product.id;
   const isWished = wishlist.has(wishlistKey);
@@ -123,17 +125,41 @@ export const ProductDetailPage = () => {
         {/* Left — artwork */}
         <div className="pdp-artwork-col">
           <div className="pdp-art-frame">
-            {product.imageUrl && !imgFailed ? (
-              <img
-                src={product.imageUrl}
-                alt={product.name}
-                className="pdp-product-photo"
-                loading="eager"
-                onError={() => setImgFailed(true)}
-              />
-            ) : (
-              <PackagingArt kind={packagingKind} />
-            )}
+            {(() => {
+              if (!product.imageUrl || imgFailed) return <PackagingArt kind={packagingKind} />;
+              const imgSet = resolveImageSet(product.imageUrl, product.imageUpdatedAt);
+              if (imgSet) {
+                return (
+                  <picture>
+                    <source
+                      type="image/webp"
+                      srcSet={`${imgSet.medium.webp} 600w, ${imgSet.large.webp} 1200w`}
+                      sizes="(max-width: 768px) 100vw, 50vw"
+                    />
+                    <img
+                      src={imgSet.large.jpeg}
+                      srcSet={`${imgSet.medium.jpeg} 600w, ${imgSet.large.jpeg} 1200w`}
+                      sizes="(max-width: 768px) 100vw, 50vw"
+                      alt={product.name}
+                      className="pdp-product-photo"
+                      fetchPriority="high"
+                      decoding="async"
+                      onError={() => setImgFailed(true)}
+                    />
+                  </picture>
+                );
+              }
+              return (
+                <img
+                  src={resolveUploadUrl(product.imageUrl, product.imageUpdatedAt)}
+                  alt={product.name}
+                  className="pdp-product-photo"
+                  fetchPriority="high"
+                  decoding="async"
+                  onError={() => setImgFailed(true)}
+                />
+              );
+            })()}
           </div>
           {product.tags.length > 0 && (
             <div className="pdp-tags">
@@ -186,16 +212,16 @@ export const ProductDetailPage = () => {
                     key={v.id}
                     type="button"
                     className={`pdp-chip ${v.id === variantId ? "active" : ""} ${
-                      v.stockOnHand <= 0 ? "disabled" : ""
+                      !v.inStock ? "disabled" : ""
                     }`}
-                    disabled={v.stockOnHand <= 0}
+                    disabled={!v.inStock}
                     onClick={() => {
                       setVariantId(v.id);
                       setQty(1);
                     }}
                   >
                     {v.size ?? lineBarcode({ barcode: v.barcode, productBarcode: product.barcode }) ?? ""}
-                    {v.stockOnHand <= 0 && (
+                    {!v.inStock && (
                       <span className="pdp-chip-sold"> · Sold out</span>
                     )}
                   </button>
@@ -206,12 +232,8 @@ export const ProductDetailPage = () => {
 
           {/* Stock badge */}
           <div className="pdp-stock">
-            {stock <= 0 ? (
+            {!stock ? (
               <span className="pdp-stock-badge out">Out of stock</span>
-            ) : stock <= 5 ? (
-              <span className="pdp-stock-badge low">
-                Only {stock} left!
-              </span>
             ) : (
               <span className="pdp-stock-badge in">In stock</span>
             )}
@@ -231,8 +253,7 @@ export const ProductDetailPage = () => {
               <button
                 type="button"
                 aria-label="Increase"
-                onClick={() => setQty((q) => Math.min(q + 1, stock || 1))}
-                disabled={qty >= stock}
+                onClick={() => setQty((q) => q + 1)}
               >
                 +
               </button>
@@ -240,10 +261,10 @@ export const ProductDetailPage = () => {
             <button
               type="button"
               className="btn-primary pdp-add-btn"
-              disabled={stock <= 0}
+              disabled={!stock}
               onClick={onAdd}
             >
-              {stock > 0 ? "Add to Cart" : "Sold Out"}
+              {stock ? "Add to Cart" : "Sold Out"}
             </button>
           </div>
 
@@ -357,7 +378,7 @@ export const ProductDetailPage = () => {
       )}
 
       {/* Sticky bottom CTA on phone */}
-      {isPhone && stock > 0 && (
+      {isPhone && stock && (
         <div className="sticky-bottom-cta">
           <div style={{ flex: 1 }}>
             <div style={{ fontSize: "0.75rem", color: "var(--neutral-gray)", marginBottom: "0.1rem" }}>{product.name}</div>

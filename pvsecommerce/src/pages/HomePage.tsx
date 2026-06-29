@@ -1,7 +1,7 @@
 // Home page: hero, category grid (desktop), and a full best-sellers catalog
 // grid. Combos are deferred — nav links to /bulk-order instead.
 
-import { useMemo } from "react";
+import { useMemo, useEffect, useRef } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { getCategoryIcon } from "@/data/categories";
 import { useCatalog } from "@/state/CatalogContext";
@@ -9,6 +9,7 @@ import { useCategories } from "@/state/CategoriesContext";
 import { usePlatform } from "@/state/PlatformContext";
 import { ProductCard } from "@/components/ProductCard";
 import type { CatalogProduct } from "@/lib/api";
+import { track } from "@/lib/activity";
 
 const matches = (p: CatalogProduct, q: string): boolean => {
   if (!q) return true;
@@ -27,6 +28,15 @@ export const HomePage = () => {
   const { isPhone } = usePlatform();
   const [params] = useSearchParams();
   const q = params.get("q") ?? "";
+
+  // Track search when q param changes (skip empty and first mount with empty q).
+  const prevQ = useRef(q);
+  useEffect(() => {
+    if (q && q !== prevQ.current) {
+      track("search", { meta: { q } });
+    }
+    prevQ.current = q;
+  }, [q]);
 
   const bestSellers = useMemo(
     () => products.filter((p) => p.bestSellerEnabled && matches(p, q)),

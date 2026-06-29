@@ -3,6 +3,8 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
 import { db } from "../db.js";
 import { recordChange } from "../sync/log.js";
+import { invalidateCatalog } from "../lib/catalog-cache.js";
+import { syncProductStockCache } from "../lib/stock-cache.js";
 import { normalizeUomCode } from "../lib/uom.js";
 import { binCodeFromRow } from "../lib/codes.js";
 import { customerNetOpenBalance } from "./customer-payments.js";
@@ -17,6 +19,7 @@ import { createWriteStream, mkdirSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { pipeline } from "stream/promises";
+import { processImage } from "../lib/image-pipeline.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -326,6 +329,7 @@ export const catalogRoutes = async (app: FastifyInstance) => {
       include: productInclude,
     });
     await recordChange("Product", created.id, "insert", withConcerns, req.user.sub);
+    void invalidateCatalog({ productId: created.id });
     return withConcerns;
   });
 
@@ -418,6 +422,8 @@ export const catalogRoutes = async (app: FastifyInstance) => {
       include: productInclude,
     });
     await recordChange("Product", id, "update", after, req.user.sub);
+    void invalidateCatalog({ productId: id });
+    void syncProductStockCache(id, { newProductSoh: after.stockOnHand });
     return after;
   });
 
@@ -428,6 +434,7 @@ export const catalogRoutes = async (app: FastifyInstance) => {
     try {
       await db.product.delete({ where: { id } });
       await recordChange("Product", id, "delete", before, req.user.sub);
+      void invalidateCatalog({ productId: id });
       return { ok: true };
     } catch (e) {
       const err = e as { message?: string };
@@ -1172,6 +1179,8 @@ export const catalogRoutes = async (app: FastifyInstance) => {
             },
           }),
         ]);
+        void syncProductStockCache(id, { newProductSoh: binTotal });
+        void invalidateCatalog({ productId: id });
       }
 
       return { before, after: binTotal, delta, binTotal };
@@ -1303,13 +1312,12 @@ export const catalogRoutes = async (app: FastifyInstance) => {
         return reply.code(400).send({ error: { code: "invalid_type", message: "Only image files are accepted." } });
       }
 
-      const ext = data.mimetype === "image/png" ? ".png" : data.mimetype === "image/webp" ? ".webp" : ".jpg";
-      const filename = `${id}${ext}`;
-      const dest = join(uploadsRoot, "products", filename);
-      await pipeline(data.file, createWriteStream(dest));
+      // Collect the upload into a buffer, then run the Sharp pipeline.
+      const buf = await data.toBuffer();
+      const { baseUrl } = await processImage(buf, id, "products", uploadsRoot);
 
-      const imageUrl = `/uploads/products/${filename}`;
-      const updated = await db.product.update({ where: { id }, data: { imageUrl } });
+      const updated = await db.product.update({ where: { id }, data: { imageUrl: baseUrl } });
+      void invalidateCatalog({ productId: id });
       return { imageUrl: updated.imageUrl };
     }
   );
@@ -1328,15 +1336,11 @@ export const catalogRoutes = async (app: FastifyInstance) => {
         return reply.code(400).send({ error: { code: "invalid_type", message: "Only image files are accepted." } });
       }
 
-      const ext = data.mimetype === "image/png" ? ".png" : data.mimetype === "image/webp" ? ".webp" : ".jpg";
-      const filename = `${vid}${ext}`;
-      const dest = join(uploadsRoot, "products", "variants", filename);
-      await pipeline(data.file, createWriteStream(dest));
+      const buf = await data.toBuffer();
+      const { baseUrl: imageUrl } = await processImage(buf, vid, "products/variants", uploadsRoot);
 
-      const imageUrl = `/uploads/products/variants/${filename}`;
-      // Use executeRaw because Prisma client was generated before imageUrl was
-      // added to ProductVariant; the column exists in the DB.
       await db.$executeRaw`UPDATE "ProductVariant" SET "imageUrl" = ${imageUrl}, "updatedAt" = CURRENT_TIMESTAMP WHERE "id" = ${vid}`;
+      void invalidateCatalog({ productId: id });
       return { imageUrl };
     }
   );

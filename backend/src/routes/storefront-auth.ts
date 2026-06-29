@@ -23,6 +23,7 @@ import {
 import { computeAddressDistanceFields } from "../lib/address-distance.js";
 import { lookupPincodePlace } from "../lib/pincode-lookup.js";
 import { pincodeSchema } from "../lib/customer-address.js";
+import { recordActivityNow } from "../lib/customer-activity.js";
 
 const sendSchema = z.object({
   phone: z.string().trim().min(6).max(20),
@@ -145,6 +146,19 @@ export const storefrontAuthRoutes = async (app: FastifyInstance) => {
     });
     const recentOrders = await serializeCustomerOrders(account.customerId, 10);
     const token = signStorefrontToken({ sub: account.id, phone });
+
+    // Record server-side login event so pre-login anon pageviews can be
+    // stitched to this customer even if the frontend event is lost.
+    const anonId = (req.headers["x-pv-anon-id"] as string | undefined)?.slice(0, 64);
+    if (anonId) {
+      void recordActivityNow({
+        anonId,
+        customerId: account.customerId,
+        event: "login",
+        ip: (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim() ?? req.ip ?? null,
+        userAgent: (req.headers["user-agent"] as string | undefined)?.slice(0, 200) ?? null,
+      });
+    }
 
     return {
       token,

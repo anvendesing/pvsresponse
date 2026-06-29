@@ -44,7 +44,7 @@ function flattenCatalog(products: CatalogProduct[]): BulkRow[] {
   for (const p of products) {
     if (p.variants.length > 0) {
       for (const v of p.variants) {
-        if (v.stockOnHand <= 0) continue;
+        if (!v.inStock) continue;
         rows.push({
           key: v.id,
           productId: p.id,
@@ -53,13 +53,13 @@ function flattenCatalog(products: CatalogProduct[]): BulkRow[] {
           categorySlug: p.categorySlug,
           categoryName: p.categoryName ?? p.category,
           barcode: lineBarcode({ barcode: v.barcode, productBarcode: p.barcode }),
-          available: v.stockOnHand,
+          available: 9999,
           rate: v.price,
           product: p,
           variant: v,
         });
       }
-    } else if (p.stockOnHand > 0) {
+    } else if (p.inStock) {
       rows.push({
         key: p.id,
         productId: p.id,
@@ -68,7 +68,7 @@ function flattenCatalog(products: CatalogProduct[]): BulkRow[] {
         categorySlug: p.categorySlug,
         categoryName: p.categoryName ?? p.category,
         barcode: lineBarcode({ productBarcode: p.barcode }),
-        available: p.stockOnHand,
+        available: 9999,
         rate: p.sellingPrice,
         product: p,
         variant: null,

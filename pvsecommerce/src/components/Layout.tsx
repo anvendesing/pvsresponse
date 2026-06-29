@@ -5,8 +5,8 @@
 // On phone viewports (≤ 720 px) the desktop header + footer are
 // replaced by a compact MobileHeader + CategoryChipStrip + BottomNav.
 
-import { Outlet, ScrollRestoration } from "react-router-dom";
-import { useState } from "react";
+import { Outlet, ScrollRestoration, useLocation } from "react-router-dom";
+import { useState, useEffect } from "react";
 import { Header } from "./Header";
 import { Footer } from "./Footer";
 import { CartDrawer } from "./CartDrawer";
@@ -16,10 +16,17 @@ import { CategoryChipStrip } from "./mobile/CategoryChipStrip";
 import { BottomNav } from "./mobile/BottomNav";
 import { OfflineBanner, SwUpdateToast, PwaInstallPrompt } from "./mobile/AppBanners";
 import { usePlatform } from "@/state/PlatformContext";
+import { track } from "@/lib/activity";
 
 export const Layout = () => {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const { isPhone } = usePlatform();
+  const location = useLocation();
+
+  // Track pageview on every route change.
+  useEffect(() => {
+    track("pageview");
+  }, [location.pathname]);
 
   return (
     <>

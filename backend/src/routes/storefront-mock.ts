@@ -65,6 +65,18 @@ import { consumeOtpToken, validateOtp } from "../lib/otp.js";
 import { normalizePhone } from "../lib/phone.js";
 import { canonicalCategorySlug } from "../lib/category-slug-map.js";
 import { pincodeSchema } from "../lib/customer-address.js";
+import {
+  enqueueActivity,
+  checkRateLimit,
+  type ActivityEvent,
+} from "../lib/customer-activity.js";
+import { isProductInStock, isVariantInStock, rebuildInStockSets } from "../lib/stock-cache.js";
+import {
+  cacheGet,
+  cacheSet,
+  CACHE_KEYS,
+  CACHE_TTL,
+} from "../lib/catalog-cache.js";
 
 const shippingQuoteSchema = z.object({
   pincode: pincodeSchema,
@@ -162,6 +174,19 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
     if (!fulfilled.ok) {
       return reply.code(500).send({
         error: { code: fulfilled.code, message: fulfilled.message },
+      });
+    }
+
+    const anonIdPlace = (req.headers["x-pv-anon-id"] as string | undefined)?.slice(0, 64);
+    if (anonIdPlace) {
+      const sessionUserPlace = await optionalStorefrontAuth(req);
+      enqueueActivity({
+        anonId: anonIdPlace,
+        customerId: sessionUserPlace?.customerId ?? null,
+        event: "place_order",
+        meta: { soNo: fulfilled.result.so.soNo, total: fulfilled.result.so.total },
+        ip: (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim() ?? req.ip ?? null,
+        userAgent: (req.headers["user-agent"] as string | undefined)?.slice(0, 200) ?? null,
       });
     }
 
@@ -391,10 +416,27 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
       soNo: result.response.salesOrder.soNo,
     }, result.response.salesOrder.soNo);
 
+    // Record place_order activity (stitched to customer via anonId if provided).
+    const anonIdConfirm = (req.headers["x-pv-anon-id"] as string | undefined)?.slice(0, 64);
+    if (anonIdConfirm) {
+      const sessionUser = await optionalStorefrontAuth(req);
+      enqueueActivity({
+        anonId: anonIdConfirm,
+        customerId: sessionUser?.customerId ?? null,
+        event: "place_order",
+        meta: { soNo: result.response.salesOrder.soNo, total: result.response.salesOrder.total },
+        ip: (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim() ?? req.ip ?? null,
+        userAgent: (req.headers["user-agent"] as string | undefined)?.slice(0, 200) ?? null,
+      });
+    }
+
     return reply.code(201).send(result.response);
   });
   // Active storefront categories for home page / nav (admin-configurable).
   app.get("/storefront-mock/categories", async () => {
+    const cached = await cacheGet<object[]>(CACHE_KEYS.categories);
+    if (cached) return cached;
+
     const rows = await db.productCategory.findMany({
       where: { active: true },
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
@@ -407,15 +449,20 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
         updatedAt: true,
       },
     });
-    return rows.map((c) => ({
+    const result = rows.map((c) => ({
       ...c,
       slug: canonicalCategorySlug(c.slug),
     }));
+    await cacheSet(CACHE_KEYS.categories, result, CACHE_TTL.taxonomy);
+    return result;
   });
 
   // Active storefront concerns for "Shop by Concern" navigation.
   app.get("/storefront-mock/concerns", async () => {
-    return db.productConcern.findMany({
+    const cached = await cacheGet<object[]>(CACHE_KEYS.concerns);
+    if (cached) return cached;
+
+    const result = await db.productConcern.findMany({
       where: { active: true },
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
       select: {
@@ -428,6 +475,8 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
         imageUrl: true,
       },
     });
+    await cacheSet(CACHE_KEYS.concerns, result, CACHE_TTL.taxonomy);
+    return result;
   });
 
   // Public enquiry capture â€” lets the storefront submit a lead (product
@@ -490,6 +539,9 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
   // variants/products with zero stock so the demo can't accidentally
   // place orders that will immediately fail the oversell check.
   app.get("/storefront-mock/catalog", async () => {
+    const cached = await cacheGet<object[]>(CACHE_KEYS.all);
+    if (cached) return cached;
+
     const products = await db.product.findMany({
       where: { state: "active", ecommerceEnabled: true, category: { active: true } },
       orderBy: { sku: "asc" },
@@ -517,7 +569,7 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
         },
       },
     });
-    return products
+    const result = products
       .filter((p) => p.category)
       .map((p) => ({
         id: p.id,
@@ -530,7 +582,7 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
         category: p.category!.name,
         uom: p.uom,
         sellingPrice: p.sellingPrice,
-        stockOnHand: p.stockOnHand,
+        inStock: p.stockOnHand > 0,
         gstRate: p.gstRate,
         description: p.description ?? null,
         imageHint: p.imageHint ?? null,
@@ -555,18 +607,24 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
             grade: v.grade,
             uom: v.uom,
             packSize: v.packSize,
-            stockOnHand: v.stockOnHand,
+            inStock: (v.stockOnHand ?? 0) > 0,
             price: v.sellingPriceOverride ?? p.sellingPrice,
             gstRate: v.gstRate ?? p.gstRate,
           })),
       }))
-      .filter((p) => p.variants.length > 0 || p.stockOnHand > 0)
+      .filter((p) => p.variants.length > 0 || p.inStock)
       .slice(0, 200);
+    await cacheSet(CACHE_KEYS.all, result, CACHE_TTL.catalog);
+    return result;
   });
 
   // Full product detail for the storefront product page.
   app.get("/storefront-mock/products/:id", async (req, reply) => {
     const id = (req.params as { id: string }).id;
+    const cacheKey = CACHE_KEYS.product(id);
+    const cached = await cacheGet<object>(cacheKey);
+    if (cached) return cached;
+
     const p = await db.product.findFirst({
       where: { OR: [{ id }, { sku: id }], state: "active", ecommerceEnabled: true },
       include: {
@@ -594,7 +652,7 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
       },
     });
     if (!p) return reply.code(404).send({ error: { code: "not_found" } });
-    return {
+    const result = {
       id: p.id,
       sku: p.sku,
       barcode: p.barcode,
@@ -605,7 +663,7 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
       category: p.category?.name ?? null,
       uom: p.uom,
       sellingPrice: p.sellingPrice,
-      stockOnHand: p.stockOnHand,
+      inStock: p.stockOnHand > 0,
       gstRate: p.gstRate,
       description: p.description ?? null,
       ingredients: p.ingredients ?? null,
@@ -630,11 +688,13 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
           grade: v.grade,
           uom: v.uom,
           packSize: v.packSize,
-          stockOnHand: v.stockOnHand ?? 0,
+          inStock: (v.stockOnHand ?? 0) > 0,
           price: v.sellingPriceOverride ?? p.sellingPrice,
           gstRate: v.gstRate ?? p.gstRate,
         })),
     };
+    await cacheSet(cacheKey, result, CACHE_TTL.catalog);
+    return result;
   });
 
   // Order history for the storefront customer dashboard. Public
@@ -766,5 +826,61 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
     await consumeOtpToken(otp.tokenId);
 
     return mapCustomerOrderRow(order);
+  });
+
+  // ── Storefront activity ingest ─────────────────────────────────────────────
+  // Public, fire-and-forget. Bounded by per-anonId rate limit (20 req/min).
+  const ALLOWED_EVENTS = new Set<ActivityEvent>([
+    "pageview", "product_view", "add_to_cart", "remove_from_cart",
+    "begin_checkout", "place_order", "login", "logout", "search",
+  ]);
+
+  const activitySchema = z.object({
+    event: z.string(),
+    path: z.string().max(500).optional(),
+    productId: z.string().max(128).optional(),
+    sessionId: z.string().max(64).optional(),
+    meta: z.record(z.unknown()).optional(),
+  });
+
+  app.post("/storefront-mock/activity", async (req, reply) => {
+    const body = activitySchema.safeParse(req.body);
+    if (!body.success) {
+      return reply.code(400).send({ error: { code: "validation", message: "Invalid body." } });
+    }
+    const { event, path, productId, sessionId, meta } = body.data;
+
+    if (!ALLOWED_EVENTS.has(event as ActivityEvent)) {
+      return reply.code(400).send({ error: { code: "invalid_event" } });
+    }
+
+    const anonId = (req.headers["x-pv-anon-id"] as string | undefined)?.slice(0, 64);
+    if (!anonId) {
+      return reply.code(400).send({ error: { code: "missing_anon_id" } });
+    }
+
+    if (!checkRateLimit(anonId)) {
+      return reply.code(429).send({ error: { code: "rate_limited" } });
+    }
+
+    const user = await optionalStorefrontAuth(req);
+    const rawIp =
+      (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim() ??
+      req.ip ?? null;
+
+    enqueueActivity({
+      anonId,
+      customerId: user?.customerId ?? null,
+      sessionId: sessionId ?? null,
+      event: event as ActivityEvent,
+      path: path ?? null,
+      referer: (req.headers["referer"] as string | undefined)?.slice(0, 500) ?? null,
+      productId: productId ?? null,
+      meta: meta ?? null,
+      userAgent: (req.headers["user-agent"] as string | undefined)?.slice(0, 200) ?? null,
+      ip: rawIp,
+    });
+
+    return reply.code(204).send();
   });
 };

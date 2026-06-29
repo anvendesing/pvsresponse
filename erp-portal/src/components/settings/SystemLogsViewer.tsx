@@ -4,8 +4,10 @@ import { Button } from "@/components/common/Button";
 import { Card } from "@/components/common/Card";
 import { Chip } from "@/components/common/Chip";
 import { Input } from "@/components/common/Input";
-import { api, apiEnabled, type PaymentIntentRow, type SystemEventLogRow, type SystemLogSummary } from "@/lib/api";
+import { api, apiEnabled, type CustomerActivityRow, type PaymentIntentRow, type SystemEventLogRow, type SystemLogSummary } from "@/lib/api";
 import { cn } from "@/lib/cn";
+
+type Tab = "logs" | "payments" | "activity";
 
 const LEVEL_TONE: Record<string, "danger" | "warning" | "neutral" | "success"> = {
   error: "danger",
@@ -16,15 +18,22 @@ const LEVEL_TONE: Record<string, "danger" | "warning" | "neutral" | "success"> =
 const SOURCES = ["", "storefront", "shiprocket", "razorpay", "payu", "otp", "sms", "billing"] as const;
 const LEVELS = ["", "error", "warn", "info"] as const;
 
+const EVENT_TYPES = ["", "pageview", "product_view", "add_to_cart", "remove_from_cart", "begin_checkout", "place_order", "login", "logout", "search"] as const;
+
 export const SystemLogsViewer = () => {
+  const [tab, setTab] = useState<Tab>("logs");
   const [rows, setRows] = useState<SystemEventLogRow[]>([]);
   const [summary, setSummary] = useState<SystemLogSummary | null>(null);
   const [payments, setPayments] = useState<PaymentIntentRow[]>([]);
+  const [activityRows, setActivityRows] = useState<CustomerActivityRow[]>([]);
   const [loading, setLoading] = useState(apiEnabled);
   const [error, setError] = useState<string | null>(null);
   const [source, setSource] = useState("");
   const [level, setLevel] = useState("");
   const [q, setQ] = useState("");
+  const [actEvent, setActEvent] = useState("");
+  const [actCustomerId, setActCustomerId] = useState("");
+  const [actAnonId, setActAnonId] = useState("");
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
@@ -52,13 +61,63 @@ export const SystemLogsViewer = () => {
     }
   }, [source, level, q]);
 
+  const loadActivity = useCallback(async () => {
+    if (!apiEnabled) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await api.customerActivity({
+        event: actEvent || undefined,
+        customerId: actCustomerId.trim() || undefined,
+        anonId: actAnonId.trim() || undefined,
+        limit: 100,
+      });
+      setActivityRows(res.rows);
+    } catch (e) {
+      setError((e as Error).message ?? "Could not load customer activity.");
+    } finally {
+      setLoading(false);
+    }
+  }, [actEvent, actCustomerId, actAnonId]);
+
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (tab === "activity") void loadActivity();
+    else void load();
+  }, [tab, load, loadActivity]);
+
+  const EVENT_TONE: Record<string, "success" | "warning" | "danger" | "neutral"> = {
+    place_order: "success",
+    login: "success",
+    add_to_cart: "neutral",
+    begin_checkout: "warning",
+    logout: "neutral",
+    pageview: "neutral",
+    search: "neutral",
+    product_view: "neutral",
+    remove_from_cart: "danger",
+  };
 
   return (
     <div className="space-y-4">
-      <Card
+      {/* ── Tab strip ─────────────────────────────────────────────────── */}
+      <div className="flex gap-1 border-b border-border mb-2">
+        {(["logs", "payments", "activity"] as Tab[]).map((t) => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={cn(
+              "px-4 py-2 text-body-sm font-medium capitalize rounded-t-md border border-b-0 border-transparent transition-colors",
+              tab === t
+                ? "border-border bg-surface text-ink"
+                : "text-ink-muted hover:text-ink"
+            )}
+          >
+            {t === "activity" ? "Customer activity" : t === "payments" ? "Payment intents" : "System logs"}
+          </button>
+        ))}
+      </div>
+
+      {tab === "logs" && <Card
         title="System logs"
         subtitle="Storefront, Shiprocket, Razorpay, OTP/SMS — admin only. Secrets are redacted automatically."
         actions={
@@ -180,9 +239,9 @@ export const SystemLogsViewer = () => {
             </tbody>
           </table>
         </div>
-      </Card>
+      </Card>}
 
-      <Card title="Recent payment intents" subtitle="Razorpay checkout sessions — useful when order confirm fails after payment.">
+      {tab === "payments" && <Card title="Recent payment intents" subtitle="Razorpay / PayU checkout sessions — useful when order confirm fails after payment.">
         <div className="overflow-x-auto border border-border rounded-md">
           <table className="w-full text-body-sm">
             <thead className="bg-canvas text-caption uppercase text-ink-muted">
@@ -222,7 +281,108 @@ export const SystemLogsViewer = () => {
             </tbody>
           </table>
         </div>
-      </Card>
+      </Card>}
+
+      {tab === "activity" && (
+        <Card
+          title="Customer activity"
+          subtitle="Storefront visitor events — pageviews, add-to-cart, orders, logins. Anonymous visitors included via anonId."
+          actions={
+            <Button variant="secondary" size="sm" onClick={() => void loadActivity()} disabled={loading}>
+              {loading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+              Refresh
+            </Button>
+          }
+        >
+          {error && (
+            <div className="mb-3 flex items-center gap-2 text-body-sm text-danger">
+              <AlertTriangle size={16} />
+              {error}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-2 mb-3">
+            <label className="text-body-sm">
+              <span className="block text-caption text-ink-muted mb-1">Event type</span>
+              <select
+                className="w-full h-9 rounded-md border border-border px-2 bg-surface"
+                value={actEvent}
+                onChange={(e) => setActEvent(e.target.value)}
+              >
+                {EVENT_TYPES.map((ev) => (
+                  <option key={ev || "all"} value={ev}>{ev || "All events"}</option>
+                ))}
+              </select>
+            </label>
+            <div>
+              <Input
+                label="Customer ID"
+                value={actCustomerId}
+                onChange={(e) => setActCustomerId(e.target.value)}
+                placeholder="cust_…"
+              />
+            </div>
+            <div>
+              <Input
+                label="Anon ID"
+                value={actAnonId}
+                onChange={(e) => setActAnonId(e.target.value)}
+                placeholder="xxxxxxxx-…"
+              />
+            </div>
+            <div className="flex items-end">
+              <Button size="sm" variant="secondary" onClick={() => void loadActivity()} disabled={loading} className="w-full">
+                {loading ? <Loader2 size={14} className="animate-spin" /> : null}
+                Search
+              </Button>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto border border-border rounded-md">
+            <table className="w-full text-body-sm">
+              <thead className="bg-canvas text-caption uppercase text-ink-muted">
+                <tr>
+                  <th className="text-left px-3 py-2">Time</th>
+                  <th className="text-left px-3 py-2">Event</th>
+                  <th className="text-left px-3 py-2">Anon ID</th>
+                  <th className="text-left px-3 py-2">Customer ID</th>
+                  <th className="text-left px-3 py-2">Path / Product</th>
+                  <th className="text-left px-3 py-2">IP</th>
+                </tr>
+              </thead>
+              <tbody>
+                {activityRows.map((r) => (
+                  <tr key={r.id} className="border-t border-border hover:bg-canvas">
+                    <td className="px-3 py-2 whitespace-nowrap tabular-nums text-caption">
+                      {new Date(r.createdAt).toLocaleString()}
+                    </td>
+                    <td className="px-3 py-2">
+                      <Chip tone={EVENT_TONE[r.event] ?? "neutral"}>{r.event}</Chip>
+                    </td>
+                    <td className="px-3 py-2 font-mono text-caption" title={r.anonId}>
+                      {r.anonId.slice(0, 8)}…
+                    </td>
+                    <td className="px-3 py-2 font-mono text-caption">
+                      {r.customerId ? r.customerId.slice(0, 10) + "…" : <span className="text-ink-muted">anon</span>}
+                    </td>
+                    <td className="px-3 py-2 max-w-[220px] truncate text-caption">
+                      {r.path ?? r.productId ?? "—"}
+                    </td>
+                    <td className="px-3 py-2 text-caption text-ink-muted">{r.ip ?? "—"}</td>
+                  </tr>
+                ))}
+                {!loading && activityRows.length === 0 && (
+                  <tr>
+                    <td colSpan={6} className="px-3 py-6 text-center text-ink-muted">
+                      No activity recorded yet. Visit the storefront to generate events.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
     </div>
   );
 };

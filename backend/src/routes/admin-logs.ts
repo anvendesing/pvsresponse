@@ -124,6 +124,67 @@ export const adminLogsRoutes = async (app: FastifyInstance) => {
       })),
     };
   });
+
+  // ── Customer Activity ──────────────────────────────────────────────────────
+  const activityQuerySchema = z.object({
+    customerId: z.string().trim().optional(),
+    anonId: z.string().trim().optional(),
+    event: z.string().trim().optional(),
+    from: z.string().datetime().optional(),
+    to: z.string().datetime().optional(),
+    limit: z.coerce.number().int().min(1).max(200).default(50),
+  });
+
+  app.get(
+    "/admin/customer-activity",
+    { preHandler: [app.requireRole("admin")] },
+    async (req) => {
+      const q = activityQuerySchema.parse(req.query);
+      const where: Record<string, unknown> = {};
+      if (q.customerId) where["customerId"] = q.customerId;
+      if (q.anonId) where["anonId"] = q.anonId;
+      if (q.event) where["event"] = q.event;
+      if (q.from || q.to) {
+        where["createdAt"] = {
+          ...(q.from ? { gte: new Date(q.from) } : {}),
+          ...(q.to ? { lte: new Date(q.to) } : {}),
+        };
+      }
+      const rows = await db.customerActivity.findMany({
+        where,
+        orderBy: { createdAt: "desc" },
+        take: q.limit,
+      });
+      return { rows: rows.map((r) => ({ ...r, createdAt: r.createdAt.toISOString() })) };
+    }
+  );
+
+  app.get(
+    "/admin/customer-activity/timeline/:customerId",
+    { preHandler: [app.requireRole("admin")] },
+    async (req) => {
+      const { customerId } = req.params as { customerId: string };
+      // Gather all anonIds used by this customer so pre-login pageviews are included.
+      const withCustomerId = await db.customerActivity.findMany({
+        where: { customerId },
+        select: { anonId: true },
+        distinct: ["anonId"],
+      });
+      const anonIds = [...new Set(withCustomerId.map((r) => r.anonId))];
+
+      const rows = await db.customerActivity.findMany({
+        where: {
+          OR: [
+            { customerId },
+            ...(anonIds.length > 0 ? [{ anonId: { in: anonIds } }] : []),
+          ],
+        },
+        orderBy: { createdAt: "asc" },
+        take: 500,
+      });
+      return { rows: rows.map((r) => ({ ...r, createdAt: r.createdAt.toISOString() })) };
+    }
+  );
 };
 
 const safeParseJson = (raw: string): unknown => {

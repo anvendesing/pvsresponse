@@ -46,6 +46,7 @@ import { channelMappingRoutes } from "./routes/channel-mappings.js";
 import { importedOrderRoutes } from "./routes/imported-orders.js";
 import { adminLogsRoutes } from "./routes/admin-logs.js";
 import { startStockRulesInterval } from "./lib/stock-rules-runner.js";
+import { rebuildInStockSets } from "./lib/stock-cache.js";
 import multipart from "@fastify/multipart";
 import fastifyStatic from "@fastify/static";
 import { fileURLToPath } from "url";
@@ -73,6 +74,14 @@ await app.register(fastifyStatic, {
   root: uploadsRoot,
   prefix: "/uploads/",
   decorateReply: false,
+  // Uploads are content-addressed (resolveUploadUrl appends ?v=<epoch>),
+  // so immutable + 1-year max-age is safe. Browsers and CDN edges
+  // (e.g. Cloudflare) will cache aggressively without re-validating.
+  maxAge: "1y",
+  immutable: true,
+  setHeaders: (res, _path, _stat) => {
+    res.setHeader("Vary", "Accept");
+  },
 });
 await registerAuth(app);
 await registerOpenApi(app);
@@ -288,6 +297,8 @@ await app.register(
 try {
   await app.listen({ host: config.host, port: config.port });
   startStockRulesInterval(app.log);
+  // Pre-populate the Redis in-stock sets so the first storefront request is a cache hit.
+  void rebuildInStockSets();
   console.log(`\nNovaERP API ready · http://localhost:${config.port}/v1`);
   console.log(`Health check        · http://localhost:${config.port}/health\n`);
 } catch (err) {

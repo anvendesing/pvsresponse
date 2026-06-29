@@ -1,6 +1,7 @@
 // Backend client for the storefront.
 
 import { AUTH_TOKEN_KEY } from "@/lib/auth-storage";
+import { getAnonId } from "@/lib/anon-id";
 
 const RAW_API_URL = (import.meta.env.VITE_API_URL as string | undefined)?.trim();
 const API_URL = RAW_API_URL ? RAW_API_URL.replace(/\/$/, "") : "";
@@ -15,6 +16,14 @@ const getApiOrigin = (): string => {
   return typeof window !== "undefined" ? window.location.origin : "http://localhost:4000";
 };
 export const API_ORIGIN = getApiOrigin();
+
+/** Resolved set of responsive image URLs for a product/category/concern. */
+export interface ImageSet {
+  thumb:    { webp: string; jpeg: string };
+  medium:   { webp: string; jpeg: string };
+  large:    { webp: string; jpeg: string };
+  original: string;
+}
 
 /** Resolve /uploads/… paths for img src (same-origin or dev backend).
  *  Optionally appends ?v=<epoch> so updated images bust the SW cache
@@ -37,6 +46,30 @@ export function resolveUploadUrl(
         : Number(updatedAt);
   if (!Number.isFinite(epoch)) return base;
   return `${base}?v=${epoch}`;
+}
+
+/**
+ * Build a responsive ImageSet from a product's imageUrl.
+ * Returns null when imageUrl is a legacy flat file or missing.
+ * The v= query parameter is appended to every URL for cache-busting.
+ */
+export function resolveImageSet(
+  imageUrl: string | null | undefined,
+  imageUpdatedAt?: number | null
+): ImageSet | null {
+  if (!imageUrl) return null;
+  // Directory-based path: no file extension before optional ?v=
+  // Legacy flat file: ends with extension like .jpg .png .webp
+  if (/\.\w{2,5}(\?.*)?$/.test(imageUrl)) return null;
+
+  const base = API_URL ? `${API_URL}${imageUrl}` : imageUrl;
+  const v = imageUpdatedAt ? `?v=${imageUpdatedAt}` : "";
+  return {
+    thumb:    { webp: `${base}/thumb.webp${v}`,  jpeg: `${base}/thumb.jpg${v}` },
+    medium:   { webp: `${base}/medium.webp${v}`, jpeg: `${base}/medium.jpg${v}` },
+    large:    { webp: `${base}/large.webp${v}`,  jpeg: `${base}/large.jpg${v}` },
+    original: `${base}/original.jpg${v}`,
+  };
 }
 
 const buildUrl = (path: string, query?: Record<string, string | number | undefined>): string => {
@@ -66,7 +99,8 @@ export interface CatalogVariant {
   grade: string | null;
   uom: string | null;
   packSize: number;
-  stockOnHand: number;
+  /** True when this variant has stock > 0. Exact count is not exposed on the storefront. */
+  inStock: boolean;
   price: number;
 }
 
@@ -101,7 +135,8 @@ export interface CatalogProduct {
   category: string;
   uom: string;
   sellingPrice: number;
-  stockOnHand: number;
+  /** True when the product has stock > 0. Exact count is not exposed on the storefront. */
+  inStock: boolean;
   description: string | null;
   imageHint: string | null;
   imageUrl: string | null;
@@ -343,6 +378,7 @@ const fetchJson = async <T,>(
     ...init,
     headers: {
       "content-type": "application/json",
+      "x-pv-anon-id": getAnonId(),
       ...getAuthHeaders(),
       ...(MOCK_TOKEN ? { "x-mock-token": MOCK_TOKEN } : {}),
       ...(init?.headers ?? {}),
@@ -519,6 +555,17 @@ export const api = {
       buildUrl("/storefront-mock/enquiries"),
       { method: "POST", body: JSON.stringify(input) }
     ),
+  trackActivity: (input: {
+    event: string;
+    path?: string;
+    productId?: string;
+    sessionId?: string;
+    meta?: Record<string, unknown>;
+  }) =>
+    fetchJson<void>(buildUrl("/storefront-mock/activity"), {
+      method: "POST",
+      body: JSON.stringify(input),
+    }).catch(() => { /* fire and forget — never throw */ }),
 };
 
 export interface EnquiryFormInput {

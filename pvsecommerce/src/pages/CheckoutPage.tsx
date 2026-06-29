@@ -28,6 +28,7 @@ import {
 } from "@/lib/pincodeLookup";
 import { CheckIcon } from "@/assets/icons";
 import { usePlatform } from "@/state/PlatformContext";
+import { track } from "@/lib/activity";
 
 interface ShippingForm {
   name: string;
@@ -404,6 +405,7 @@ export const CheckoutPage = () => {
         onClose={() => setOtpOpen(false)}
         onSuccess={() => {
           setStep(2);
+          track("begin_checkout");
           void auth.refreshMe();
         }}
       />

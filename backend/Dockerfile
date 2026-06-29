@@ -36,7 +36,8 @@ FROM node:${NODE_VERSION} AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 # OpenSSL 3 is required by Prisma's query engine on alpine.
-RUN apk add --no-cache openssl tini su-exec wget sqlite
+# postgresql-client provides pg_isready for the entrypoint wait loop.
+RUN apk add --no-cache openssl tini su-exec wget postgresql-client
 # Copy only what runtime needs.
 COPY package.json package-lock.json* ./
 COPY --from=deps /app/node_modules ./node_modules
@@ -60,11 +61,8 @@ COPY uploads/ /app/uploads-seed/
 # Storefront category + concern mapping spreadsheets (idempotent import on boot).
 COPY data/ /app/data/
 
-# SQLite database lives in /data so a docker volume can persist it.
-# We also keep the legacy /app/prisma/dev.db location working: the
-# container's entrypoint symlinks it at boot if DATABASE_URL points
-# at the volume.
-RUN mkdir -p /data /app/uploads/products && chown -R node:node /data /app
+# Uploads live in /app/uploads, served by @fastify/static.
+RUN mkdir -p /app/uploads/products && chown -R node:node /app
 COPY docker-entrypoint.sh /docker-entrypoint.sh
 RUN chmod +x /docker-entrypoint.sh
 USER root

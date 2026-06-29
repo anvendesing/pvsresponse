@@ -7,11 +7,13 @@ in front of the existing nginx.
 
 The reference deployment uses **Docker Compose** with three containers:
 
-| Service   | What it is                                  | Port (host) | Port (internal) |
-| --------- | ------------------------------------------- | ----------- | --------------- |
-| `web`     | nginx serving the ERP SPA + reverse-proxying API | `80` (`WEB_PORT`) | `80` |
-| `shop`    | nginx serving the Prakruthivanam storefront + API proxy | `8080` (`SHOP_PORT`) | `80` |
-| `backend` | Fastify API + Prisma + SQLite (default)     | _not exposed_ | `4000` |
+| Service    | What it is                                  | Port (host) | Port (internal) |
+| ---------- | ------------------------------------------- | ----------- | --------------- |
+| `postgres` | PostgreSQL 16 database                      | _not exposed_ | `5432` |
+| `redis`    | Redis 7 cache (catalog + in-stock)          | _not exposed_ | `6379` |
+| `web`      | nginx serving the ERP SPA + reverse-proxying API | `80` (`WEB_PORT`) | `80` |
+| `shop`     | nginx serving the Prakruthivanam storefront + API proxy | `8080` (`SHOP_PORT`) | `80` |
+| `backend`  | Fastify API + Prisma + PostgreSQL           | _not exposed_ | `4000` |
 
 Each frontend only ever sees one origin (`http://VPS_IP/` for ERP,
 `http://VPS_IP:8080/` for the shop). nginx in each container routes
@@ -86,10 +88,12 @@ The only knobs you typically touch:
 
 | Variable | Default | When to change |
 | --- | --- | --- |
-| `JWT_SECRET` | _(must set)_ | Always. Long random string. |
+| `JWT_SECRET` | _(must set)_ | Always. Long random string (`openssl rand -hex 64`). |
+| `POSTGRES_PASSWORD` | _(must set)_ | Always. Strong password (`openssl rand -hex 32`). |
 | `WEB_PORT` | `80` | If port 80 is already taken on the host. |
 | `SHOP_PORT` | `8080` | Host port for the Prakruthivanam ecommerce storefront. |
-| `DATABASE_URL` | `file:/data/dev.db` (SQLite on the docker volume) | When you upgrade to Postgres (see §8). |
+| `DATABASE_URL` | `postgresql://novaerp:${POSTGRES_PASSWORD}@postgres:5432/novaerp?schema=public` | Only change the hostname if you use an external Postgres. |
+| `REDIS_URL` | `redis://redis:6379/0` | Only change if you use an external Redis instance. |
 | `CORS_ORIGIN` | `*` | When you have a known list of API consumers and want to lock down. |
 | `VITE_API_URL` | _(empty)_ | Only when the SPA must talk to a backend on a different origin. Leave blank for IP-only. |
 
@@ -305,66 +309,196 @@ python scripts/import-product-images.py
 
 ---
 
-### Backups (SQLite)
+### Backups (PostgreSQL)
 
-The DB is a single file inside a docker volume. Snapshot it nightly
-with cron:
+Nightly `pg_dump` via cron on the VPS host. Install the script first:
+
+```bash
+# Ensure backup directory exists
+sudo mkdir -p /opt/backups
+sudo chmod 755 /opt/backups
+
+# Schedule nightly backup at 02:00 (run as root or a user with docker access)
+sudo crontab -e
+# Add this line:
+0 2 * * *  bash /opt/pvs/scripts/pg-backup.sh >> /var/log/novaerp-backup.log 2>&1
+
+# Also schedule ChangeLog + activity pruning at 03:00
+0 3 * * *  docker exec novaerp-backend-1 node dist/scripts/prune-change-log.js
+5 3 * * *  docker exec novaerp-backend-1 node dist/scripts/prune-activity.js
+```
+
+`pg-backup.sh` dumps to `/opt/backups/novaerp-YYYY-MM-DD.dump` in
+custom (`-Fc`) format and auto-deletes files older than 14 days.
+
+### Restore from a PostgreSQL backup
+
+```bash
+# Stop backend to prevent writes during restore
+docker compose stop backend
+
+# Restore (replace YYYY-MM-DD with the target date)
+PG_CONTAINER=$(docker compose ps -q postgres)
+PGPASSWORD="$POSTGRES_PASSWORD" docker exec -i "$PG_CONTAINER" \
+  pg_restore -U novaerp -d novaerp --clean --if-exists \
+  < /opt/backups/novaerp-YYYY-MM-DD.dump
+
+docker compose start backend
+```
+
+### Rollback to SQLite (emergency)
+
+If Postgres causes issues in the first week post-launch (greenfield data):
+
+1. `git checkout <pre-postgres-commit>` (provider=sqlite, old migrations)
+2. Re-add `novaerp_db` volume to `docker-compose.yml` and `DATABASE_URL=file:/data/dev.db`
+3. `docker compose up -d --build`
+
+The `novaerp_db` SQLite volume is preserved by Docker for two weeks after
+the migration (it is NOT declared in the new compose file, so it won't be
+deleted by `docker compose down`).
+
+---
+
+## 7b. Migrating a live SQLite server to PostgreSQL + Redis
+
+> **Use this section if your VPS is currently running the old SQLite-based
+> stack and you want to upgrade it to the Postgres + Redis stack that is
+> now the default.**
+
+The `scripts/vps-migrate-to-postgres.sh` script handles this in three
+phases (all run on the VPS, inside the repo directory):
+
+| Phase | What it does |
+|-------|-------------|
+| 1 – export | Dumps every catalog table from the OLD SQLite volume to `/tmp/novaerp-seed/*.json` using a temporary Alpine container with `sqlite3`. The backend image doesn't need to be rebuilt for this step. |
+| 2 – deploy | Runs `git pull`, updates `.env` (generates `POSTGRES_PASSWORD` if missing), stops the old stack, then `docker compose up -d --build` to start postgres + redis + new backend (migrations run automatically via the entrypoint). |
+| 3 – import | Copies the JSON seed files into the new backend container and calls `import-catalog-seed.ts` to insert all catalog data into Postgres. Also runs `db:sync-stock` and image-variant backfill. |
+
+### Step-by-step
+
+**1. On your dev machine — commit and push the current changes:**
+
+```bash
+# From d:\coding\pvsresponse  (or wherever your repo lives)
+git add -A
+git commit -m "feat: upgrade to PostgreSQL + Redis + image optimisation"
+git push origin main
+```
+
+**2. SSH into the VPS:**
+
+```bash
+ssh user@<VPS_IP>
+cd ~/novaerp          # or ~/pvsresponse — wherever you cloned the repo
+```
+
+**3. Run the migration script (all three phases in one command):**
+
+```bash
+bash scripts/vps-migrate-to-postgres.sh
+```
+
+This takes 3–8 minutes. It will:
+- Export catalog from the still-running SQLite container
+- Pull your latest code from git
+- Auto-generate a secure `POSTGRES_PASSWORD` and add it to `.env`
+- Build and start postgres + redis + backend
+- Wait for backend health, then import catalog into Postgres
+- Run `db:sync-stock` and image-variant backfill
+
+**4. Verify the migration:**
+
+```bash
+# All five services should show (healthy) or (running)
+docker compose ps
+
+# Check backend logs for "Server listening"
+docker compose logs backend --tail 30
+
+# Confirm Postgres has data
+docker compose exec postgres psql -U novaerp -c "SELECT COUNT(*) FROM \"Product\";"
+
+# Confirm Redis is responding
+docker compose exec redis redis-cli ping
+```
+
+**5. Set up nightly maintenance jobs (once):**
 
 ```bash
 sudo crontab -e
-# add (runs at 02:30 daily, keeps 14 days)
-30 2 * * * docker run --rm -v pvsresponse_novaerp_db:/data -v /opt/backups:/out alpine sh -c "cp /data/dev.db /out/novaerp-$(date +\%F).db && find /out -type f -mtime +14 -delete"
+# Add these lines:
+0 2 * * *  bash /home/user/novaerp/scripts/pg-backup.sh >> /var/log/novaerp-backup.log 2>&1
+0 3 * * *  docker exec novaerp-backend-1 node dist/scripts/prune-change-log.js
+5 3 * * *  docker exec novaerp-backend-1 node dist/scripts/prune-activity.js
 ```
 
-Restore by stopping the stack, copying the snapshot back into the
-volume, and starting again.
+### Running individual phases
 
-### Restore from a backup
+If something goes wrong mid-flight, each phase can be re-run independently:
 
 ```bash
-docker compose down
-docker run --rm -v pvsresponse_novaerp_db:/data -v /opt/backups:/in \
-  alpine sh -c "cp /in/novaerp-2026-05-21.db /data/dev.db"
-docker compose up -d
+# Re-run only export (while old container is still up)
+bash scripts/vps-migrate-to-postgres.sh --export
+
+# Re-run only deploy (git pull + compose up)
+bash scripts/vps-migrate-to-postgres.sh --deploy
+
+# Re-run only import (copies /tmp/novaerp-seed → Postgres)
+bash scripts/vps-migrate-to-postgres.sh --import
 ```
 
-## 8. Switching to Postgres (optional)
+### Future routine deploys (after this one-time migration)
 
-SQLite is fine until you have ~25 concurrent writers. To upgrade:
+Once you are on Postgres, future code pushes are simply:
 
-1. Add a `db` service to `docker-compose.yml`:
-   ```yaml
-   db:
-     image: postgres:16-alpine
-     restart: unless-stopped
-     environment:
-       POSTGRES_USER: novaerp
-       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set in .env}
-       POSTGRES_DB: novaerp
-     volumes:
-       - novaerp_pg:/var/lib/postgresql/data
-     networks: [novaerp]
-   ```
-   And a matching named volume `novaerp_pg`.
-2. Change one line in `backend/prisma/schema.prisma`:
-   ```prisma
-   datasource db {
-     provider = "postgresql"
-     url      = env("DATABASE_URL")
-   }
-   ```
-3. Set `DATABASE_URL` in `.env`:
-   ```
-   DATABASE_URL=postgresql://novaerp:strongpassword@db:5432/novaerp?schema=public
-   POSTGRES_PASSWORD=strongpassword
-   ```
-4. Rebuild: `docker compose up -d --build`. The backend's
-   `prisma migrate deploy` runs on every container start, so it
-   creates the schema in the new Postgres DB automatically.
-5. Re-run the seed if you want fresh data:
-   ```
-   docker compose exec backend sh -c "tsx prisma/seed.ts"
-   ```
+```bash
+# On the VPS (or via scripts/deploy-to-vps.ps1 from Windows)
+git pull && docker compose up -d --build
+```
+
+The entrypoint automatically runs `prisma migrate deploy` for any new
+migrations — no manual steps required.
+
+---
+
+## 8. PostgreSQL and Redis (production setup)
+
+PostgreSQL is the **default** database engine. Redis provides catalog caching
+and in-stock flags for the storefront. Both are wired up automatically in
+`docker-compose.yml`; you only need to set:
+
+```
+POSTGRES_PASSWORD=<strong-random-password>   # openssl rand -hex 32
+JWT_SECRET=<long-random-string>              # openssl rand -hex 64
+```
+
+### Nginx cache for `/uploads/` (optional)
+
+The `@fastify/static` handler already sends `Cache-Control: public, max-age=31536000, immutable`
+for all files under `/uploads/`. For the production nginx `shop` container,
+add this in the server block to let nginx itself cache static files:
+
+```nginx
+location /uploads/ {
+  proxy_pass http://backend:4000;
+  proxy_cache static_cache;
+  proxy_cache_valid 200 30d;
+  add_header Cache-Control "public, max-age=31536000, immutable";
+}
+```
+
+### CDN (Cloudflare — optional but recommended)
+
+Point the shop hostname through Cloudflare (free tier) and add a Page Rule:
+- URL pattern: `*/uploads/*`
+- Setting: **Cache Level = Cache Everything**
+- Edge Cache TTL: 1 month
+
+After this, almost all image traffic hits the Cloudflare edge rather than
+the VPS. No application changes needed.
+
+
 
 ## 9. Attaching a domain later
 

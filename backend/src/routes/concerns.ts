@@ -7,6 +7,8 @@ import { fileURLToPath } from "url";
 import { pipeline } from "stream/promises";
 import { db } from "../db.js";
 import { recordChange } from "../sync/log.js";
+import { invalidateCatalog } from "../lib/catalog-cache.js";
+import { processImage } from "../lib/image-pipeline.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -108,6 +110,7 @@ export const concernsRoutes = async (app: FastifyInstance) => {
         select: concernSelect,
       });
       await recordChange("ProductConcern" as never, created.id, "insert", created, req.user!.sub);
+      void invalidateCatalog("concerns");
       return created;
     }
   );
@@ -148,6 +151,7 @@ export const concernsRoutes = async (app: FastifyInstance) => {
         select: concernSelect,
       });
       await recordChange("ProductConcern" as never, before.id, "update", updated, req.user!.sub);
+      void invalidateCatalog("concerns");
       return updated;
     }
   );
@@ -165,6 +169,7 @@ export const concernsRoutes = async (app: FastifyInstance) => {
       if (!row) return reply.code(404).send({ error: { code: "not_found" } });
       await db.productConcern.delete({ where: { id: row.id } });
       await recordChange("ProductConcern" as never, row.id, "delete", row, req.user!.sub);
+      void invalidateCatalog("concerns");
       return { deleted: true };
     }
   );
@@ -190,17 +195,9 @@ export const concernsRoutes = async (app: FastifyInstance) => {
         });
       }
 
-      const ext =
-        data.mimetype === "image/png"
-          ? ".png"
-          : data.mimetype === "image/webp"
-            ? ".webp"
-            : ".jpg";
-      const filename = `${row.id}${ext}`;
-      const dest = join(uploadsRoot, "concerns", filename);
-      await pipeline(data.file, createWriteStream(dest));
+      const buf = await data.toBuffer();
+      const { baseUrl: imageUrl } = await processImage(buf, row.id, "concerns", uploadsRoot);
 
-      const imageUrl = `/uploads/concerns/${filename}`;
       const updated = await db.productConcern.update({
         where: { id: row.id },
         data: { imageUrl },

@@ -1,20 +1,38 @@
 #!/bin/sh
 set -e
 
-# Fresh named volumes are root-owned; the app runs as `node` (uid 1000)
-# and SQLite needs write access to /data and /app/uploads.
-if [ -d /data ]; then
-  chown -R node:node /data 2>/dev/null || true
+# Wait for Postgres to be ready before running migrations.
+# DATABASE_URL is postgresql://user:pass@host:port/db?schema=public
+# Extract host and user from the URL for pg_isready.
+if [ -n "${DATABASE_URL:-}" ]; then
+  case "$DATABASE_URL" in
+    postgresql://*|postgres://*)
+      # Parse host from URL (between @ and :port or / )
+      PG_HOST=$(echo "$DATABASE_URL" | sed -E 's|.*@([^:/]+).*|\1|')
+      PG_USER=$(echo "$DATABASE_URL" | sed -E 's|.*://([^:@]+).*|\1|')
+      PG_DB=$(echo "$DATABASE_URL" | sed -E 's|.*/([^?]+).*|\1|')
+      echo "[entrypoint] Waiting for Postgres at ${PG_HOST} (user=${PG_USER} db=${PG_DB})..."
+      ATTEMPTS=0
+      until pg_isready -h "$PG_HOST" -U "$PG_USER" -d "$PG_DB" -q 2>/dev/null; do
+        ATTEMPTS=$((ATTEMPTS + 1))
+        if [ "$ATTEMPTS" -ge 60 ]; then
+          echo "[entrypoint] ERROR: Postgres not ready after 60s — aborting."
+          exit 1
+        fi
+        sleep 1
+      done
+      echo "[entrypoint] Postgres is ready."
+      ;;
+  esac
 fi
+
+# Fresh named volumes are root-owned; the app runs as `node` (uid 1000)
+# and uploads needs write access.
 if [ -d /app/uploads ]; then
   chown -R node:node /app/uploads 2>/dev/null || true
 fi
 
 # Seed product + category images into the uploads volume on first boot.
-# /app/uploads-seed/ is baked into the image from git; the volume
-# at /app/uploads starts empty the very first time, so we copy the
-# seed across once. On subsequent boots the volume already has files
-# and we skip this step (preserving any images added post-deploy).
 SEED_DIR=/app/uploads-seed
 if [ -d "$SEED_DIR" ]; then
   # Products

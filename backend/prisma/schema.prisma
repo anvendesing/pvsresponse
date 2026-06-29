@@ -1,15 +1,15 @@
 // NovaERP — Prisma schema
 //
-// Local dev uses SQLite. For production, switch the provider to "postgresql"
-// and update DATABASE_URL. The schema is portable between both engines
-// (no provider-specific features used).
+// Production uses PostgreSQL. For local dev, set DATABASE_URL to a local
+// Postgres instance or the SQLite fallback (see .env.example).
+// The schema is portable between both engines.
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -2267,6 +2267,31 @@ model ScanEvent {
 
   @@index([userId, createdAt])
   @@index([code])
+  @@index([createdAt])
+}
+
+// Storefront visitor activity — one row per named event (pageview, add_to_cart, …).
+// anonId ties anonymous sessions together; customerId links to a Customer after login.
+// Written via in-process buffer (flush every 2s) — never blocks request handlers.
+model CustomerActivity {
+  id         String   @id @default(cuid())
+  anonId     String   // persistent localStorage UUID — always present
+  customerId String?  // set after successful OTP login
+  sessionId  String?  // short random per-tab key (optional)
+  event      String   // pageview | product_view | add_to_cart | remove_from_cart |
+                      // begin_checkout | place_order | login | logout | search
+  path       String?  // e.g. /category/grains-pulses-flours (max 500)
+  referer    String?  // HTTP Referer header (max 500)
+  productId  String?  // for product_view / add_to_cart / remove_from_cart
+  meta       String?  // small JSON blob (qty, search term, …) max 512 chars
+  userAgent  String?  // browser UA, capped at 200 chars
+  ip         String?  // IPv4 with last octet zeroed by default (ACTIVITY_TRIM_IP)
+
+  createdAt  DateTime @default(now())
+
+  @@index([anonId, createdAt])
+  @@index([customerId, createdAt])
+  @@index([event, createdAt])
   @@index([createdAt])
 }
 

@@ -73,29 +73,6 @@ if [ -f docker-compose.prod.yml ] && [ "$MODE" = "pull" ]; then
   COMPOSE+=(-f docker-compose.prod.yml)
 fi
 
-# docker compose volume ls is not available on all VPS installs; use docker volume ls.
-find_novaerp_db_volume() {
-  local vol cid
-  vol=$(docker volume ls -q 2>/dev/null | grep novaerp_db | head -1)
-  if [ -n "$vol" ]; then
-    echo "$vol"
-    return 0
-  fi
-  cid=$("${COMPOSE[@]}" ps -q backend 2>/dev/null | head -1)
-  if [ -n "$cid" ]; then
-    docker inspect -f '{{ range .Mounts }}{{ if eq .Destination "/data" }}{{ .Name }}{{ end }}{{ end }}' "$cid" 2>/dev/null
-  fi
-}
-
-abs_dir() {
-  local p=$1
-  if command -v realpath >/dev/null 2>&1; then
-    dirname "$(realpath "$p")"
-  else
-    (cd "$(dirname "$p")" && pwd)
-  fi
-}
-
 echo "=== NovaERP deploy (mode: $MODE) ==="
 echo "Repo: $REPO_DIR"
 
@@ -154,35 +131,36 @@ if [ -n "$REPLACE_DB" ]; then
     exit 1
   fi
   echo ""
-  echo "=== Step 4: Replace SQLite database (--replace-db) ==="
-  DB_VOL=$(find_novaerp_db_volume)
-  if [ -z "$DB_VOL" ]; then
-    echo "ERROR: novaerp_db volume not found (looked via docker volume ls and backend mount inspect)"
+  echo "=== Step 4: Restore Postgres database (--replace-db) ==="
+  echo "  Dump file: $REPLACE_DB"
+  # Identify the postgres container name (project-service-1 convention)
+  PG_CONTAINER=$("${COMPOSE[@]}" ps -q postgres 2>/dev/null | head -1)
+  if [ -z "$PG_CONTAINER" ]; then
+    PG_CONTAINER=$(docker ps -qf "name=.*postgres.*" | head -1)
+  fi
+  if [ -z "$PG_CONTAINER" ]; then
+    echo "ERROR: postgres container not found — is the stack running?"
     exit 1
   fi
-  echo "  Using volume: $DB_VOL"
+  echo "  Postgres container: $PG_CONTAINER"
   "${COMPOSE[@]}" stop "$BACKEND_SVC"
-  STAMP=$(date +%F-%H%M)
-  REPLACE_DIR=$(abs_dir "$REPLACE_DB")
-  REPLACE_FILE=$(basename "$REPLACE_DB")
-  docker run --rm \
-    -v "$DB_VOL":/data \
-    -v "$REPLACE_DIR":/in \
-    alpine sh -c "
-      if [ -f /data/dev.db ]; then cp /data/dev.db /data/dev.db.backup-$STAMP; fi
-      cp /in/$REPLACE_FILE /data/dev.db
-      rm -f /data/dev.db-wal /data/dev.db-shm
-      chown 1000:1000 /data/dev.db 2>/dev/null || true
-    "
+  # Drop and recreate the database to ensure a clean restore.
+  docker exec -e PGPASSWORD="${POSTGRES_PASSWORD:-}" "$PG_CONTAINER" \
+    psql -U novaerp -d postgres -c "DROP DATABASE IF EXISTS novaerp;" 2>/dev/null || true
+  docker exec -e PGPASSWORD="${POSTGRES_PASSWORD:-}" "$PG_CONTAINER" \
+    psql -U novaerp -d postgres -c "CREATE DATABASE novaerp;"
+  # Restore the dump (custom pg_dump -Fc format)
+  docker exec -i -e PGPASSWORD="${POSTGRES_PASSWORD:-}" "$PG_CONTAINER" \
+    pg_restore -U novaerp -d novaerp --clean --if-exists < "$REPLACE_DB"
   "${COMPOSE[@]}" up -d "$BACKEND_SVC"
-  echo "Waiting for backend after DB swap (up to 90s)..."
+  echo "Waiting for backend after DB restore (up to 90s)..."
   for i in $(seq 1 18); do
     if "${COMPOSE[@]}" ps "$BACKEND_SVC" 2>/dev/null | grep -q "(healthy)"; then
-      echo "Backend is healthy after DB swap."
+      echo "Backend is healthy after DB restore."
       break
     fi
     if [ "$i" -eq 18 ]; then
-      echo "WARN: Backend not healthy after DB swap — check logs"
+      echo "WARN: Backend not healthy after DB restore — check logs"
     fi
     sleep 5
   done

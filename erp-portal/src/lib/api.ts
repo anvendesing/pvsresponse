@@ -2226,6 +2226,21 @@ export interface SystemLogSummary {
   }[];
 }
 
+export interface CustomerActivityRow {
+  id: string;
+  anonId: string;
+  customerId: string | null;
+  sessionId: string | null;
+  event: string;
+  path: string | null;
+  referer: string | null;
+  productId: string | null;
+  meta: string | null;
+  userAgent: string | null;
+  ip: string | null;
+  createdAt: string;
+}
+
 export interface PaymentIntentRow {
   id: string;
   gateway: string;
@@ -2713,6 +2728,30 @@ export const api = {
     );
   },
   systemLogSummary: () => fetcher<SystemLogSummary>("/admin/system-logs/summary"),
+  customerActivity: (params?: {
+    customerId?: string;
+    anonId?: string;
+    event?: string;
+    from?: string;
+    to?: string;
+    limit?: number;
+  }) => {
+    const qs = new URLSearchParams();
+    if (params?.customerId) qs.set("customerId", params.customerId);
+    if (params?.anonId) qs.set("anonId", params.anonId);
+    if (params?.event) qs.set("event", params.event);
+    if (params?.from) qs.set("from", params.from);
+    if (params?.to) qs.set("to", params.to);
+    if (params?.limit) qs.set("limit", String(params.limit));
+    const tail = qs.toString();
+    return fetcher<{ rows: CustomerActivityRow[] }>(
+      `/admin/customer-activity${tail ? `?${tail}` : ""}`
+    );
+  },
+  customerActivityTimeline: (customerId: string) =>
+    fetcher<{ rows: CustomerActivityRow[] }>(
+      `/admin/customer-activity/timeline/${encodeURIComponent(customerId)}`
+    ),
   paymentIntents: (params?: { status?: string; limit?: number }) => {
     const qs = new URLSearchParams();
     if (params?.status) qs.set("status", params.status);

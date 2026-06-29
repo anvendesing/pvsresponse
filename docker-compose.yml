@@ -3,19 +3,22 @@
 # =====================================================================
 # This file orchestrates the services for an IP-only VPS deploy:
 #
+#   postgres (db)  : PostgreSQL 16 database, internal only on :5432.
+#   redis    (cache): Redis 7 cache for storefront catalog + in-stock, :6379.
 #   nginx (web)    : ERP admin portal on $WEB_PORT (default 80).
 #   nginx (shop)   : Prakruthivanam storefront on $SHOP_PORT (default 8080).
 #   backend (api)  : internal-only on :4000; both frontends proxy /v1/*.
 #
 # Persistent state:
-#   - SQLite DB stored in the named volume `novaerp_db` mounted at
-#     /data inside the backend. DATABASE_URL=file:/data/dev.db.
-#     Survives `docker compose down`. Drop the volume with
-#     `docker volume rm pvsresponse_novaerp_db` to wipe all data.
+#   - PostgreSQL data in the named volume `novaerp_pg`.
+#     Survives `docker compose down`. Drop with:
+#     `docker volume rm pvsresponse_novaerp_pg` to wipe all data.
+#   - Redis data (RDB snapshot every 60s) in `redis_data`.
+#   - Product uploads in `novaerp_uploads`.
 #
 # Quick start (dev — local build):
 #     cp .env.deploy.example .env
-#     # edit .env: set JWT_SECRET to something long & random
+#     # edit .env: set JWT_SECRET and POSTGRES_PASSWORD to random values
 #     docker compose up -d --build
 #     # http://localhost/
 #
@@ -33,13 +36,48 @@
 # `docker compose pull` works without needing -f docker-compose.prod.yml.
 # The overlay file is still useful for forcing pull_policy=always; see
 # docker-compose.prod.yml for that and rollback examples.
-#
-# Postgres upgrade path: see DEPLOYMENT.md "Switching to Postgres".
 # =====================================================================
 
 # Compose v2 + does not require a "version:" key.
 
 services:
+  # ── Database ─────────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: novaerp
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required - set it in .env}
+      POSTGRES_DB: novaerp
+    volumes:
+      - novaerp_pg:/var/lib/postgresql/data
+    networks:
+      - novaerp
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U novaerp -d novaerp -q"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 15s
+
+  # ── Cache ─────────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # Persist to disk every 60s if at least 1 key changed (RDB snapshot).
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning"]
+    volumes:
+      - redis_data:/data
+    networks:
+      - novaerp
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+
+  # ── Application ───────────────────────────────────────────────────────────────
   backend:
     build:
       context: ./backend
@@ -52,19 +90,25 @@ services:
       # traffic from the nginx upstream.
       HOST: 0.0.0.0
       PORT: "4000"
-      DATABASE_URL: ${DATABASE_URL:-file:/data/dev.db}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://novaerp:${POSTGRES_PASSWORD:-changeme}@postgres:5432/novaerp?schema=public}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required - set it in .env}
+      # Redis cache for storefront catalog and in-stock flags.
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       # The SPA shares an origin with the API (nginx in front), so we
       # don't strictly need CORS. But /v1/public/* may be hit by
       # external dashboards or the share viewers from other origins,
       # so keep "*" unless you know the consumer's origin upfront.
       CORS_ORIGIN: ${CORS_ORIGIN:-*}
     volumes:
-      - novaerp_db:/data
       - novaerp_uploads:/app/uploads
     # No `ports:` here - keep the API off the public network.
     expose:
       - "4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     networks:
       - novaerp
     healthcheck:
@@ -125,10 +169,16 @@ services:
       start_period: 10s
 
 # Named volumes so state survives container rebuilds.
-#   novaerp_db      - SQLite database
+#   novaerp_pg      - PostgreSQL database
+#   redis_data      - Redis RDB snapshots (cache is ephemeral but TTLs survive restarts)
 #   novaerp_uploads - Product photo uploads (/app/uploads inside backend)
+#
+# SQLite rollback: novaerp_db volume is intentionally not declared here.
+# If you need to roll back to SQLite, add it back and update DATABASE_URL.
 volumes:
-  novaerp_db:
+  novaerp_pg:
+    driver: local
+  redis_data:
     driver: local
   novaerp_uploads:
     driver: local
