@@ -14,7 +14,7 @@ import {
   oilLineMachine,
   OIL_LOCAL_STORAGE_CODE,
 } from "./config/site-layout.js";
-import { claimProductionLineWarehouse, db } from "./lib/db.js";
+import { db, releaseProductionLineWarehouse } from "./lib/db.js";
 
 const FACILITY_CODE = "WC-OIL";
 const LEGACY_FILTER_CODE = "WC-FILTER";
@@ -35,7 +35,7 @@ async function main() {
   let facility = await db.productionFacility.findFirst({
     where: { OR: [{ code: FACILITY_CODE }, { code: "FAC-OIL" }] },
   });
-  await claimProductionLineWarehouse(prodWh.id, FACILITY_CODE);
+  await releaseProductionLineWarehouse(prodWh.id, facility?.id);
   if (!facility) {
     facility = await db.productionFacility.create({
       data: {

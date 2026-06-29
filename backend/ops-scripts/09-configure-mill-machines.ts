@@ -11,7 +11,7 @@ import {
   FLOUR_MILL_LINE_MACHINES,
   MILLING_LINE_MACHINES,
 } from "./config/site-layout.js";
-import { claimProductionLineWarehouse, db } from "./lib/db.js";
+import { db, releaseProductionLineWarehouse, upsertProductionFacility } from "./lib/db.js";
 
 const FLOUR_FACILITY_CODE = "WC-FLOUR";
 const FLOUR_LINE_CODE = "WC-FLOUR-MAIN";
@@ -36,25 +36,14 @@ async function ensureFlourFacility() {
     "Flour, spice and ravva grinding; temporary FG on facility WH; putaway TO to finished-goods warehouse.\n" +
     `[ops] fg=${EXISTING_FINISHED_GOODS_WH_CODE} staging=${FLOUR_WH_CODE} replenish=${replenish}`;
 
-  await claimProductionLineWarehouse(prodWh.id, FLOUR_FACILITY_CODE);
-  const facility = await db.productionFacility.upsert({
-    where: { code: FLOUR_FACILITY_CODE },
-    create: {
-      code: FLOUR_FACILITY_CODE,
-      name: "Flour Mill",
-      description,
-      active: true,
-      productionLineWarehouseId: prodWh.id,
-      replenishWarehouseCodes: replenish,
-    },
-    update: {
-      name: "Flour Mill",
-      description,
-      active: true,
-      productionLineWarehouseId: prodWh.id,
-      replenishWarehouseCodes: replenish,
-    },
+  const facility = await upsertProductionFacility({
+    code: FLOUR_FACILITY_CODE,
+    name: "Flour Mill",
+    description,
+    productionLineWarehouseId: prodWh.id,
+    replenishWarehouseCodes: replenish,
   });
+  if (!facility) return;
 
   await db.productionLine.upsert({
     where: { code: FLOUR_LINE_CODE },

@@ -14,7 +14,7 @@ import {
   PRODUCTION_FACILITIES,
   type FacilityDef,
 } from "./config/site-layout.js";
-import { db, dryRun, log, claimProductionLineWarehouse } from "./lib/db.js";
+import { db, dryRun, log, upsertProductionFacility } from "./lib/db.js";
 
 const opsTag = (fac: FacilityDef) => {
   const parts = [
@@ -68,28 +68,15 @@ async function seedFacility(fac: FacilityDef) {
     return;
   }
 
-  // Upsert the facility (stored in the WorkCenter table via @@map).
-  await claimProductionLineWarehouse(wh.id, fac.facilityCode);
-  const facility = await db.productionFacility.upsert({
-    where: { code: fac.facilityCode },
-    create: {
-      code: fac.facilityCode,
-      name: fac.facilityName,
-      description,
-      active: true,
-      productionLineWarehouseId: wh.id,
-      productionZone: fac.productionZone ?? null,
-      replenishWarehouseCodes,
-    },
-    update: {
-      name: fac.facilityName,
-      description,
-      active: true,
-      productionLineWarehouseId: wh.id,
-      productionZone: fac.productionZone ?? null,
-      replenishWarehouseCodes,
-    },
+  const facility = await upsertProductionFacility({
+    code: fac.facilityCode,
+    name: fac.facilityName,
+    description,
+    productionLineWarehouseId: wh.id,
+    productionZone: fac.productionZone ?? null,
+    replenishWarehouseCodes,
   });
+  if (!facility) return;
 
   // Upsert each declared production line (first is the seeded "Main Line").
   for (const lineDef of fac.lines) {

@@ -37,28 +37,117 @@ export const dryRun = process.argv.includes("--dry-run");
 
 export const log = (msg: string) => console.log(msg);
 
+/** Legacy WorkCenter codes that map to a canonical ProductionFacility code. */
+export const FACILITY_CODE_ALIASES: Record<string, readonly string[]> = {
+  "FAC-SNACKS": ["WC-SNACKS"],
+  "FAC-SOAP": ["WC-SOAP"],
+  "WC-OIL": ["FAC-OIL", "WC-FILTER"],
+  "WC-VACUUM": ["FAC-VACUUM"],
+  "WC-MILL": ["FAC-MILL"],
+  "WC-MCLEAN": ["FAC-MCLEAN"],
+  "WC-FLOUR": ["FAC-FLOUR"],
+};
+
+export function facilityCodesForSeed(canonicalCode: string): string[] {
+  const aliases = FACILITY_CODE_ALIASES[canonicalCode] ?? [];
+  return [canonicalCode, ...aliases];
+}
+
 /**
  * productionLineWarehouseId is @unique — only one facility may point at a WH.
- * Legacy WorkCenter rows (old codes) often still hold the link when we upsert
- * the canonical facility code. Clear other rows first so seeds stay idempotent.
+ * Release the link from every row except `exceptFacilityId` (if given).
  */
+export async function releaseProductionLineWarehouse(
+  warehouseId: string,
+  exceptFacilityId?: string | null
+) {
+  if (dryRun) return 0;
+  const cleared = await db.productionFacility.updateMany({
+    where: {
+      productionLineWarehouseId: warehouseId,
+      ...(exceptFacilityId ? { id: { not: exceptFacilityId } } : {}),
+    },
+    data: { productionLineWarehouseId: null },
+  });
+  return cleared.count;
+}
+
+/** @deprecated Prefer releaseProductionLineWarehouse or upsertProductionFacility */
 export async function claimProductionLineWarehouse(
   warehouseId: string,
   ownerFacilityCode: string
 ) {
-  if (dryRun) return;
-  const cleared = await db.productionFacility.updateMany({
-    where: {
-      productionLineWarehouseId: warehouseId,
-      code: { not: ownerFacilityCode },
-    },
-    data: { productionLineWarehouseId: null },
-  });
-  if (cleared.count > 0) {
+  const cleared = await releaseProductionLineWarehouse(warehouseId);
+  if (cleared > 0) {
     log(
-      `  ↪ cleared ${cleared.count} stale facility link(s) before claiming warehouse for ${ownerFacilityCode}`
+      `  ↪ cleared ${cleared} stale facility link(s) before claiming warehouse for ${ownerFacilityCode}`
     );
   }
+}
+
+export type ProductionFacilitySeed = {
+  code: string;
+  name: string;
+  description: string;
+  productionLineWarehouseId: string;
+  productionZone?: string | null;
+  replenishWarehouseCodes: string;
+};
+
+/**
+ * Idempotent facility seed: merge legacy alias rows, deactivate duplicates,
+ * then assign the production warehouse without tripping the unique constraint.
+ */
+export async function upsertProductionFacility(spec: ProductionFacilitySeed) {
+  if (dryRun) {
+    log(`  [dry] facility ${spec.code}`);
+    return null;
+  }
+
+  const codes = facilityCodesForSeed(spec.code);
+  const existingRows = await db.productionFacility.findMany({
+    where: { code: { in: codes } },
+    orderBy: { code: "asc" },
+  });
+
+  let keeper =
+    existingRows.find((r) => r.code === spec.code) ?? existingRows[0] ?? null;
+
+  const released = await releaseProductionLineWarehouse(
+    spec.productionLineWarehouseId,
+    keeper?.id
+  );
+  if (released > 0) {
+    log(`  ↪ released ${released} stale warehouse link(s) for ${spec.code}`);
+  }
+
+  const data = {
+    name: spec.name,
+    description: spec.description,
+    active: true,
+    productionLineWarehouseId: spec.productionLineWarehouseId,
+    productionZone: spec.productionZone ?? null,
+    replenishWarehouseCodes: spec.replenishWarehouseCodes,
+  };
+
+  if (keeper) {
+    const dupIds = existingRows.filter((r) => r.id !== keeper!.id).map((r) => r.id);
+    if (dupIds.length > 0) {
+      await db.productionFacility.updateMany({
+        where: { id: { in: dupIds } },
+        data: { active: false, productionLineWarehouseId: null },
+      });
+      log(`  ↪ deactivated ${dupIds.length} duplicate facility row(s) for ${spec.code}`);
+    }
+    return db.productionFacility.update({
+      where: { id: keeper.id },
+      data: { code: spec.code, ...data },
+    });
+  }
+
+  return db.productionFacility.create({
+    data: { code: spec.code, ...data },
+  });
 }
 
 export type WarehouseSpec = {
