@@ -213,11 +213,43 @@ async function main() {
   // Re-enable FK checks
   await db.$executeRawUnsafe("SET session_replication_role = 'origin'");
 
+  // Post-import: wipe all operational/transactional tables so only clean
+  // master data remains. Test-generated invoices, POs, stock ledger etc.
+  // would fail FK constraints anyway — start those fresh on Postgres.
+  console.log("\nCleaning operational tables (keeping master data)...");
+  const OPERATIONAL = [
+    "PackingSlipItem","PackingSlip","PackingContainer","PackingContainerItem",
+    "PickListItem","PickList","Trip",
+    "InvoiceItem","Invoice",
+    "SalesOrderReservation","SalesOrderItem","SalesOrder",
+    "QuoteItem","Quote",
+    "WorkOrderRun","WorkOrderRunBatch","WorkOrder","ProductionOrder",
+    "GrnItem","Grn","PurchaseOrderItem","PurchaseOrder",
+    "TransferOrderItem","TransferOrder",
+    "StockLedger","StockLot","BinCount",
+    "CustomerPaymentAllocation","CustomerPayment","PaymentIntent",
+    "CustomerReturnItem","CustomerReturn","CreditNoteItem","CreditNote",
+    "EnquiryItem","Enquiry",
+    "OtpToken","DevOtpLog",
+    "ChangeLog","Tombstone","AuditLog","SystemEventLog","ScanEvent",
+  ];
+  await db.$executeRawUnsafe("SET session_replication_role = 'replica'");
+  for (const t of OPERATIONAL) {
+    try {
+      await db.$executeRawUnsafe(`TRUNCATE TABLE "${t}" CASCADE`);
+      process.stdout.write(".");
+    } catch { /* table may not exist */ }
+  }
+  await db.$executeRawUnsafe("SET session_replication_role = 'origin'");
+  console.log(" done");
+
   sqlite.close();
   await db.$disconnect();
 
   console.log(`\nDone. ${totalRows} rows imported into Postgres.`);
-  console.log("\nNext: npm run db:sync-stock  (reconcile product SOH from bins)");
+  console.log("Master data preserved: products, variants, customers, bins,");
+  console.log("putaway rules, stock rules, BOMs, price lists, warehouses.\n");
+  console.log("Next: npm run db:sync-stock  (reconcile product SOH from bins)");
 }
 
 main().catch((err) => {
