@@ -42,4 +42,11 @@ if [ -d "$SEED_DIR" ]; then
   fi
 fi
 
-exec su-exec node sh -c "npx prisma migrate deploy && node dist/scripts/seed-image-urls.js && node dist/scripts/seed-category-images.js && node dist/index.js"
+exec su-exec node sh -c "\
+  npx prisma migrate deploy && \
+  node dist/scripts/seed-product-categories.js && \
+  node dist/scripts/seed-image-urls.js && \
+  node dist/scripts/seed-category-images.js && \
+  (test -f /app/data/categories-and-products.xlsx && node dist/scripts/import-categories-xlsx.js /app/data/categories-and-products.xlsx || true) && \
+  (test -f /app/data/shop-by-concerns-mapping.xlsx && node dist/scripts/import-concerns-xlsx.js /app/data/shop-by-concerns-mapping.xlsx || true) && \
+  node dist/index.js"

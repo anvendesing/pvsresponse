@@ -6,6 +6,7 @@
  *   npx tsx src/scripts/import-categories-xlsx.ts
  *   npx tsx src/scripts/import-categories-xlsx.ts ../categories-and-products.xlsx
  */
+import { existsSync } from "fs";
 import ExcelJS from "exceljs";
 import { db } from "../db.js";
 import { DEFAULT_PRODUCT_CATEGORIES } from "../lib/product-categories.js";
@@ -176,7 +177,12 @@ async function deactivateLegacyCategories() {
 }
 
 async function main() {
-  const file = process.argv[2] ?? "../categories-and-products.xlsx";
+  const candidates = [
+    process.argv[2],
+    "./data/categories-and-products.xlsx",
+    "../categories-and-products.xlsx",
+  ].filter((p): p is string => Boolean(p));
+  const file = candidates.find((p) => existsSync(p)) ?? "../categories-and-products.xlsx";
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.readFile(file);
 

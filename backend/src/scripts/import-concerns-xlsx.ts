@@ -4,6 +4,7 @@
  * Usage (from repo root):
  *   cd backend && npx tsx src/scripts/import-concerns-xlsx.ts ../shop-by-concerns-mapping.xlsx
  */
+import { existsSync } from "fs";
 import ExcelJS from "exceljs";
 import { db } from "../db.js";
 
@@ -14,7 +15,12 @@ const norm = (s: string) =>
     .trim();
 
 async function main() {
-  const file = process.argv[2] ?? "../shop-by-concerns-mapping.xlsx";
+  const candidates = [
+    process.argv[2],
+    "./data/shop-by-concerns-mapping.xlsx",
+    "../shop-by-concerns-mapping.xlsx",
+  ].filter((p): p is string => Boolean(p));
+  const file = candidates.find((p) => existsSync(p)) ?? "../shop-by-concerns-mapping.xlsx";
   const wb = new ExcelJS.Workbook();
   await wb.xlsx.readFile(file);
 

@@ -21,6 +21,7 @@ import { readdirSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { db } from "../db.js";
+import { CATEGORY_IMAGE_SLUG_ALIAS } from "../lib/category-slug-map.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -35,32 +36,33 @@ async function main() {
     return;
   }
 
-  // Build slug → relative URL map from filenames like category_<slug>.png.
-  const bySlug = new Map<string, string>();
-  for (const f of files) {
-    const m = f.match(/^category_([a-z0-9-]+)\.(png|jpg|jpeg|webp)$/i);
-    if (!m) continue;
-    bySlug.set(m[1].toLowerCase(), `/uploads/categories/${f}`);
-  }
-
-  if (bySlug.size === 0) {
-    console.log("[seed-category-images] No category_<slug>.* tiles found, nothing to do.");
-    return;
-  }
+  // PNG files use short names (category_grains.png); DB uses canonical slugs.
+  const canonicalSlugsForImage = (imageSlug: string): string[] => {
+    const out = new Set<string>([imageSlug]);
+    for (const [canonical, alias] of Object.entries(CATEGORY_IMAGE_SLUG_ALIAS)) {
+      if (alias === imageSlug) out.add(canonical);
+    }
+    return [...out];
+  };
 
   let updated = 0;
   let skipped = 0;
   let missing = 0;
-  for (const [slug, imageUrl] of bySlug) {
-    const result = await db.productCategory.updateMany({
-      where: { slug, imageUrl: null },
-      data: { imageUrl },
-    });
-    if (result.count > 0) updated += result.count;
-    else {
-      const existing = await db.productCategory.findUnique({ where: { slug } });
-      if (!existing) missing++;
-      else skipped++;
+  for (const f of files) {
+    const m = f.match(/^category_([a-z0-9-]+)\.(png|jpg|jpeg|webp)$/i);
+    if (!m) continue;
+    const imageUrl = `/uploads/categories/${f}`;
+    for (const slug of canonicalSlugsForImage(m[1].toLowerCase())) {
+      const result = await db.productCategory.updateMany({
+        where: { slug, imageUrl: null },
+        data: { imageUrl },
+      });
+      if (result.count > 0) updated += result.count;
+      else {
+        const existing = await db.productCategory.findUnique({ where: { slug } });
+        if (!existing) missing++;
+        else skipped++;
+      }
     }
   }
 

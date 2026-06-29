@@ -201,6 +201,21 @@ else
 fi
 
 echo ""
+echo "=== Step 5d: Storefront categories + concerns (idempotent) ==="
+"${COMPOSE[@]}" exec -T "$BACKEND_SVC" npm run db:seed-product-categories 2>/dev/null || \
+  echo "  (skip db:seed-product-categories — rebuild backend image after git pull)"
+if "${COMPOSE[@]}" exec -T "$BACKEND_SVC" test -f /app/data/categories-and-products.xlsx 2>/dev/null; then
+  "${COMPOSE[@]}" exec -T "$BACKEND_SVC" npm run db:import-categories-xlsx 2>/dev/null || true
+else
+  echo "  (no /app/data/categories-and-products.xlsx — rebuild backend image)"
+fi
+if "${COMPOSE[@]}" exec -T "$BACKEND_SVC" test -f /app/data/shop-by-concerns-mapping.xlsx 2>/dev/null; then
+  "${COMPOSE[@]}" exec -T "$BACKEND_SVC" npm run db:import-concerns-xlsx 2>/dev/null || true
+else
+  echo "  (no /app/data/shop-by-concerns-mapping.xlsx — rebuild backend image)"
+fi
+
+echo ""
 echo "=== Step 6: Reconcile product stock from bins (db:sync-stock) ==="
 if [ "$SKIP_SYNC" -eq 1 ]; then
   echo "Skipped (--no-sync)."

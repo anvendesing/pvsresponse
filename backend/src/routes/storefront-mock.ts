@@ -63,6 +63,7 @@ import {
 } from "../lib/storefront-customer.js";
 import { consumeOtpToken, validateOtp } from "../lib/otp.js";
 import { normalizePhone } from "../lib/phone.js";
+import { canonicalCategorySlug } from "../lib/category-slug-map.js";
 
 const shippingQuoteSchema = z.object({
   pincode: z.string().trim().min(6).max(10),
@@ -393,7 +394,7 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
   });
   // Active storefront categories for home page / nav (admin-configurable).
   app.get("/storefront-mock/categories", async () => {
-    return db.productCategory.findMany({
+    const rows = await db.productCategory.findMany({
       where: { active: true },
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
       select: {
@@ -405,6 +406,10 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
         updatedAt: true,
       },
     });
+    return rows.map((c) => ({
+      ...c,
+      slug: canonicalCategorySlug(c.slug),
+    }));
   });
 
   // Active storefront concerns for "Shop by Concern" navigation.
@@ -519,7 +524,7 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
         barcode: p.barcode,
         name: p.name,
         categoryId: p.categoryId,
-        categorySlug: p.category!.slug,
+        categorySlug: canonicalCategorySlug(p.category!.slug),
         categoryName: p.category!.name,
         category: p.category!.name,
         uom: p.uom,
@@ -593,7 +598,7 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
       barcode: p.barcode,
       name: p.name,
       categoryId: p.categoryId,
-      categorySlug: p.category?.slug ?? null,
+      categorySlug: p.category ? canonicalCategorySlug(p.category.slug) : null,
       categoryName: p.category?.name ?? null,
       category: p.category?.name ?? null,
       uom: p.uom,

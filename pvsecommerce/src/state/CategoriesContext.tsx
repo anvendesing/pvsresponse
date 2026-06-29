@@ -49,7 +49,23 @@ export const CategoriesProvider = ({ children }: { children: ReactNode }) => {
 
   const bySlug = useMemo(() => {
     const m = new Map<string, StorefrontCategory>();
-    for (const c of categories) m.set(c.slug, c);
+    const legacyToCanonical: Record<string, string> = {
+      grains: "grains-pulses-flours",
+      oils: "oils-oil-seeds",
+      millets: "millets-millet-products",
+      snacks: "sweets-snacks",
+      spices: "spices-condiments",
+      dryfruits: "dry-fruitsseeds-superfoods",
+      wellness: "personal-care-wellness",
+      eco: "eco-friendly-household",
+      sweeteners: "natural-sweeteners",
+      utilities: "home-utilities",
+    };
+    for (const c of categories) {
+      m.set(c.slug, c);
+      const canonical = legacyToCanonical[c.slug];
+      if (canonical) m.set(canonical, { ...c, slug: canonical });
+    }
     return m;
   }, [categories]);
 

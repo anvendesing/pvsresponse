@@ -57,6 +57,9 @@ RUN npm prune --omit=dev \
 # into the volume on first boot (when the volume is empty).
 COPY uploads/ /app/uploads-seed/
 
+# Storefront category + concern mapping spreadsheets (idempotent import on boot).
+COPY data/ /app/data/
+
 # SQLite database lives in /data so a docker volume can persist it.
 # We also keep the legacy /app/prisma/dev.db location working: the
 # container's entrypoint symlinks it at boot if DATABASE_URL points
