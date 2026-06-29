@@ -27,6 +27,14 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_DIR"
 
+# docker-compose reads .env for image tags; export the same vars for shell checks.
+if [ -f .env ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . ./.env
+  set +a
+fi
+
 MODE="auto"
 SKIP_SYNC=0
 SKIP_POST_MIGRATE=0
@@ -104,7 +112,16 @@ fi
 if [ "$MODE" = "pull" ]; then
   echo ""
   echo "=== Step 2: Pull Docker images (GHCR) ==="
-  echo "REGISTRY_OWNER=${REGISTRY_OWNER:?set REGISTRY_OWNER for --pull}"
+  if [ -z "${REGISTRY_OWNER:-}" ]; then
+    echo ""
+    echo "REGISTRY_OWNER is not set. Either:"
+    echo "  export REGISTRY_OWNER=anvendesing   # GitHub user/org (lowercase)"
+    echo "  bash scripts/vps-deploy.sh --build    # build images on the VPS instead"
+    echo ""
+    echo "Add REGISTRY_OWNER=... to .env in the repo root (see .env.deploy.example)."
+    exit 1
+  fi
+  echo "REGISTRY_OWNER=${REGISTRY_OWNER}"
   echo "IMAGE_TAG=${IMAGE_TAG:-latest}"
   "${COMPOSE[@]}" pull
   echo ""

@@ -37,6 +37,30 @@ export const dryRun = process.argv.includes("--dry-run");
 
 export const log = (msg: string) => console.log(msg);
 
+/**
+ * productionLineWarehouseId is @unique — only one facility may point at a WH.
+ * Legacy WorkCenter rows (old codes) often still hold the link when we upsert
+ * the canonical facility code. Clear other rows first so seeds stay idempotent.
+ */
+export async function claimProductionLineWarehouse(
+  warehouseId: string,
+  ownerFacilityCode: string
+) {
+  if (dryRun) return;
+  const cleared = await db.productionFacility.updateMany({
+    where: {
+      productionLineWarehouseId: warehouseId,
+      code: { not: ownerFacilityCode },
+    },
+    data: { productionLineWarehouseId: null },
+  });
+  if (cleared.count > 0) {
+    log(
+      `  ↪ cleared ${cleared.count} stale facility link(s) before claiming warehouse for ${ownerFacilityCode}`
+    );
+  }
+}
+
 export type WarehouseSpec = {
   code: string;
   name: string;

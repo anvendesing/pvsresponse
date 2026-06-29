@@ -6,14 +6,12 @@
  *   npm run db:configure-mill-machines:dev
  *   npm run db:configure-mill-machines        (container / dist)
  */
-import { PrismaClient } from "@prisma/client";
 import {
   EXISTING_FINISHED_GOODS_WH_CODE,
   FLOUR_MILL_LINE_MACHINES,
   MILLING_LINE_MACHINES,
 } from "./config/site-layout.js";
-
-const db = new PrismaClient();
+import { claimProductionLineWarehouse, db } from "./lib/db.js";
 
 const FLOUR_FACILITY_CODE = "WC-FLOUR";
 const FLOUR_LINE_CODE = "WC-FLOUR-MAIN";
@@ -38,6 +36,7 @@ async function ensureFlourFacility() {
     "Flour, spice and ravva grinding; temporary FG on facility WH; putaway TO to finished-goods warehouse.\n" +
     `[ops] fg=${EXISTING_FINISHED_GOODS_WH_CODE} staging=${FLOUR_WH_CODE} replenish=${replenish}`;
 
+  await claimProductionLineWarehouse(prodWh.id, FLOUR_FACILITY_CODE);
   const facility = await db.productionFacility.upsert({
     where: { code: FLOUR_FACILITY_CODE },
     create: {

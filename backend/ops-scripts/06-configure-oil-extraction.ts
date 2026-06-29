@@ -6,7 +6,6 @@
  *   npm run db:configure-oil-extraction:dev
  *   npm run db:configure-oil-extraction        (container / dist)
  */
-import { PrismaClient } from "@prisma/client";
 import {
   BIG_GODOWN_CODE,
   EXISTING_FINISHED_GOODS_WH_CODE,
@@ -15,8 +14,7 @@ import {
   oilLineMachine,
   OIL_LOCAL_STORAGE_CODE,
 } from "./config/site-layout.js";
-
-const db = new PrismaClient();
+import { claimProductionLineWarehouse, db } from "./lib/db.js";
 
 const FACILITY_CODE = "WC-OIL";
 const LEGACY_FILTER_CODE = "WC-FILTER";
@@ -37,6 +35,7 @@ async function main() {
   let facility = await db.productionFacility.findFirst({
     where: { OR: [{ code: FACILITY_CODE }, { code: "FAC-OIL" }] },
   });
+  await claimProductionLineWarehouse(prodWh.id, FACILITY_CODE);
   if (!facility) {
     facility = await db.productionFacility.create({
       data: {

@@ -5,13 +5,11 @@
  *   npm run db:configure-vacuum-stock-room:dev
  *   npm run db:configure-vacuum-stock-room        (container / dist)
  */
-import { PrismaClient } from "@prisma/client";
 import { EXISTING_FINISHED_GOODS_WH_CODE } from "./config/site-layout.js";
+import { claimProductionLineWarehouse, db } from "./lib/db.js";
 
 const MANUAL_PACK_LINE_CODE = "WC-STR-PACK-MANUAL";
 const VACUUM_LINE_CODE = "WC-VACUUM-MAIN";
-
-const db = new PrismaClient();
 
 async function ensureStrPackLines(facilityId: string) {
   for (const [code, name] of [
@@ -46,6 +44,7 @@ async function main() {
 
   const prevWh = fac.productionLineWarehouse?.code ?? "none";
   const replenish = `${EXISTING_FINISHED_GOODS_WH_CODE},WH-STO-COLD-1,WH-STO-COLD-2`;
+  await claimProductionLineWarehouse(str.id, "WC-VACUUM");
   await db.productionFacility.update({
     where: { id: fac.id },
     data: {

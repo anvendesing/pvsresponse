@@ -14,7 +14,7 @@ import {
   PRODUCTION_FACILITIES,
   type FacilityDef,
 } from "./config/site-layout.js";
-import { db, dryRun, log } from "./lib/db.js";
+import { db, dryRun, log, claimProductionLineWarehouse } from "./lib/db.js";
 
 const opsTag = (fac: FacilityDef) => {
   const parts = [
@@ -69,6 +69,7 @@ async function seedFacility(fac: FacilityDef) {
   }
 
   // Upsert the facility (stored in the WorkCenter table via @@map).
+  await claimProductionLineWarehouse(wh.id, fac.facilityCode);
   const facility = await db.productionFacility.upsert({
     where: { code: fac.facilityCode },
     create: {
@@ -89,18 +90,6 @@ async function seedFacility(fac: FacilityDef) {
       replenishWarehouseCodes,
     },
   });
-
-  const conflict = await db.productionFacility.findFirst({
-    where: {
-      productionLineWarehouseId: wh.id,
-      id: { not: facility.id },
-    },
-  });
-  if (conflict) {
-    throw new Error(
-      `Warehouse ${wh.code} already linked to facility ${conflict.code}. Resolve manually.`
-    );
-  }
 
   // Upsert each declared production line (first is the seeded "Main Line").
   for (const lineDef of fac.lines) {
