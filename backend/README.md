@@ -1,15 +1,20 @@
 # NovaERP Backend
 
-Node.js + Fastify + Prisma + Zod. Speaks to either SQLite (default for dev)
-or PostgreSQL (for production — flip the provider in
-`prisma/schema.prisma`).
+Node.js + Fastify + Prisma + Zod backed by **PostgreSQL** (production and local dev).
 
-## Run
+See [`../LOCAL_DEV.md`](../LOCAL_DEV.md) for the full local setup guide, including
+how to install Postgres on Windows without Docker.
+
+## Quick start (local)
 
 ```bash
+# 1. Start local Postgres (see LOCAL_DEV.md §1-2 to install)
+# 2. Copy environment
+cp .env.example .env          # already points to localhost:5432/novaerp
+
+# 3. Install, migrate, seed, run
 npm install
-npx prisma generate
-npx prisma migrate dev --name init
+npx prisma migrate dev
 npm run db:seed
 npm run dev          # http://localhost:4000
 ```
@@ -81,17 +86,12 @@ All endpoints are under `/v1`. Authentication is JWT (`Authorization: Bearer …
 * `GET    /v1/sync/state/:deviceId`
 * `GET    /v1/sync/conflicts/:deviceId`
 
-## Switching to PostgreSQL
+## Local database
 
-In `prisma/schema.prisma`:
+`DATABASE_URL` defaults to `postgresql://novaerp:novaerp@localhost:5432/novaerp?schema=public`.
 
-```diff
- datasource db {
--  provider = "sqlite"
-+  provider = "postgresql"
-   url      = env("DATABASE_URL")
- }
+To reset and re-seed:
+
+```bash
+npx prisma migrate reset
 ```
-
-Set `DATABASE_URL=postgresql://user:pass@host:5432/db?schema=public`,
-then `npx prisma migrate dev --name init` and `npm run db:seed`.
