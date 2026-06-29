@@ -30,7 +30,7 @@ const skipTruncate = args.includes("--skip-truncate");
 
 // ── SQLite source ─────────────────────────────────────────────────────────────
 const SQLITE_PATH = process.env["SQLITE_PATH"] ??
-  path.resolve(__dirname, "../prisma/dev.db");
+  path.resolve(__dirname, "../../prisma/dev.db");
 
 // ── Tables to import (in dependency order for reference, but FK disabled) ────
 // All tables that exist in the Postgres schema. Operational tables are included

@@ -187,6 +187,10 @@ npm run dev
 cd backend
 npx prisma migrate reset
 
+# Import ALL data from the local SQLite dev.db into Postgres (one-time)
+# Handles schema drift and timestamp types automatically
+npm run db:import-from-sqlite
+
 # Open Prisma Studio (visual DB browser)
 npx prisma studio
 
