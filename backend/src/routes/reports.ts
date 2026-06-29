@@ -63,7 +63,6 @@ export const reportsRoutes = async (app: FastifyInstance) => {
 
   app.get("/reports/procurement-split", async () => {
     const rows = await db.purchaseOrderItem.findMany({
-      where: { product: { isNot: null } },
       include: { product: { select: { category: { select: { name: true } } } } },
     });
     const by: Record<string, number> = {};
