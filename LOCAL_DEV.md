@@ -45,6 +45,11 @@ Get-Service postgresql*
 # Should show: Running
 ```
 
+> **Note:** If SQL Server is also installed, it may grab port 5432 first and
+> Postgres will auto-assign to **5433**. Check with:
+> `Select-String "^port" "C:\Program Files\PostgreSQL\18\data\postgresql.conf"`
+> Use the actual port in your `DATABASE_URL`.
+
 ---
 
 ## 2. Create the dev database and user
@@ -104,7 +109,7 @@ copy .env.example .env
 The default `.env.example` values already point to a local Postgres instance:
 
 ```ini
-DATABASE_URL="postgresql://novaerp:novaerp@localhost:5432/novaerp?schema=public"
+DATABASE_URL="postgresql://novaerp:novaerp@localhost:5433/novaerp?schema=public"
 POSTGRES_PASSWORD="novaerp"
 JWT_SECRET="change-me-in-production"
 PORT=4000

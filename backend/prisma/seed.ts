@@ -199,27 +199,24 @@ async function main() {
   let binIdx = 0;
   for (const wh of warehouses) {
     for (const z of zones) {
-      for (let r = 1; r <= 4; r++) {
-        for (let s = 1; s <= 3; s++) {
-          for (let b = 1; b <= 4; b++) {
-            const has = binIdx % 4 !== 0;
-            const product = has ? products[binIdx % products.length] : null;
-            await db.bin.create({
-              data: {
-                warehouseId: wh.id,
-                zone: z,
-                rack: `R${r}`,
-                shelf: `S${s}`,
-                bin: `B${b}`,
-                capacity: 100,
-                occupied: has ? Math.floor(seed(binIdx) * 100) : 0,
-                productId: product?.id,
-                qty: has ? Math.floor(seed(binIdx + 22) * 90 + 5) : 0,
-                batch: has && product?.batchTracked ? `BT-${String(2000 + (binIdx % 100))}` : null,
-              },
-            });
-            binIdx++;
-          }
+      for (let s = 1; s <= 4; s++) {
+        for (let b = 1; b <= 4; b++) {
+          const has = binIdx % 4 !== 0;
+          const product = has ? products[binIdx % products.length] : null;
+          await db.bin.create({
+            data: {
+              warehouseId: wh.id,
+              zone: z,
+              shelf: `S${s}`,
+              bin: `B${b}`,
+              capacity: 100,
+              occupied: has ? Math.floor(seed(binIdx) * 100) : 0,
+              productId: product?.id,
+              qty: has ? Math.floor(seed(binIdx + 22) * 90 + 5) : 0,
+              batch: has && product?.batchTracked ? `BT-${String(2000 + (binIdx % 100))}` : null,
+            },
+          });
+          binIdx++;
         }
       }
     }
@@ -353,7 +350,6 @@ async function main() {
     customerNames.map((name, i) =>
       db.customer.create({
         data: {
-          data: {
           code: `C${String(i + 1).padStart(3, "0")}`,
           name,
           gst: `27ABCDE${String(2000 + i)}F1Z${i % 9}`,
