@@ -106,6 +106,8 @@ export interface CatalogProduct {
   imageHint: string | null;
   imageUrl: string | null;
   imageUpdatedAt?: number | null;
+  /** Featured on home page best-sellers grid when true. */
+  bestSellerEnabled?: boolean;
   tags: string[];
   concernSlugs?: string[];
   concernNames?: string[];
@@ -331,6 +333,8 @@ const getAuthHeaders = (): Record<string, string> => {
   }
 };
 
+const asArray = <T,>(value: unknown): T[] => (Array.isArray(value) ? value : []);
+
 const fetchJson = async <T,>(
   url: string,
   init?: RequestInit
@@ -368,14 +372,18 @@ const mapCatalogProduct = (p: CatalogProduct): CatalogProduct => ({
 
 export const api = {
   categories: async () => {
-    const list = await fetchJson<StorefrontCategory[]>(buildUrl("/storefront-mock/categories"));
+    const list = asArray<StorefrontCategory>(
+      await fetchJson<StorefrontCategory[]>(buildUrl("/storefront-mock/categories"))
+    );
     return list.map((c) => ({
       ...c,
       imageUrl: resolveUploadUrl(c.imageUrl, c.updatedAt) ?? null,
     }));
   },
   concerns: async () => {
-    const list = await fetchJson<StorefrontConcern[]>(buildUrl("/storefront-mock/concerns"));
+    const list = asArray<StorefrontConcern>(
+      await fetchJson<StorefrontConcern[]>(buildUrl("/storefront-mock/concerns"))
+    );
     return list.map((c) => ({
       ...c,
       imageUrl: resolveUploadUrl(c.imageUrl) ?? null,
@@ -401,11 +409,19 @@ export const api = {
     fetchJson<ShippingQuoteResult>(buildUrl("/storefront-mock/shipping/quote"), {
       method: "POST",
       body: JSON.stringify(input),
-    }),
-  activePaymentGateways: () =>
-    fetchJson<{ active: StorefrontPaymentGateway[] }>(
+    }).then((quote) => ({
+      ...quote,
+      options: asArray<ShippingQuoteOption>(quote?.options),
+    })),
+  activePaymentGateways: async () => {
+    const res = await fetchJson<{ active?: unknown }>(
       buildUrl("/storefront-mock/payment/gateways")
-    ),
+    );
+    const active = asArray<StorefrontPaymentGateway>(res?.active).filter(
+      (g): g is StorefrontPaymentGateway => g === "payu" || g === "razorpay"
+    );
+    return { active };
+  },
   initCheckoutOrder: (input: PlaceOrderInput & { gateway?: StorefrontPaymentGateway }) =>
     fetchJson<CheckoutInitResult>(buildUrl("/storefront-mock/order/init"), {
       method: "POST",
@@ -444,22 +460,42 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ phone, purpose }),
     }),
-  verifyOtp: (phone: string, code: string, name?: string, purpose: "login" | "track" = "login") =>
-    fetchJson<OtpVerifyResult>(buildUrl("/storefront-auth/otp/verify"), {
+  verifyOtp: async (phone: string, code: string, name?: string, purpose: "login" | "track" = "login") => {
+    const res = await fetchJson<OtpVerifyResult>(buildUrl("/storefront-auth/otp/verify"), {
       method: "POST",
       body: JSON.stringify({ phone, code, name, purpose }),
-    }),
-  me: () => fetchJson<{ customer: StorefrontCustomer; addresses: CustomerAddress[] }>(
-    buildUrl("/storefront-auth/me")
-  ),
-  updateProfile: (input: { name?: string; email?: string }) =>
-    fetchJson<{ customer: StorefrontCustomer; addresses: CustomerAddress[] }>(
+    });
+    return {
+      ...res,
+      addresses: asArray<CustomerAddress>(res.addresses),
+      recentOrders: asArray<CustomerOrderRow>(res.recentOrders),
+    };
+  },
+  me: async () => {
+    const res = await fetchJson<{ customer: StorefrontCustomer; addresses?: unknown }>(
+      buildUrl("/storefront-auth/me")
+    );
+    return {
+      customer: res.customer,
+      addresses: asArray<CustomerAddress>(res.addresses),
+    };
+  },
+  updateProfile: async (input: { name?: string; email?: string }) => {
+    const res = await fetchJson<{ customer: StorefrontCustomer; addresses?: unknown }>(
       buildUrl("/storefront-auth/me"),
       { method: "PATCH", body: JSON.stringify(input) }
-    ),
+    );
+    return {
+      customer: res.customer,
+      addresses: asArray<CustomerAddress>(res.addresses),
+    };
+  },
   logout: () =>
     fetchJson<{ ok: boolean }>(buildUrl("/storefront-auth/logout"), { method: "POST" }),
-  listAddresses: () => fetchJson<CustomerAddress[]>(buildUrl("/storefront-auth/addresses")),
+  listAddresses: async () =>
+    asArray<CustomerAddress>(
+      await fetchJson<CustomerAddress[]>(buildUrl("/storefront-auth/addresses"))
+    ),
   createAddress: (input: Omit<CustomerAddress, "id" | "isDefault"> & { isDefault?: boolean }) =>
     fetchJson<CustomerAddress>(buildUrl("/storefront-auth/addresses"), {
       method: "POST",

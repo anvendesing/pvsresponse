@@ -1,6 +1,13 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { ApiError, api, type CustomerAddress } from "@/lib/api";
-import { PINCODE_PLACE_HINT, pincodeFieldUpdate } from "@/lib/pincodeLookup";
+import {
+  extractIndianPincode,
+  INDIA_DELIVERY_NOTE,
+  isValidIndianPincode,
+  PINCODE_PLACE_HINT,
+  pincodeFieldUpdate,
+  validateIndianPincode,
+} from "@/lib/pincodeLookup";
 import { useAuth } from "@/state/AuthContext";
 import { useToast } from "@/state/ToastContext";
 
@@ -50,26 +57,29 @@ export const AccountAddresses = () => {
     try {
       const raw = window.localStorage.getItem(LEGACY_KEY);
       if (!raw) return;
-      const legacy = JSON.parse(raw) as Array<{
-        label: string;
-        name: string;
-        line: string;
-        city: string;
-        state: string;
-        pincode: string;
-        phone: string;
-      }>;
+      const legacy = JSON.parse(raw) as unknown;
+      if (!Array.isArray(legacy)) return;
       void (async () => {
         for (const a of legacy) {
+          if (!a || typeof a !== "object") continue;
           try {
+            const row = a as {
+              label?: string;
+              name?: string;
+              line?: string;
+              city?: string;
+              state?: string;
+              pincode?: string;
+              phone?: string;
+            };
             await api.createAddress({
-              label: a.label,
-              name: a.name,
-              phone: a.phone,
-              addressLine: a.line,
-              city: a.city,
-              state: a.state,
-              pincode: a.pincode,
+              label: row.label ?? "Home",
+              name: row.name ?? "",
+              phone: row.phone ?? "",
+              addressLine: row.line ?? "",
+              city: row.city ?? "",
+              state: row.state ?? "",
+              pincode: row.pincode ?? "",
             });
           } catch {
             /* best effort */
@@ -85,6 +95,11 @@ export const AccountAddresses = () => {
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
+    const pinErr = validateIndianPincode(draft.pincode);
+    if (pinErr) {
+      toast.show(pinErr, "error");
+      return;
+    }
     setBusy(true);
     try {
       if (draft.id) {
@@ -140,6 +155,9 @@ export const AccountAddresses = () => {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: "1.5rem" }}>
+      <p className="muted" style={{ fontSize: "0.88rem", margin: 0 }}>
+        {INDIA_DELIVERY_NOTE}
+      </p>
       <div className="card-soft">
         <h2 style={{ fontSize: "1.2rem", marginBottom: "1rem" }}>Saved addresses</h2>
         {loading ? (
@@ -161,6 +179,11 @@ export const AccountAddresses = () => {
                 {a.isDefault && (
                   <span style={{ marginLeft: 8, fontSize: "0.7rem", color: "var(--forest-green)" }}>Default</span>
                 )}
+                {!isValidIndianPincode(a.pincode) && (
+                  <span style={{ marginLeft: 8, fontSize: "0.7rem", color: "var(--color-error)" }}>
+                    Invalid pincode
+                  </span>
+                )}
                 <div style={{ fontSize: "0.85rem", marginTop: "0.4rem" }}>{a.name}</div>
                 <div style={{ fontSize: "0.85rem", color: "var(--neutral-gray)" }}>{a.addressLine}</div>
                 <div style={{ fontSize: "0.85rem", color: "var(--neutral-gray)" }}>
@@ -172,7 +195,7 @@ export const AccountAddresses = () => {
                 <div style={{ fontSize: "0.85rem", color: "var(--neutral-gray)" }}>{a.phone}</div>
                 <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.6rem" }}>
                   <button type="button" onClick={() => {
-                    lastAutofillPinRef.current = a.pincode.replace(/\D/g, "").slice(0, 6);
+                    lastAutofillPinRef.current = extractIndianPincode(a.pincode);
                     setDraft({ ...FRESH, ...a, label: a.label ?? "Home", state: a.state ?? "" });
                   }} className="text-link">
                     Edit
@@ -195,7 +218,7 @@ export const AccountAddresses = () => {
         </div>
         <Input label="Address line" value={draft.addressLine} onChange={(v) => setDraft({ ...draft, addressLine: v })} required />
         <div className="form-grid" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
-          <Input label="Pincode" value={draft.pincode} onChange={onPincodeChange} required />
+          <Input label="Pincode" value={draft.pincode} onChange={onPincodeChange} required inputMode="numeric" maxLength={6} pattern="[1-9][0-9]{5}" />
           <Input label="City" value={draft.city} onChange={(v) => setDraft({ ...draft, city: v })} required />
           <Input label="State" value={draft.state} onChange={(v) => setDraft({ ...draft, state: v })} required />
         </div>
@@ -223,14 +246,29 @@ const Input = ({
   value,
   onChange,
   required,
+  inputMode,
+  maxLength,
+  pattern,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   required?: boolean;
+  inputMode?: "numeric" | "text";
+  maxLength?: number;
+  pattern?: string;
 }) => (
   <div className="float-field">
-    <input type="text" placeholder=" " value={value} onChange={(e) => onChange(e.target.value)} required={required} />
+    <input
+      type="text"
+      placeholder=" "
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      required={required}
+      inputMode={inputMode}
+      maxLength={maxLength}
+      pattern={pattern}
+    />
     <label>
       {label}
       {required && " *"}

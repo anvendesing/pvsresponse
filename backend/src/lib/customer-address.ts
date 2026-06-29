@@ -3,10 +3,24 @@ import { z } from "zod";
 /** Indian postal pincode — 6 digits, first digit 1–9. */
 export const PINCODE_RE = /^[1-9][0-9]{5}$/;
 
+export const INDIA_DELIVERY_MESSAGE =
+  "We deliver within India only. Pincode must be a valid 6-digit Indian postal code.";
+
+/** Strip to digits and return when valid, else null. */
+export function normalizeIndianPincode(raw: string): string | null {
+  const pin = raw.replace(/\D/g, "").slice(0, 6);
+  return PINCODE_RE.test(pin) ? pin : null;
+}
+
 export const pincodeSchema = z
   .string()
   .trim()
-  .regex(PINCODE_RE, "Pincode must be a valid 6-digit Indian postal code");
+  .transform((s) => s.replace(/\D/g, "").slice(0, 6))
+  .pipe(
+    z
+      .string()
+      .regex(PINCODE_RE, "Pincode must be a valid 6-digit Indian postal code (India delivery only)")
+  );
 
 /** Prisma select fragment for ship-to / document headers. */
 export const customerShipToSelect = {

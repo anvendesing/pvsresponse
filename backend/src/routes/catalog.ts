@@ -119,6 +119,7 @@ const productCreate = z.object({
   batchTracked: z.boolean().default(false),
   ecommerceEnabled: z.boolean().default(true),
   priceListEnabled: z.boolean().default(true),
+  bestSellerEnabled: z.boolean().default(false),
   // Free-form catalogue description. Empty / null clears the column.
   description: z.string().max(5000).nullish(),
   concernIds: z.array(z.string().min(1)).optional(),

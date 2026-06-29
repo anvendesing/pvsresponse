@@ -566,6 +566,7 @@ export const Products = () => {
                   <Row k="Batch tracked" v={selected.batchTracked ? "Yes" : "No"} />
                   <Row k="E-commerce" v={selected.ecommerceEnabled !== false ? "Listed" : "Hidden"} />
                   <Row k="Price lists" v={selected.priceListEnabled !== false ? "Listed" : "Hidden"} />
+                  <Row k="Best seller" v={selected.bestSellerEnabled ? "Yes" : "No"} />
                   <Row k="State" v={selected.state} />
                 </div>
               </Card>

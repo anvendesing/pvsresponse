@@ -23,8 +23,9 @@ export async function lookupPincodePlace(raw: string): Promise<PincodePlace | nu
   const hit = findByPincode(pin);
   if (!hit) return null;
 
-  const district = hit.district?.trim() || hit.offices[0]?.district?.trim() || "";
-  const city = hit.offices[0]?.city?.trim() || district;
+  const offices = Array.isArray(hit.offices) ? hit.offices : [];
+  const district = hit.district?.trim() || offices[0]?.district?.trim() || "";
+  const city = offices[0]?.city?.trim() || district;
   const state = hit.state?.trim();
   if (!city || !state) return null;
 

@@ -22,6 +22,7 @@ import {
 } from "../lib/storefront-customer.js";
 import { computeAddressDistanceFields } from "../lib/address-distance.js";
 import { lookupPincodePlace } from "../lib/pincode-lookup.js";
+import { pincodeSchema } from "../lib/customer-address.js";
 
 const sendSchema = z.object({
   phone: z.string().trim().min(6).max(20),
@@ -42,7 +43,18 @@ const addressSchema = z.object({
   addressLine: z.string().trim().min(1).max(200),
   city: z.string().trim().min(1).max(80),
   state: z.string().trim().max(80).optional(),
-  pincode: z.string().trim().min(4).max(10),
+  pincode: pincodeSchema,
+  isDefault: z.boolean().optional(),
+});
+
+const addressPatchSchema = z.object({
+  label: z.string().trim().max(40).optional(),
+  name: z.string().trim().min(1).max(120).optional(),
+  phone: z.string().trim().min(6).max(20).optional(),
+  addressLine: z.string().trim().min(1).max(200).optional(),
+  city: z.string().trim().min(1).max(80).optional(),
+  state: z.string().trim().max(80).optional(),
+  pincode: pincodeSchema.optional(),
   isDefault: z.boolean().optional(),
 });
 
@@ -286,7 +298,7 @@ export const storefrontAuthRoutes = async (app: FastifyInstance) => {
     const user = await requireStorefrontAuth(req, reply);
     if (!user) return;
     const id = (req.params as { id: string }).id;
-    const body = addressSchema.partial().parse(req.body);
+    const body = addressPatchSchema.parse(req.body);
 
     const existing = await db.customerAddress.findFirst({
       where: { id, customerId: user.customerId },

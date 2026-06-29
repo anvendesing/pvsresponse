@@ -27,6 +27,7 @@ import {
 } from "../lib/storefront-shipping.js";
 import { logSystemError, logSystemInfo, logSystemWarn } from "../lib/system-log.js";
 import { nextPaymentNo } from "../routes/customer-payments.js";
+import { pincodeSchema } from "../lib/customer-address.js";
 
 export const storefrontOrderItemSchema = z.object({
   productId: z.string().min(1),
@@ -41,7 +42,7 @@ export const storefrontOrderSchema = z.object({
   addressLine: z.string().trim().min(1).max(200).optional(),
   city: z.string().trim().min(1).max(80).optional(),
   state: z.string().trim().max(80).optional(),
-  pincode: z.string().trim().min(4).max(10).optional(),
+  pincode: pincodeSchema.optional(),
   addressId: z.string().trim().min(1).optional(),
   notes: z.string().trim().max(500).optional(),
   deliveryMethod: z.enum(["standard", "express"]).default("standard"),

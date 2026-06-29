@@ -43,6 +43,7 @@ const emptyForm = (): Product => ({
   batchTracked: false,
   ecommerceEnabled: true,
   priceListEnabled: true,
+  bestSellerEnabled: false,
   imageUrl: null,
   description: "",
   variants: [],
@@ -240,6 +241,8 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
         batchTracked: !!form.batchTracked,
         ecommerceEnabled: form.ecommerceEnabled !== false,
         priceListEnabled: form.priceListEnabled !== false,
+        bestSellerEnabled:
+          form.ecommerceEnabled !== false && !!form.bestSellerEnabled,
         // Send null when the user cleared the field so the backend
         // explicitly drops the previous value.
         description: form.description?.trim() ? form.description.trim() : null,
@@ -602,7 +605,11 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
                   <input
                     type="checkbox"
                     checked={form.ecommerceEnabled !== false}
-                    onChange={(e) => update("ecommerceEnabled", e.target.checked)}
+                    onChange={(e) => {
+                      const on = e.target.checked;
+                      update("ecommerceEnabled", on);
+                      if (!on) update("bestSellerEnabled", false);
+                    }}
                   />
                   E-commerce / storefront
                 </label>
@@ -614,10 +621,20 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
                   />
                   Price lists
                 </label>
+                <label className="flex items-center gap-2 text-body-sm text-ink-muted">
+                  <input
+                    type="checkbox"
+                    checked={!!form.bestSellerEnabled}
+                    onChange={(e) => update("bestSellerEnabled", e.target.checked)}
+                    disabled={form.ecommerceEnabled === false}
+                  />
+                  Best seller (home page)
+                </label>
               </div>
               <p className="text-caption text-ink-muted mt-1">
                 Applies to this product when it has no variants, or as the default bulk-parent row.
-                Per-variant toggles are below.
+                Per-variant toggles are below. Best sellers appear in the storefront home grid when
+                e-commerce is enabled.
               </p>
             </Field>
             <Field label="Description" full>

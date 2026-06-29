@@ -23,10 +23,13 @@ const byPin = new Map<string, PincodeEntry>();
 
 function init() {
   if (byPin.size > 0) return;
-  const json = rawData as PincodesJson;
+  const json = rawData as PincodesJson | undefined;
+  if (!json) return;
   const records: PincodeEntry[] = Array.isArray(json)
-    ? (json as PincodeEntry[])
-    : (json.pincodes ?? []);
+    ? json
+    : Array.isArray(json.pincodes)
+      ? json.pincodes
+      : [];
   for (const r of records) {
     if (r.pincode) byPin.set(r.pincode, r);
   }

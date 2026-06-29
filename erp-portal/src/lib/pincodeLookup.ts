@@ -6,33 +6,38 @@ export type PincodePlace = {
   state: string;
 };
 
-/** Strip to digits and cap at 6 — suitable for controlled pincode inputs. */
+export const INDIAN_PINCODE_RE = /^[1-9]\d{5}$/;
+
+export const INDIA_DELIVERY_NOTE =
+  "We deliver within India only. Enter a valid 6-digit Indian pincode.";
+
 export const normalizePincodeInput = (raw: string): string =>
   raw.replace(/\D/g, "").slice(0, 6);
 
-/**
- * Offline lookup of city/town, district, and state from a 6-digit Indian pincode.
- * Uses bundled India Post data — no network calls.
- */
-export const lookupIndianPincode = (raw: string): PincodePlace | null => {
+export const isValidIndianPincode = (raw: string): boolean =>
+  INDIAN_PINCODE_RE.test(normalizePincodeInput(raw));
+
+export const extractIndianPincode = (raw: string): string => {
   const pin = normalizePincodeInput(raw);
-  if (!/^[1-9]\d{5}$/.test(pin)) return null;
+  return isValidIndianPincode(pin) ? pin : "";
+};
+
+export const lookupIndianPincode = (raw: string): PincodePlace | null => {
+  const pin = extractIndianPincode(raw);
+  if (!pin) return null;
 
   const hit = findByPincode(pin);
   if (!hit) return null;
 
-  const district = hit.district?.trim() || hit.offices?.[0]?.district?.trim() || "";
-  const city = hit.offices?.[0]?.city?.trim() || district;
+  const offices = Array.isArray(hit.offices) ? hit.offices : [];
+  const district = hit.district?.trim() || offices[0]?.district?.trim() || "";
+  const city = offices[0]?.city?.trim() || district;
   const state = hit.state?.trim();
   if (!city || !state) return null;
 
   return { city, district: district || city, state };
 };
 
-/**
- * Apply a pincode field change. Autofill city/district/state only when the 6-digit
- * pin changes — manual edits are kept until the pincode changes.
- */
 export const pincodeFieldUpdate = <
   T extends PincodePlace & { pincode: string },
 >(
@@ -40,20 +45,20 @@ export const pincodeFieldUpdate = <
   raw: string,
   lastAutofillPin: string
 ): { next: T; lastAutofillPin: string } => {
-  const pin = normalizePincodeInput(raw);
-  const next = { ...prev, pincode: pin };
+  const pincode = normalizePincodeInput(raw);
+  const next = { ...prev, pincode };
 
-  if (pin.length === 6 && pin !== lastAutofillPin) {
-    const place = lookupIndianPincode(pin);
+  if (pincode.length === 6 && pincode !== lastAutofillPin) {
+    const place = lookupIndianPincode(pincode);
     if (place) {
       next.city = place.city;
       next.district = place.district;
       next.state = place.state;
-      return { next, lastAutofillPin: pin };
+      return { next, lastAutofillPin: pincode };
     }
   }
 
-  if (pin.length < 6) {
+  if (pincode.length < 6) {
     return { next, lastAutofillPin: "" };
   }
 
@@ -61,4 +66,4 @@ export const pincodeFieldUpdate = <
 };
 
 export const PINCODE_PLACE_HINT =
-  "City, district, and state are suggested from pincode — edit any field if needed.";
+  "City, district, and state are suggested from your 6-digit Indian pincode — edit any field if needed.";

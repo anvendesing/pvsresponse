@@ -18,7 +18,14 @@ import { useAuth } from "@/state/AuthContext";
 import { useToast } from "@/state/ToastContext";
 import { inr, cartLineSummary } from "@/lib/format";
 import { isPlaceholderCustomerName } from "@/lib/customer";
-import { PINCODE_PLACE_HINT, pincodeFieldUpdate } from "@/lib/pincodeLookup";
+import {
+  extractIndianPincode,
+  INDIA_DELIVERY_NOTE,
+  isValidIndianPincode,
+  PINCODE_PLACE_HINT,
+  pincodeFieldUpdate,
+  validateIndianPincode,
+} from "@/lib/pincodeLookup";
 import { CheckIcon } from "@/assets/icons";
 import { usePlatform } from "@/state/PlatformContext";
 
@@ -42,6 +49,9 @@ export const CheckoutPage = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { isPhone } = usePlatform();
+  const addresses = Array.isArray(auth.addresses) ? auth.addresses : [];
+  const deliverableAddresses = addresses.filter((a) => isValidIndianPincode(a.pincode));
+  const undeliverableAddresses = addresses.filter((a) => !isValidIndianPincode(a.pincode));
 
   const [step, setStep] = useState<1 | 2 | 3>(() => (auth.isAuthed ? 2 : 1));
   const [otpOpen, setOtpOpen] = useState(false);
@@ -101,10 +111,11 @@ export const CheckoutPage = () => {
     void api
       .activePaymentGateways()
       .then((res) => {
-        setPaymentGateways(res.active);
+        const active = Array.isArray(res?.active) ? res.active : [];
+        setPaymentGateways(active);
         setPaymentGateway((prev) => {
-          if (prev && res.active.includes(prev)) return prev;
-          return res.active[0] ?? "";
+          if (prev && active.includes(prev)) return prev;
+          return active[0] ?? "";
         });
       })
       .catch(() => {
@@ -128,14 +139,15 @@ export const CheckoutPage = () => {
   }, [auth.customer]);
 
   useEffect(() => {
-    const defaultAddr = auth.addresses.find((a) => a.isDefault) ?? auth.addresses[0];
+    const defaultAddr =
+      deliverableAddresses.find((a) => a.isDefault) ?? deliverableAddresses[0];
     if (defaultAddr && !shipping.addressId && !showNewAddress) {
       applyAddress(defaultAddr);
     }
-  }, [auth.addresses]);
+  }, [deliverableAddresses, shipping.addressId, showNewAddress]);
 
   const applyAddress = (a: CustomerAddress) => {
-    lastAutofillPinRef.current = a.pincode.replace(/\D/g, "").slice(0, 6);
+    lastAutofillPinRef.current = extractIndianPincode(a.pincode);
     setShipping((prev) => ({
       ...prev,
       addressId: a.id,
@@ -187,9 +199,10 @@ export const CheckoutPage = () => {
     return () => window.clearTimeout(timer);
   }, [shipping.pincode, shipping.state, shipping.addressId, subTotal, cartItemsKey, cart.lines.length]);
 
-  const standardOption = shippingQuote?.options.find((o) => o.id === "standard");
-  const expressOption = shippingQuote?.options.find((o) => o.id === "express");
-  const selectedOption = shippingQuote?.options.find((o) => o.id === shipping.delivery);
+  const quoteOptions = Array.isArray(shippingQuote?.options) ? shippingQuote.options : [];
+  const standardOption = quoteOptions.find((o) => o.id === "standard");
+  const expressOption = quoteOptions.find((o) => o.id === "express");
+  const selectedOption = quoteOptions.find((o) => o.id === shipping.delivery);
 
   const subTotalDisplay = shippingQuote?.subTotal ?? subTotal;
   const taxKind = shippingQuote?.taxKind ?? "intra";
@@ -229,8 +242,12 @@ export const CheckoutPage = () => {
       toast.show("Please complete shipping details.", "error");
       return;
     }
-    if ((showNewAddress || auth.addresses.length === 0) && !/^[0-9]{6}$/.test(shipping.pincode.trim())) {
-      toast.show("Enter a valid 6-digit pincode.", "error");
+    const pinErr =
+      showNewAddress || deliverableAddresses.length === 0
+        ? validateIndianPincode(shipping.pincode)
+        : null;
+    if (pinErr) {
+      toast.show(pinErr, "error");
       return;
     }
     if (quoteLoading) {
@@ -254,7 +271,7 @@ export const CheckoutPage = () => {
         await api.updateProfile({ name: shipping.name.trim() });
       }
 
-      const enteringNewAddress = showNewAddress || auth.addresses.length === 0;
+      const enteringNewAddress = showNewAddress || deliverableAddresses.length === 0;
       if (enteringNewAddress && saveAddress && !addressId) {
         const created = await api.createAddress({
           label: "Home",
@@ -264,7 +281,7 @@ export const CheckoutPage = () => {
           city: shipping.city.trim(),
           state: shipping.state.trim(),
           pincode: shipping.pincode.trim(),
-          isDefault: auth.addresses.length === 0,
+          isDefault: deliverableAddresses.length === 0,
         });
         addressId = created.id;
       }
@@ -397,7 +414,7 @@ export const CheckoutPage = () => {
             Checkout
           </h1>
           <p className="muted" style={{ marginBottom: "1.5rem" }}>
-            Verify your mobile, confirm delivery, then pay securely.
+            Verify your mobile, confirm delivery within India, then pay securely.
           </p>
 
           <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 380px", gap: "2rem" }}>
@@ -443,9 +460,9 @@ export const CheckoutPage = () => {
               >
                 {step === 2 && (
                   <form onSubmit={submitShipping} style={{ display: "flex", flexDirection: "column", gap: "0.85rem" }}>
-                    {auth.addresses.length > 0 && !showNewAddress && (
+                    {deliverableAddresses.length > 0 && !showNewAddress && (
                       <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-                        {auth.addresses.map((a) => (
+                        {deliverableAddresses.map((a) => (
                           <label
                             key={a.id}
                             style={{
@@ -476,7 +493,35 @@ export const CheckoutPage = () => {
                       </div>
                     )}
 
-                    {(showNewAddress || auth.addresses.length === 0) && (
+                    {undeliverableAddresses.length > 0 && !showNewAddress && (
+                      <div
+                        style={{
+                          padding: "0.75rem",
+                          borderRadius: "var(--radius-sm)",
+                          background: "rgba(180, 80, 0, 0.08)",
+                          fontSize: "0.82rem",
+                          color: "var(--neutral-gray)",
+                        }}
+                      >
+                        <strong style={{ display: "block", marginBottom: "0.35rem" }}>
+                          Addresses not available for delivery
+                        </strong>
+                        {INDIA_DELIVERY_NOTE} Update or replace these in{" "}
+                        <Link to="/account/addresses" style={{ color: "var(--forest-green)" }}>
+                          saved addresses
+                        </Link>
+                        .
+                        <ul style={{ margin: "0.5rem 0 0", paddingLeft: "1.1rem" }}>
+                          {undeliverableAddresses.map((a) => (
+                            <li key={a.id}>
+                              {a.label ?? "Address"} · {a.city}, {a.state} {a.pincode}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {(showNewAddress || deliverableAddresses.length === 0) && (
                       <>
                         <div className="form-grid">
                           <FieldText label="Full name" required value={shipping.name} onChange={(v) => setShip("name", v)} />
@@ -485,7 +530,7 @@ export const CheckoutPage = () => {
                         <FieldText label="Email (optional)" type="email" value={shipping.email} onChange={(v) => setShip("email", v)} />
                         <FieldText label="Address line" required value={shipping.addressLine} onChange={(v) => setShip("addressLine", v)} />
                         <div className="form-grid" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
-                          <FieldText label="Pincode" required pattern="[0-9]{6}" value={shipping.pincode} onChange={onPincodeChange} />
+                          <FieldText label="Pincode" required pattern="[1-9][0-9]{5}" inputMode="numeric" maxLength={6} value={shipping.pincode} onChange={onPincodeChange} />
                           <FieldText label="City" required value={shipping.city} onChange={(v) => setShip("city", v)} />
                           <FieldText label="State" required value={shipping.state} onChange={(v) => setShip("state", v)} />
                         </div>
@@ -719,6 +764,8 @@ const FieldText = ({
   required,
   type = "text",
   pattern,
+  inputMode,
+  maxLength,
 }: {
   label: string;
   value: string;
@@ -726,9 +773,20 @@ const FieldText = ({
   required?: boolean;
   type?: string;
   pattern?: string;
+  inputMode?: "numeric" | "text";
+  maxLength?: number;
 }) => (
   <div className="float-field">
-    <input type={type} placeholder=" " required={required} pattern={pattern} value={value} onChange={(e) => onChange(e.target.value)} />
+    <input
+      type={type}
+      placeholder=" "
+      required={required}
+      pattern={pattern}
+      inputMode={inputMode}
+      maxLength={maxLength}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+    />
     <label>{label}{required && " *"}</label>
   </div>
 );

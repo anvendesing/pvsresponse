@@ -29,7 +29,7 @@ export const HomePage = () => {
   const q = params.get("q") ?? "";
 
   const bestSellers = useMemo(
-    () => products.filter((p) => matches(p, q)),
+    () => products.filter((p) => p.bestSellerEnabled && matches(p, q)),
     [products, q]
   );
 
@@ -107,13 +107,13 @@ export const HomePage = () => {
           {loading ? (
             <SkeletonGrid />
           ) : bestSellers.length > 0 ? (
-            <div className="listing-products-grid">
+            <div className="best-sellers-grid">
               {bestSellers.map((p) => (
                 <ProductCard key={p.id} product={p} badge={badgeFor(p)} />
               ))}
             </div>
           ) : (
-            <EmptyHint message={q ? "No products match your search." : "No products yet."} />
+            <EmptyHint message={q ? "No best sellers match your search." : "No best sellers configured yet."} />
           )}
         </div>
         {error && (
@@ -148,8 +148,8 @@ const badgeFor = (p: CatalogProduct): string => {
 };
 
 const SkeletonGrid = () => (
-  <div className="listing-products-grid">
-    {[0, 1, 2, 3, 4, 5].map((i) => (
+  <div className="best-sellers-grid">
+    {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
       <div
         key={i}
         className="product-card"

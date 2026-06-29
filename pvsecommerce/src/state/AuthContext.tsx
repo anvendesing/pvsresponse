@@ -80,7 +80,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     try {
       const me = await api.me();
       setCustomer(me.customer);
-      setAddresses(me.addresses);
+      setAddresses(Array.isArray(me.addresses) ? me.addresses : []);
     } catch {
       persistToken(null);
       setCustomer(null);
@@ -105,7 +105,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       const res = await api.verifyOtp(phone, code, name, purpose);
       persistToken(res.token);
       setCustomer(res.customer);
-      setAddresses(res.addresses);
+      setAddresses(Array.isArray(res.addresses) ? res.addresses : []);
     },
     [persistToken]
   );

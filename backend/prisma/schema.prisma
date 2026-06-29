@@ -264,6 +264,8 @@ model Product {
   ecommerceEnabled   Boolean              @default(true)
   // When false, hidden from price list editor and bulk-order Excel export.
   priceListEnabled   Boolean              @default(true)
+  // When true, featured on the storefront home "Best Selling Products" grid.
+  bestSellerEnabled  Boolean              @default(false)
   createdAt          DateTime             @default(now())
   updatedAt          DateTime             @updatedAt
   bins               Bin[]

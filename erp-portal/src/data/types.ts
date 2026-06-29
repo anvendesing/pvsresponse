@@ -109,6 +109,8 @@ export interface Product {
   ecommerceEnabled?: boolean;
   /** Listed in price lists and bulk-order export when true. */
   priceListEnabled?: boolean;
+  /** Featured on storefront home "Best Selling Products" when true. */
+  bestSellerEnabled?: boolean;
   variants?: ProductVariant[];
   /** Open PO/MO qty not yet in bins — included on GET /products. */
   pipeline?: {

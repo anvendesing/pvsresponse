@@ -64,9 +64,10 @@ import {
 import { consumeOtpToken, validateOtp } from "../lib/otp.js";
 import { normalizePhone } from "../lib/phone.js";
 import { canonicalCategorySlug } from "../lib/category-slug-map.js";
+import { pincodeSchema } from "../lib/customer-address.js";
 
 const shippingQuoteSchema = z.object({
-  pincode: z.string().trim().min(6).max(10),
+  pincode: pincodeSchema,
   state: z.string().trim().max(80).optional(),
   addressId: z.string().trim().optional(),
   subTotal: z.number().min(0),
@@ -535,6 +536,7 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
         imageHint: p.imageHint ?? null,
         imageUrl: p.imageUrl ?? null,
         imageUpdatedAt: p.updatedAt ? p.updatedAt.getTime() : null,
+        bestSellerEnabled: p.bestSellerEnabled,
         tags: p.tags ? p.tags.split(",").map((t) => t.trim()).filter(Boolean) : [],
         concernSlugs: p.concernLinks
           .filter((l) => l.concern.active)
@@ -609,6 +611,7 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
       ingredients: p.ingredients ?? null,
       imageHint: p.imageHint ?? null,
       imageUrl: p.imageUrl ?? null,
+      bestSellerEnabled: p.bestSellerEnabled,
       tags: p.tags ? p.tags.split(",").map((t) => t.trim()).filter(Boolean) : [],
       concernSlugs: p.concernLinks
         .filter((l) => l.concern.active)
