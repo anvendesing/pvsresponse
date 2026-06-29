@@ -115,6 +115,7 @@
                     "openapi:generate":  "tsx scripts/generate-openapi.ts",
                     "db:export-catalog-seed":  "tsx scripts/export-catalog-seed.ts",
                     "db:import-catalog-seed":  "tsx scripts/import-catalog-seed.ts",
+                    "db:import-from-sqlite":   "tsx scripts/import-from-sqlite.ts",
                     "db:backfill-images":  "tsx scripts/backfill-image-variants.ts",
                     "db:prune-change-log":  "tsx scripts/prune-change-log.ts",
                     "smoke:checkout":  "tsx scripts/smoke-checkout.ts"
