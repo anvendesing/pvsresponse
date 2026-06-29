@@ -1,4 +1,4 @@
-import { findByPincode } from "@twin.techies/india-pincode";
+import { findByPincode } from "@/lib/pincode-browser-shim";
 
 export type PincodePlace = {
   city: string;
@@ -21,8 +21,8 @@ export const lookupIndianPincode = (raw: string): PincodePlace | null => {
   const hit = findByPincode(pin);
   if (!hit) return null;
 
-  const district = hit.district?.trim() || hit.offices[0]?.district?.trim() || "";
-  const city = hit.offices[0]?.city?.trim() || district;
+  const district = hit.district?.trim() || hit.offices?.[0]?.district?.trim() || "";
+  const city = hit.offices?.[0]?.city?.trim() || district;
   const state = hit.state?.trim();
   if (!city || !state) return null;
 

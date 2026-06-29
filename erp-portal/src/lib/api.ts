@@ -607,7 +607,15 @@ export interface TransferOrderItem {
   notes: string | null;
   product: { id: string; sku: string; name: string; uom: string };
   variant: { id: string; sku: string; size: string | null } | null;
-  fromBin: { id: string; code: string | null; zone: string; shelf: string; bin: string; qty: number } | null;
+  fromBin: {
+    id: string;
+    code: string | null;
+    zone: string;
+    shelf: string;
+    bin: string;
+    qty: number;
+    reservedQty?: number;
+  } | null;
   tobin: { id: string; code: string | null; zone: string; shelf: string; bin: string; qty: number } | null;
 }
 
@@ -916,6 +924,7 @@ const adaptWorkOrder = (r: Raw): WorkOrder => {
             workOrderId: rr.workOrderId as string,
             machineId: rr.machineId as string,
             lineId: (rr.lineId as string | null) ?? null,
+            batchSeq: (rr.batchSeq as number) ?? 1,
             plannedQty: (rr.plannedQty as number | null) ?? null,
             inputQty: (rr.inputQty as number) ?? 0,
             goodQty: (rr.goodQty as number) ?? 0,
