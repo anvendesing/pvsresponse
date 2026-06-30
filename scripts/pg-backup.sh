@@ -12,7 +12,8 @@
 #   - /opt/backups directory exists and is writable
 #
 # Restore:
-#   docker exec -i novaerp-postgres-1 pg_restore \
+#   PG=$(docker ps --filter "name=postgres" --format "{{.Names}}" | head -1)
+#   docker exec -i "$PG" pg_restore \
 #     -U novaerp -d novaerp --clean --if-exists \
 #     < /opt/backups/novaerp-YYYY-MM-DD.dump
 #
@@ -20,9 +21,21 @@ set -euo pipefail
 
 BACKUP_DIR="${NOVAERP_BACKUP_DIR:-/opt/backups}"
 RETAIN_DAYS="${NOVAERP_BACKUP_RETAIN_DAYS:-14}"
-CONTAINER="${NOVAERP_PG_CONTAINER:-novaerp-postgres-1}"
 PG_USER="${NOVAERP_PG_USER:-novaerp}"
 PG_DB="${NOVAERP_PG_DB:-novaerp}"
+
+# Auto-detect the running postgres container (works regardless of compose project name)
+CONTAINER="${NOVAERP_PG_CONTAINER:-}"
+if [ -z "$CONTAINER" ]; then
+  CONTAINER=$(docker ps --filter "ancestor=postgres:16-alpine" --filter "status=running" --format "{{.Names}}" | head -1)
+fi
+if [ -z "$CONTAINER" ]; then
+  CONTAINER=$(docker ps --filter "name=postgres" --filter "status=running" --format "{{.Names}}" | head -1)
+fi
+if [ -z "$CONTAINER" ]; then
+  echo "[$(date -Iseconds)] ERROR: No running postgres container found. Is the stack up?"
+  exit 1
+fi
 
 DATE=$(date +%F)
 DUMP_FILE="${BACKUP_DIR}/novaerp-${DATE}.dump"
