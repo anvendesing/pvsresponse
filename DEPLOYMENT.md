@@ -119,6 +119,11 @@ nano .env
 | `JWT_SECRET`       | `openssl rand -hex 64`             | `e3b0c44298fc1c...` (128 chars) |
 | `POSTGRES_PASSWORD`| `openssl rand -hex 32`             | `a7f2c9...` (64 chars) |
 
+> **Important:** also paste the same password into `DATABASE_URL` — replace
+> `CHANGE_ME_SAME_AS_POSTGRES_PASSWORD` with the actual value. `.env` files
+> do **not** expand `${VARIABLE}` references; the URL must contain the
+> literal password string.
+
 **Do not** leave them at the placeholder values. Everything else in `.env` has
 a working default for a standard IP-only deployment.
 
@@ -555,6 +560,16 @@ IMAGE_TAG=sha-9f8e7d6 docker compose pull && docker compose up -d --no-build
 ### `docker compose up` fails: `JWT_SECRET is required`
 You haven't created `.env`. Run `cp .env.deploy.example .env` and set
 `JWT_SECRET` and `POSTGRES_PASSWORD`.
+
+### Backend fails with `DATABASE_URL must start with postgresql://`
+The `.env` file still contains the placeholder or an unexpanded variable.
+Fix it by hardcoding the actual password:
+```bash
+source .env   # load current values into shell
+sed -i "s|^DATABASE_URL=.*|DATABASE_URL=postgresql://novaerp:${POSTGRES_PASSWORD}@postgres:5432/novaerp?schema=public|" .env
+grep DATABASE_URL .env   # confirm the URL now contains the literal password
+docker compose up -d
+```
 
 ### Backend container restarts repeatedly
 ```bash
