@@ -95,23 +95,22 @@ async function pgColumns(table: string): Promise<{ name: string; type: string }[
 }
 
 const ISO_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
-// Unix ms timestamps are large integers (> year 2000 in ms = 946684800000)
-const UNIX_MS_MIN = 946_684_800_000;  // 2000-01-01 in ms
-const UNIX_MS_MAX = 4_102_444_800_000; // 2100-01-01 in ms
+const UNIX_MS_MIN = 946_684_800_000;
+const UNIX_MS_MAX = 4_102_444_800_000;
 
 /** Convert SQLite value to Postgres-compatible JS value */
 function coerce(v: unknown, pgType: string): unknown {
   if (v === null || v === undefined) return null;
-  const isTimestamp = pgType.startsWith("timestamp") || pgType === "date";
-  if (isTimestamp) {
-    // Unix milliseconds stored as integer
-    if (typeof v === "number" && v >= UNIX_MS_MIN && v <= UNIX_MS_MAX) {
-      return new Date(v);
-    }
-    // ISO string
-    if (typeof v === "string" && ISO_PATTERN.test(v)) {
-      return new Date(v);
-    }
+  // SQLite stores booleans as 0/1 integers — convert to true/false
+  if (pgType === "boolean") {
+    if (v === 0 || v === false) return false;
+    if (v === 1 || v === true) return true;
+    return v === "true" || v === "1";
+  }
+  // Convert timestamps
+  if (pgType.startsWith("timestamp") || pgType === "date") {
+    if (typeof v === "number" && v >= UNIX_MS_MIN && v <= UNIX_MS_MAX) return new Date(v);
+    if (typeof v === "string" && ISO_PATTERN.test(v)) return new Date(v);
   }
   return v;
 }
@@ -214,34 +213,39 @@ async function main() {
   await db.$executeRawUnsafe("SET session_replication_role = 'origin'");
 
   // Post-import: wipe all operational/transactional tables so only clean
-  // master data remains. Test-generated invoices, POs, stock ledger etc.
-  // would fail FK constraints anyway — start those fresh on Postgres.
-  console.log("\nCleaning operational tables (keeping master data)...");
-  const OPERATIONAL = [
-    "PackingSlipItem","PackingSlip","PackingContainer","PackingContainerItem",
-    "PickListItem","PickList","Trip",
-    "InvoiceItem","Invoice",
-    "SalesOrderReservation","SalesOrderItem","SalesOrder",
-    "QuoteItem","Quote",
-    "WorkOrderRun","WorkOrderRunBatch","WorkOrder","ProductionOrder",
-    "GrnItem","Grn","PurchaseOrderItem","PurchaseOrder",
-    "TransferOrderItem","TransferOrder",
-    "StockLedger","StockLot","BinCount",
-    "CustomerPaymentAllocation","CustomerPayment","PaymentIntent",
-    "CustomerReturnItem","CustomerReturn","CreditNoteItem","CreditNote",
-    "EnquiryItem","Enquiry",
-    "OtpToken","DevOtpLog",
-    "ChangeLog","Tombstone","AuditLog","SystemEventLog","ScanEvent",
-  ];
-  await db.$executeRawUnsafe("SET session_replication_role = 'replica'");
-  for (const t of OPERATIONAL) {
-    try {
-      await db.$executeRawUnsafe(`TRUNCATE TABLE "${t}" CASCADE`);
-      process.stdout.write(".");
-    } catch { /* table may not exist */ }
+  // master data remains. Use explicit DELETE (not TRUNCATE CASCADE) so we
+  // never accidentally cascade into master-data tables.
+  if (!skipTruncate) {
+    console.log("\nCleaning operational tables (keeping master data)...");
+    const OPERATIONAL = [
+      // Delete children before parents to satisfy FK constraints
+      "PackingSlipItem","PackingContainerItem","PickListItem",
+      "GrnItem","PurchaseOrderItem",
+      "SalesOrderReservation","SalesOrderItem",
+      "InvoiceItem","QuoteItem",
+      "TransferOrderItem",
+      "WorkOrderRun","WorkOrderRunBatch","WorkOrder","ProductionOrder",
+      "PackingSlip","PackingContainer","PickList",
+      "CustomerPaymentAllocation","CustomerPayment","PaymentIntent",
+      "CustomerReturnItem","CustomerReturn","CreditNoteItem","CreditNote",
+      "EnquiryItem","Enquiry",
+      "Invoice","SalesOrder","Quote","Grn","PurchaseOrder",
+      "TransferOrder","Trip",
+      "StockLedger","StockLot","BinCount",
+      "OtpToken","DevOtpLog",
+      "ChangeLog","Tombstone","AuditLog","SystemEventLog","ScanEvent",
+    ];
+    // Disable FK checks so delete order doesn't matter
+    await db.$executeRawUnsafe("SET session_replication_role = 'replica'");
+    for (const t of OPERATIONAL) {
+      try {
+        await db.$executeRawUnsafe(`DELETE FROM "${t}"`);
+        process.stdout.write(".");
+      } catch { /* table may not exist */ }
+    }
+    await db.$executeRawUnsafe("SET session_replication_role = 'origin'");
+    console.log(" done");
   }
-  await db.$executeRawUnsafe("SET session_replication_role = 'origin'");
-  console.log(" done");
 
   sqlite.close();
   await db.$disconnect();
