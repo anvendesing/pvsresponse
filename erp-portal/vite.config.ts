@@ -1,31 +1,17 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import path from "path";
-import { readFileSync } from "fs";
 
-const PINCODE_VIRTUAL = "virtual:pincodes-json";
-const PINCODE_JSON_PATH = path.resolve(
-  __dirname,
-  "node_modules/@twin.techies/india-pincode/data/pincodes.json"
-);
+// Pincode virtual-module plugin is DISABLED.
+// The @twin.techies/india-pincode dataset has stale state boundaries
+// (predates Andhra Pradesh / Telangana bifurcation). The plugin will
+// be restored once a library with current state data is in place.
 
 // Mode-aware config. `--mode mobile` (warehouse APK) builds a slim
 // bundle without the desktop ERP pages and recharts; everything else
 // is the regular web build with both desktop and the /m/* PWA routes.
 export default defineConfig(({ mode }) => ({
   plugins: [
-    {
-      name: "inline-pincodes",
-      resolveId(id) {
-        if (id === PINCODE_VIRTUAL) return "\0" + PINCODE_VIRTUAL;
-      },
-      load(id) {
-        if (id === "\0" + PINCODE_VIRTUAL) {
-          const raw = readFileSync(PINCODE_JSON_PATH, "utf8");
-          return `export default ${raw};`;
-        }
-      },
-    },
     react(),
   ],
   resolve: {

@@ -165,7 +165,7 @@ export const AccountAddresses = () => {
         ) : list.length === 0 ? (
           <p className="muted">No addresses saved yet. Add one below to speed up future checkouts.</p>
         ) : (
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+          <div className="addr-cards-grid">
             {list.map((a) => (
               <div
                 key={a.id}
@@ -217,7 +217,7 @@ export const AccountAddresses = () => {
           <Input label="Full name" value={draft.name} onChange={(v) => setDraft({ ...draft, name: v })} required />
         </div>
         <Input label="Address line" value={draft.addressLine} onChange={(v) => setDraft({ ...draft, addressLine: v })} required />
-        <div className="form-grid" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
+        <div className="form-grid-3">
           <Input label="Pincode" value={draft.pincode} onChange={onPincodeChange} required inputMode="numeric" maxLength={6} pattern="[1-9][0-9]{5}" />
           <Input label="City" value={draft.city} onChange={(v) => setDraft({ ...draft, city: v })} required />
           <Input label="State" value={draft.state} onChange={(v) => setDraft({ ...draft, state: v })} required />

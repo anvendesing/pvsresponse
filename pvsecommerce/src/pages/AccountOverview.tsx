@@ -59,13 +59,7 @@ export const AccountOverview = () => {
         </p>
       </div>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(3, 1fr)",
-          gap: "1rem",
-        }}
-      >
+      <div className="stat-cards-grid">
         <StatCard
           label="Total Orders"
           value={loading ? "…" : String(orders.length)}

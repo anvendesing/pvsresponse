@@ -12,6 +12,7 @@
     "lint": "tsc -b --noEmit"
   },
   "dependencies": {
+    "@tanstack/react-table": "^8.21.3",
     "@twin.techies/india-pincode": "^0.1.5",
     "clsx": "^2.1.1",
     "lucide-react": "^0.453.0",

@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
   Camera,
   CheckCircle2,
@@ -15,6 +15,7 @@ import {
   Trash2,
   Upload,
   Wand2,
+  TableProperties,
   X,
 } from "lucide-react";
 import { Button } from "@/components/common/Button";
@@ -46,6 +47,7 @@ const typeChip = (t: ProductType) => {
 };
 
 export const Products = () => {
+  const navigate = useNavigate();
   const [viewTab, setViewTab] = useState<"products" | "variants">("products");
   const [q, setQ] = useState("");
   const [debouncedQ, setDebouncedQ] = useState("");
@@ -355,6 +357,15 @@ export const Products = () => {
                 Normalize UoMs
               </Button>
             )}
+            <Button
+              variant="outline"
+              size="sm"
+              icon={<TableProperties size={14} />}
+              onClick={() => navigate("/products/bulk-edit")}
+              title="Open spreadsheet-style bulk editor for GST, HSN and stock"
+            >
+              Bulk Edit
+            </Button>
             <Button variant="outline" size="sm" icon={<Upload size={14} />}>
               Import
             </Button>

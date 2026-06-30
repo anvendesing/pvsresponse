@@ -4,6 +4,7 @@ import { WorkspaceProvider } from "./hooks/useWorkspace";
 import { Login } from "./pages/Login";
 import { Dashboard } from "./pages/Dashboard";
 import { Products } from "./pages/Products";
+import { BulkProductEdit } from "./pages/BulkProductEdit";
 import { Inventory } from "./pages/Inventory";
 import { Warehouse } from "./pages/Warehouse";
 import { Transfers } from "./pages/Transfers";
@@ -126,6 +127,7 @@ const App = () => {
         <Route path="/dashboard" element={<Dashboard />} />
 
         <Route path="/products"       element={<RequireRole roles={["supervisor","procurement"]}><Products /></RequireRole>} />
+        <Route path="/products/bulk-edit" element={<RequireRole roles={["supervisor","procurement"]}><BulkProductEdit /></RequireRole>} />
         <Route path="/procurement"    element={<RequireRole roles={["procurement"]}><Procurement /></RequireRole>} />
         <Route path="/price-lists"    element={<RequireRole roles={["procurement"]}><PriceLists /></RequireRole>} />
 

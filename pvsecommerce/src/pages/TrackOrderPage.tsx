@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { ApiError, api, type CustomerOrderRow } from "@/lib/api";
 import { useAuth } from "@/state/AuthContext";
 import { useToast } from "@/state/ToastContext";
+import { usePlatform } from "@/state/PlatformContext";
 import { OrderTimeline } from "@/components/OrderTimeline";
 import { OrderItemsList } from "@/components/OrderItemsList";
 import { inr, dateLong } from "@/lib/format";
@@ -12,6 +13,7 @@ type Step = "form" | "otp" | "result";
 export const TrackOrderPage = () => {
   const auth = useAuth();
   const toast = useToast();
+  const { isPhone } = usePlatform();
   const [step, setStep] = useState<Step>("form");
   const [soNo, setSoNo] = useState("");
   const [phone, setPhone] = useState("");
@@ -69,7 +71,7 @@ export const TrackOrderPage = () => {
 
   return (
     <div style={{ padding: "2.5rem 5%", background: "var(--neutral-light)", minHeight: "70vh" }}>
-      <div className="card-soft" style={{ maxWidth: 640, margin: "0 auto", padding: "2rem" }}>
+      <div className="card-soft" style={{ maxWidth: 640, margin: "0 auto", padding: isPhone ? "1.25rem" : "2rem" }}>
         <h1 className="serif-title" style={{ fontSize: "1.8rem", color: "var(--forest-green-dark)", marginBottom: "0.35rem" }}>
           Track your order
         </h1>

@@ -58,7 +58,7 @@ export const CartPage = () => {
   };
 
   return (
-    <div style={{ padding: "2.5rem 5%", background: "var(--neutral-light)", minHeight: "60vh" }}>
+    <div className="cart-page-wrap">
       <div style={{ maxWidth: 1180, margin: "0 auto" }}>
         <h1
           className="serif-title"
@@ -71,13 +71,7 @@ export const CartPage = () => {
           Your Cart
         </h1>
 
-        <div
-          style={{
-            display: "grid",
-            gap: "2rem",
-            gridTemplateColumns: cart.lines.length === 0 ? "1fr" : "minmax(0, 1fr) 380px",
-          }}
-        >
+        <div className={cart.lines.length === 0 ? undefined : "cart-checkout-grid"}>
           <div>
             {cart.lines.length === 0 ? (
               <div className="card-soft" style={{ textAlign: "center", padding: "3rem" }}>
@@ -94,26 +88,16 @@ export const CartPage = () => {
                   {cart.lines.map((l) => {
                     const key = lineKeyFor(l);
                     return (
-                      <div
-                        key={key}
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "80px 1fr auto",
-                          gap: "1.25rem",
-                          alignItems: "center",
-                          padding: "1.1rem 1.5rem",
-                          borderBottom: "1px solid rgba(34,37,31,0.06)",
-                        }}
-                      >
-                        <div className="cart-line-art" style={{ width: 80, height: 80 }}>
+                      <div key={key} className="cart-line-grid">
+                        <div className="cart-line-art">
                           <PackagingArt kind={l.packagingHint} />
                         </div>
-                        <div>
+                        <div style={{ minWidth: 0 }}>
                           <div style={{ fontWeight: 600 }}>{cartLineDescription(l)}</div>
                           <div style={{ fontSize: "0.78rem", color: "var(--neutral-gray)" }}>
                             {[lineBarcode(l), `${inr(l.rate)} per pack`].filter(Boolean).join(" · ")}
                           </div>
-                          <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginTop: "0.6rem" }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginTop: "0.6rem", flexWrap: "wrap" }}>
                             <span className="qty-pill green" style={{ height: 32 }}>
                               <button type="button" onClick={() => cart.setQty(key, l.qty - 1)}>−</button>
                               <span className="qty-val">{l.qty}</span>
@@ -140,7 +124,7 @@ export const CartPage = () => {
                             </button>
                           </div>
                         </div>
-                        <strong style={{ color: "var(--forest-green)" }} className="tnum">
+                        <strong style={{ color: "var(--forest-green)", whiteSpace: "nowrap" }} className="tnum">
                           {inr(l.qty * l.rate)}
                         </strong>
                       </div>

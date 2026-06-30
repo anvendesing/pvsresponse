@@ -20,6 +20,8 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { pipeline } from "stream/promises";
 import { processImage } from "../lib/image-pipeline.js";
+import { resolvePutawayDestination } from "../lib/putaway.js";
+import { recomputeStockOnHand } from "../lib/bin-stock-update.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -1739,4 +1741,199 @@ export const catalogRoutes = async (app: FastifyInstance) => {
     await recordChange("Customer", id, "delete", found, req.user.sub);
     return reply.code(200).send({ softDeleted: false });
   });
+
+  // ================================================================
+  // Bulk product update
+  // PATCH /products/bulk-update
+  // Accepts an array of rows; per row updates GST rate / HSN code
+  // and/or sets an absolute stock qty with full put-away + ledger.
+  // Returns per-row results so the UI can highlight failures without
+  // blocking successful rows.
+  // ================================================================
+
+  const nextBulkAdjNo = async (tx: typeof db, count: number): Promise<string[]> => {
+    const year = new Date().getUTCFullYear();
+    const prefix = `ADJ-${year}-`;
+    const last = await tx.stockLedger.findFirst({
+      where: { ref: { startsWith: prefix } },
+      orderBy: { ref: "desc" },
+      select: { ref: true },
+    });
+    const base = last ? parseInt(last.ref.slice(prefix.length), 10) || 0 : 0;
+    return Array.from({ length: count }, (_, i) => `${prefix}${String(base + i + 1).padStart(4, "0")}`);
+  };
+
+  app.patch(
+    "/products/bulk-update",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      const bodySchema = z.object({
+        rows: z.array(
+          z.object({
+            productId: z.string().min(1),
+            gstRate: z.number().min(0).max(100).nullable().optional(),
+            hsn: z.string().max(20).nullable().optional(),
+            stockQty: z.number().nonnegative().optional(),
+            warehouseId: z.string().optional(),
+          })
+        ).min(1).max(500),
+      });
+      const { rows } = bodySchema.parse(req.body);
+
+      // Pre-fetch all mentioned products in one query
+      const productIds = [...new Set(rows.map((r) => r.productId))];
+      const products = await db.product.findMany({
+        where: { id: { in: productIds } },
+        select: { id: true, sku: true, gstRate: true, hsn: true, stockOnHand: true },
+      });
+      const productMap = new Map(products.map((p) => [p.id, p]));
+
+      // Rows that need a stock adjustment — collect them first so we can
+      // allocate sequential ADJ reference numbers in a single lookup.
+      const stockRows = rows.filter(
+        (r) => r.stockQty !== undefined && productMap.has(r.productId)
+      );
+      const adjNos: string[] = stockRows.length > 0
+        ? await db.$transaction(async (tx) => nextBulkAdjNo(tx as unknown as typeof db, stockRows.length))
+        : [];
+      let adjNoIdx = 0;
+
+      const results: Array<{
+        productId: string;
+        ok: boolean;
+        stockOnHand?: number;
+        adjRef?: string;
+        error?: string;
+      }> = [];
+
+      for (const row of rows) {
+        const product = productMap.get(row.productId);
+        if (!product) {
+          results.push({ productId: row.productId, ok: false, error: "product_not_found" });
+          continue;
+        }
+
+        try {
+          // 1. Update GST / HSN if supplied
+          const dataUpdate: Record<string, unknown> = {};
+          if (row.gstRate !== undefined) dataUpdate.gstRate = row.gstRate;
+          if (row.hsn !== undefined) dataUpdate.hsn = row.hsn;
+          if (Object.keys(dataUpdate).length > 0) {
+            await db.product.update({ where: { id: row.productId }, data: dataUpdate });
+            void invalidateCatalog({ productId: row.productId });
+          }
+
+          // 2. Stock adjustment with put-away and ledger
+          if (row.stockQty === undefined) {
+            results.push({ productId: row.productId, ok: true });
+            continue;
+          }
+
+          const currentSoh = product.stockOnHand ?? 0;
+          const targetQty = Math.round(row.stockQty);
+          const delta = targetQty - currentSoh;
+
+          if (delta === 0) {
+            results.push({ productId: row.productId, ok: true, stockOnHand: currentSoh });
+            continue;
+          }
+
+          // Resolve put-away destination
+          const dest = await resolvePutawayDestination(
+            row.productId,
+            null,
+            row.warehouseId ?? null
+          );
+
+          const adjRef = adjNos[adjNoIdx++]!;
+
+          if (!dest) {
+            // No warehouse at all — update SOH + ledger without a bin
+            const newSoh = await db.$transaction(async (tx) => {
+              await tx.stockLedger.create({
+                data: {
+                  productId: row.productId,
+                  variantId: null,
+                  warehouseId: row.warehouseId ?? "UNKNOWN",
+                  bin: null,
+                  txnType: "Adjust",
+                  qty: delta,
+                  balance: Math.max(0, currentSoh + delta),
+                  ref: adjRef,
+                },
+              });
+              return recomputeStockOnHand(
+                tx as unknown as typeof db,
+                row.productId,
+                null,
+                delta
+              );
+            });
+            results.push({ productId: row.productId, ok: true, stockOnHand: newSoh, adjRef });
+            continue;
+          }
+
+          const warehouseId = dest.warehouseId;
+          let binId = dest.binId;
+
+          // If put-away returned no bin, auto-pick the best available bin
+          if (!binId) {
+            const autoBin = await db.bin.findFirst({
+              where: { warehouseId, productId: row.productId, variantId: null },
+              orderBy: { qty: "desc" },
+            });
+            binId = autoBin?.id ?? null;
+          }
+
+          const newSoh = await db.$transaction(async (tx) => {
+            let binLabel: string | null = null;
+
+            if (binId) {
+              const bin = await tx.bin.findUnique({ where: { id: binId } });
+              if (bin) {
+                const newBinQty = Math.max(0, (bin.qty ?? 0) + delta);
+                await tx.bin.update({
+                  where: { id: binId },
+                  data: {
+                    qty: newBinQty,
+                    productId: row.productId,
+                  },
+                });
+                binLabel = `${bin.zone}/${bin.shelf}/${bin.bin}`;
+              }
+            }
+
+            await tx.stockLedger.create({
+              data: {
+                productId: row.productId,
+                variantId: null,
+                warehouseId,
+                bin: binLabel,
+                txnType: "Adjust",
+                qty: delta,
+                balance: Math.max(0, currentSoh + delta),
+                ref: adjRef,
+              },
+            });
+
+            return recomputeStockOnHand(
+              tx as unknown as typeof db,
+              row.productId,
+              null,
+              delta
+            );
+          });
+
+          void syncProductStockCache(row.productId);
+          results.push({ productId: row.productId, ok: true, stockOnHand: newSoh, adjRef });
+        } catch (e) {
+          const err = e as Error;
+          results.push({ productId: row.productId, ok: false, error: err.message });
+        }
+      }
+
+      const failed = results.filter((r) => !r.ok).length;
+      return reply.code(failed === results.length ? 400 : 200).send({ results });
+    }
+  );
 };

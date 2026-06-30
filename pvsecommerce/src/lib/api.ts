@@ -26,6 +26,7 @@ export interface ImageSet {
 }
 
 /** Resolve /uploads/… paths for img src (same-origin or dev backend).
+ *  Directory-based image sets (new pipeline, no extension) resolve to medium.jpg.
  *  Optionally appends ?v=<epoch> so updated images bust the SW cache
  *  immediately rather than waiting for expiration.
  */
@@ -34,9 +35,13 @@ export function resolveUploadUrl(
   updatedAt?: Date | string | number | null
 ): string | undefined {
   if (!url) return undefined;
-  const base = url.startsWith("/uploads")
-    ? API_URL ? `${API_URL}${url}` : url
+  // Directory-based image set (no extension) → resolve to medium.jpg fallback
+  const resolved = url.startsWith("/uploads") && !/\.\w{2,5}(\?.*)?$/.test(url)
+    ? `${url}/medium.jpg`
     : url;
+  const base = resolved.startsWith("/uploads")
+    ? API_URL ? `${API_URL}${resolved}` : resolved
+    : resolved;
   if (!updatedAt) return base;
   const epoch =
     updatedAt instanceof Date

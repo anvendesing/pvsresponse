@@ -102,10 +102,8 @@ export const OrderSuccessPage = () => {
               background: "var(--neutral-cream)",
               borderRadius: "var(--radius-md)",
               fontSize: "0.9rem",
-              display: "grid",
-              gap: "0.5rem",
-              gridTemplateColumns: "1fr 1fr",
             }}
+            className="form-grid-2"
           >
             <DocRow label="Sales order" value={displaySoNo} />
             <DocRow label="Invoice" value={liveRow?.invoiceNo ?? order?.invoice.invoiceNo ?? "—"} />

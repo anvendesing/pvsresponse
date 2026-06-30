@@ -119,7 +119,8 @@
                     "db:import-from-sqlite:src": "tsx src/scripts/import-from-sqlite.ts",
                     "db:backfill-images":  "tsx scripts/backfill-image-variants.ts",
                     "db:prune-change-log":  "tsx scripts/prune-change-log.ts",
-                    "smoke:checkout":  "tsx scripts/smoke-checkout.ts"
+                    "smoke:checkout":  "tsx scripts/smoke-checkout.ts",
+                    "shiprocket:rate-test":  "tsx scripts/shiprocket-rate-test.ts"
                 },
     "dependencies":  {
                          "@fastify/cors":  "^10.0.1",

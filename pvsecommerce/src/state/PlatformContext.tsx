@@ -18,17 +18,20 @@ import {
 
 export interface PlatformValue {
   isPhone: boolean;
+  isTablet: boolean;
   isApp: boolean;
   isIOS: boolean;
 }
 
 const PlatformContext = createContext<PlatformValue>({
   isPhone: false,
+  isTablet: false,
   isApp: false,
   isIOS: false,
 });
 
-const PHONE_BREAKPOINT = 720;
+const PHONE_BREAKPOINT = 768;
+const TABLET_BREAKPOINT = 1024;
 
 const detectIsApp = (): boolean => {
   // Capacitor sets window.Capacitor after its bridge script loads.
@@ -43,13 +46,21 @@ const detectIsIOS = (): boolean => {
 
 export const PlatformProvider = ({ children }: { children: ReactNode }) => {
   const [isPhone, setIsPhone] = useState(
-    () => typeof window !== "undefined" && window.innerWidth <= PHONE_BREAKPOINT
+    () => typeof window !== "undefined" && window.innerWidth < PHONE_BREAKPOINT
+  );
+  const [isTablet, setIsTablet] = useState(
+    () =>
+      typeof window !== "undefined" &&
+      window.innerWidth >= PHONE_BREAKPOINT &&
+      window.innerWidth <= TABLET_BREAKPOINT
   );
   const isApp = useMemo(() => detectIsApp(), []);
   const isIOS = useMemo(() => detectIsIOS(), []);
 
   const handleResize = useCallback(() => {
-    setIsPhone(window.innerWidth <= PHONE_BREAKPOINT);
+    const w = window.innerWidth;
+    setIsPhone(w < PHONE_BREAKPOINT);
+    setIsTablet(w >= PHONE_BREAKPOINT && w <= TABLET_BREAKPOINT);
   }, []);
 
   useEffect(() => {
@@ -69,8 +80,8 @@ export const PlatformProvider = ({ children }: { children: ReactNode }) => {
   }, [isApp, isIOS]);
 
   const value = useMemo<PlatformValue>(
-    () => ({ isPhone, isApp, isIOS }),
-    [isPhone, isApp, isIOS]
+    () => ({ isPhone, isTablet, isApp, isIOS }),
+    [isPhone, isTablet, isApp, isIOS]
   );
 
   return <PlatformContext.Provider value={value}>{children}</PlatformContext.Provider>;

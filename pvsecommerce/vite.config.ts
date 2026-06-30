@@ -2,35 +2,13 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 import path from "node:path";
-import { readFileSync } from "node:fs";
-
-// Prakruthivanam storefront. Runs on a separate port (5174) so it can be
-// developed alongside the ERP portal (5173) without collisions. The
-// dev server proxies /v1/* to the NovaERP backend on :4000 so api.ts
-// can use relative paths in both dev and production.
-// Pre-read the pincode JSON so the browser shim can inline it without
-// relying on Node's fs at runtime. We expose it as a virtual module.
-const PINCODE_VIRTUAL = "virtual:pincodes-json";
-const PINCODE_JSON_PATH = path.resolve(
-  __dirname,
-  "node_modules/@twin.techies/india-pincode/data/pincodes.json"
-);
 
 export default defineConfig({
   plugins: [
     // Virtual module that inlines the pincode JSON for the browser shim.
-    {
-      name: "inline-pincodes",
-      resolveId(id) {
-        if (id === PINCODE_VIRTUAL) return "\0" + PINCODE_VIRTUAL;
-      },
-      load(id) {
-        if (id === "\0" + PINCODE_VIRTUAL) {
-          const raw = readFileSync(PINCODE_JSON_PATH, "utf8");
-          return `export default ${raw};`;
-        }
-      },
-    },
+    // DISABLED: pincode autofill is temporarily off (stale state data).
+    // Remove this comment and restore the plugin when switching to a
+    // library with current Telangana/state data.
     react(),
     VitePWA({
       registerType: "prompt",

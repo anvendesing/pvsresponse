@@ -419,7 +419,7 @@ export const CheckoutPage = () => {
             Verify your mobile, confirm delivery within India, then pay securely.
           </p>
 
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) 380px", gap: "2rem" }}>
+          <div className="cart-checkout-grid">
             <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
               <StepCard
                 num={1}
@@ -531,7 +531,7 @@ export const CheckoutPage = () => {
                         </div>
                         <FieldText label="Email (optional)" type="email" value={shipping.email} onChange={(v) => setShip("email", v)} />
                         <FieldText label="Address line" required value={shipping.addressLine} onChange={(v) => setShip("addressLine", v)} />
-                        <div className="form-grid" style={{ gridTemplateColumns: "1fr 1fr 1fr" }}>
+                        <div className="form-grid-3">
                           <FieldText label="Pincode" required pattern="[1-9][0-9]{5}" inputMode="numeric" maxLength={6} value={shipping.pincode} onChange={onPincodeChange} />
                           <FieldText label="City" required value={shipping.city} onChange={(v) => setShip("city", v)} />
                           <FieldText label="State" required value={shipping.state} onChange={(v) => setShip("state", v)} />

@@ -17,16 +17,8 @@ export const AccountLayout = () => {
   if (!auth.user) return null;
 
   return (
-    <div style={{ background: "var(--neutral-light)", minHeight: "70vh", padding: "2rem 5%" }}>
-      <div
-        style={{
-          maxWidth: 1180,
-          margin: "0 auto",
-          display: "grid",
-          gridTemplateColumns: "260px 1fr",
-          gap: "2rem",
-        }}
-      >
+    <div className="account-page-wrap">
+      <div className="account-dash-grid">
         <aside className="card-soft" style={{ alignSelf: "start" }}>
           <div
             style={{
@@ -99,7 +91,7 @@ export const AccountLayout = () => {
           </Link>
         </aside>
 
-        <main>
+        <main style={{ minWidth: 0 }}>
           <Outlet />
         </main>
       </div>

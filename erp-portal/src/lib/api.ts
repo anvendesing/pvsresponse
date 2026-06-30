@@ -21,12 +21,17 @@ const API_URL = RAW_API_URL ? RAW_API_URL.replace(/\/$/, "") : "";
 export const apiEnabled =
   typeof window !== "undefined" || !!API_URL;
 
-/** Turn DB paths like /uploads/products/I61.jpg into a browser-loadable URL. */
+/** Turn DB paths like /uploads/products/I61.jpg into a browser-loadable URL.
+ *  Directory-based image sets (new pipeline, no extension) resolve to medium.jpg.
+ *  Legacy flat-file paths (e.g. /uploads/products/abc.jpg) are returned as-is. */
 export function resolveUploadUrl(url: string | null | undefined): string | undefined {
   if (!url) return undefined;
   if (!url.startsWith("/uploads")) return url;
-  if (API_URL) return `${API_URL}${url}`;
-  return url;
+  // If the path has no file extension it is a directory-based image set —
+  // append /medium.jpg so the browser can load an actual file.
+  const withFile = /\.\w{2,5}(\?.*)?$/.test(url) ? url : `${url}/medium.jpg`;
+  if (API_URL) return `${API_URL}${withFile}`;
+  return withFile;
 }
 
 const TOKEN_KEY = "nova.token";
@@ -2470,6 +2475,26 @@ export const api = {
   ): Promise<Product> => fetcher<Product>(`/products/${id}`, { method: "PATCH", body }),
   deleteProduct: (id: string): Promise<{ ok: boolean }> =>
     fetcher<{ ok: boolean }>(`/products/${id}`, { method: "DELETE" }),
+  // Bulk update products: GST rate, HSN code, and/or stock quantity.
+  // Stock changes trigger put-away rule resolution + ledger entries.
+  bulkUpdateProducts: (
+    rows: Array<{
+      productId: string;
+      gstRate?: number | null;
+      hsn?: string | null;
+      stockQty?: number;
+      warehouseId?: string;
+    }>
+  ) =>
+    fetcher<{
+      results: Array<{
+        productId: string;
+        ok: boolean;
+        stockOnHand?: number;
+        adjRef?: string;
+        error?: string;
+      }>;
+    }>("/products/bulk-update", { method: "PATCH", body: { rows } }),
   // Bulk-coerce all product/variant UoMs to the house pattern: parents
   // in bulk units (kg/L), variants in pieces. Always returns a
   // structured plan; pass `apply: true` to actually run the updates.
