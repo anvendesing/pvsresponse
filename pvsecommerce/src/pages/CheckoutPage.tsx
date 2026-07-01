@@ -16,7 +16,7 @@ import { submitPayuCheckout } from "@/lib/payu";
 import { useCart, lineKeyFor } from "@/state/CartContext";
 import { useAuth } from "@/state/AuthContext";
 import { useToast } from "@/state/ToastContext";
-import { inr, cartLineSummary } from "@/lib/format";
+import { inr, inrFloat, cartLineSummary } from "@/lib/format";
 import { isPlaceholderCustomerName } from "@/lib/customer";
 import {
   extractIndianPincode,
@@ -215,6 +215,7 @@ export const CheckoutPage = () => {
     (taxKind === "inter" ? 0 : goodsTaxFallback - Math.round((goodsTaxFallback / 2) * 100) / 100);
   const igstTotal = shippingQuote?.igstTotal ?? (taxKind === "inter" ? goodsTaxFallback : 0);
   const goodsTax = shippingQuote?.goodsTax ?? goodsTaxFallback;
+  const roundOff = shippingQuote?.roundOff ?? 0;
   const transportTax = selectedOption?.transportTax ?? 0;
   const shippingFee = selectedOption?.fee ?? 0;
   const total = selectedOption?.payableTotal ?? subTotalDisplay + goodsTax + shippingFee + transportTax;
@@ -652,21 +653,24 @@ export const CheckoutPage = () => {
                 ))}
               </div>
               <hr style={{ border: "none", borderTop: "1px solid rgba(34,37,31,0.08)" }} />
-              <Row label="Subtotal (excl. GST)" value={inr(subTotalDisplay)} />
+              <Row label="Subtotal (excl. GST)" value={inrFloat(subTotalDisplay)} />
               <Row label="Shipping" value={shippingFee === 0 ? "FREE" : inr(shippingFee)} />
               {taxKind === "inter" ? (
-                <Row label="IGST (goods)" value={inr(igstTotal)} />
+                <Row label="IGST (goods)" value={inrFloat(igstTotal)} />
               ) : (
                 <>
-                  <Row label="CGST (goods)" value={inr(cgstTotal)} />
-                  <Row label="SGST (goods)" value={inr(sgstTotal)} />
+                  <Row label="CGST (goods)" value={inrFloat(cgstTotal)} />
+                  <Row label="SGST (goods)" value={inrFloat(sgstTotal)} />
                 </>
               )}
               {transportTax > 0 && (
                 <Row
                   label={taxKind === "inter" ? "IGST (shipping)" : "GST (shipping)"}
-                  value={inr(transportTax)}
+                  value={inrFloat(transportTax)}
                 />
+              )}
+              {Math.abs(roundOff) >= 0.001 && (
+                <Row label="Round off" value={inrFloat(roundOff)} />
               )}
               <hr style={{ border: "none", borderTop: "1px solid rgba(34,37,31,0.08)", margin: "0.4rem 0" }} />
               <div style={{ display: "flex", justifyContent: "space-between", fontSize: "1.05rem", fontWeight: 700 }}>

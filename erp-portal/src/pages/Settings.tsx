@@ -32,6 +32,7 @@ import {
   Truck,
   Users,
   Warehouse as WarehouseIcon,
+  Hash,
   Wifi,
   X,
 } from "lucide-react";
@@ -59,6 +60,7 @@ import { RazorpaySettings } from "@/components/settings/RazorpaySettings";
 import { PayuSettings } from "@/components/settings/PayuSettings";
 import { ShiprocketSettings } from "@/components/settings/ShiprocketSettings";
 import { SmsProviderSettings } from "@/components/settings/SmsProviderSettings";
+import { DocumentSeriesManager } from "@/components/settings/DocumentSeriesManager";
 import { SystemLogsViewer } from "@/components/settings/SystemLogsViewer";
 import { DispatchOptionManager } from "@/components/settings/DispatchOptionManager";
 import { ChannelMappingManager } from "@/components/settings/ChannelMappingManager";
@@ -84,6 +86,7 @@ const SECTION_GROUPS: { heading: string; sections: SettingsSection[] }[] = [
   {
     heading: "Sales & fulfilment",
     sections: [
+      { id: "docseries", label: "Document numbering", icon: Hash },
       { id: "dispatch", label: "Dispatch options", icon: Truck },
       { id: "packing", label: "Packing", icon: PackageIcon },
       { id: "containerTypes", label: "Container types", icon: PackageIcon },
@@ -193,6 +196,7 @@ export const Settings = () => {
 
           {active === "categories" && <CategoryManager />}
           {active === "concerns" && <ConcernManager />}
+          {active === "docseries" && <DocumentSeriesManager />}
           {active === "dispatch" && <DispatchOptionManager />}
           {active === "packing" && <PackingSettings />}
           {active === "containerTypes" && <ContainerTypeManager />}
@@ -402,7 +406,7 @@ type FormState = Pick<
   | "bankIfsc"
   | "bankBranch"
   | "upi"
-> & { defaultTaxRate: number; pricingIncludesGst: boolean };
+> & { defaultTaxRate: number; pricingIncludesGst: boolean; transportGstEnabled: boolean };
 
 const blankForm: FormState = {
   legalName: "",
@@ -425,6 +429,7 @@ const blankForm: FormState = {
   fiscalYearStart: "04-01",
   defaultTaxRate: 18,
   pricingIncludesGst: false,
+  transportGstEnabled: true,
   termsDefault: "",
   bankName: "",
   bankAccountNo: "",
@@ -456,6 +461,7 @@ const toForm = (p: CompanyProfile): FormState => ({
   fiscalYearStart: p.fiscalYearStart ?? "04-01",
   defaultTaxRate: p.defaultTaxRate ?? 18,
   pricingIncludesGst: p.pricingIncludesGst ?? false,
+  transportGstEnabled: p.transportGstEnabled ?? true,
   termsDefault: p.termsDefault ?? "",
   bankName: p.bankName ?? "",
   bankAccountNo: p.bankAccountNo ?? "",
@@ -488,6 +494,7 @@ const toPayload = (s: FormState): CompanyProfileUpdate => {
     fiscalYearStart: trim(s.fiscalYearStart) || "04-01",
     defaultTaxRate: Number.isFinite(s.defaultTaxRate) ? s.defaultTaxRate : 18,
     pricingIncludesGst: s.pricingIncludesGst,
+    transportGstEnabled: s.transportGstEnabled,
     termsDefault: nz(s.termsDefault ?? ""),
     bankName: nz(s.bankName ?? ""),
     bankAccountNo: nz(s.bankAccountNo ?? ""),
@@ -706,6 +713,23 @@ const CompanyForm = () => {
               </span>
             </span>
           </label>
+          <label className="col-span-3 flex items-start gap-3 rounded-md border border-border px-3 py-2.5 cursor-pointer hover:bg-canvas">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={form.transportGstEnabled}
+              onChange={(e) => update("transportGstEnabled", e.target.checked)}
+            />
+            <span>
+              <span className="block text-body-sm font-semibold text-ink">
+                Charge 18% GST on transport
+              </span>
+              <span className="block text-caption text-ink-muted mt-0.5">
+                When ON, freight / transport charges attract 18% GST (CGST+SGST or IGST).
+                When OFF, transport is billed at the entered amount with no freight GST.
+              </span>
+            </span>
+          </label>
           <Input
             label="Currency"
             value={form.currency}
@@ -779,7 +803,7 @@ const CompanyForm = () => {
       </Card>
 
       {/* Document numbering */}
-      <Card title="Document Numbering" subtitle="Prefixes for auto-generated document numbers">
+      <Card title="Document Numbering" subtitle="Legacy prefix for the default B2B scheme — manage all schemes under Settings → Document numbering">
         <div className="grid grid-cols-2 gap-3">
           <Input
             label="Quote prefix"
@@ -789,13 +813,13 @@ const CompanyForm = () => {
             helper={`Quotes will look like ${form.quotePrefix || "Q"}-2026-1001`}
           />
           <Input
-            label="Invoice prefix"
+            label="Default invoice prefix"
             value={form.invoicePrefix}
             onChange={(e) =>
               update("invoicePrefix", e.target.value.toUpperCase())
             }
             placeholder="INV"
-            helper={`Invoices will look like ${form.invoicePrefix || "INV"}-2026-1001`}
+            helper={`Updates the B2B default scheme prefix (${form.invoicePrefix || "INV"}-2026-0001)`}
           />
         </div>
       </Card>

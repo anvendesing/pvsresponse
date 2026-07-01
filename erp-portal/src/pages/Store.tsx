@@ -21,7 +21,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { aggregateLineTaxes, computeLineTax } from "@/lib/documentTax";
+import { computeDocumentTax } from "@/lib/documentTax";
 
 const API_URL = (import.meta.env.VITE_API_URL as string | undefined)?.replace(
   /\/$/,
@@ -93,6 +93,14 @@ const inr = (n: number): string =>
     n
   );
 
+const inrPaise = (n: number): string =>
+  new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(n);
+
 // =====================================================================
 // Page component.
 // =====================================================================
@@ -151,21 +159,19 @@ export const Store = () => {
   }, [catalog, search]);
 
   const posTotals = useMemo(() => {
-    const taxKind = "intra" as const;
-    const lines = cart.map((l) =>
-      computeLineTax(
-        { qty: l.qty, rate: l.rate, gstRate: 18 },
-        { inclusive: pricingIncludesGst, taxKind }
-      )
-    );
-    const agg = aggregateLineTaxes(lines);
-    return { ...agg, total: agg.subTotal + agg.tax };
+    const items = cart.map((l) => ({ qty: l.qty, rate: l.rate, gstRate: 18 }));
+    return computeDocumentTax({
+      items,
+      pricingInclusive: pricingIncludesGst,
+      taxKind: "intra",
+    });
   }, [cart, pricingIncludesGst]);
 
   const subTotal = posTotals.subTotal;
   const tax = posTotals.tax;
   const cgstTotal = posTotals.cgstTotal;
   const sgstTotal = posTotals.sgstTotal;
+  const roundOff = posTotals.roundOff;
   const total = posTotals.total;
 
   const addToCart = (p: CatalogProduct, v: Variant): void => {
@@ -338,6 +344,7 @@ export const Store = () => {
               tax={tax}
               cgstTotal={cgstTotal}
               sgstTotal={sgstTotal}
+              roundOff={roundOff}
               total={total}
               busy={busy}
               error={orderError}
@@ -481,6 +488,7 @@ const CartPanel = ({
   tax,
   cgstTotal,
   sgstTotal,
+  roundOff,
   total,
   busy,
   error,
@@ -493,6 +501,7 @@ const CartPanel = ({
   tax: number;
   cgstTotal: number;
   sgstTotal: number;
+  roundOff: number;
   total: number;
   busy: boolean;
   error: string | null;
@@ -559,9 +568,12 @@ const CartPanel = ({
       </div>
     )}
     <dl className="mt-4 space-y-1 border-t border-slate-200 pt-3 text-sm">
-      <Row label="Subtotal (excl. GST)" value={inr(subTotal)} />
-      <Row label="CGST" value={inr(cgstTotal)} />
-      <Row label="SGST" value={inr(sgstTotal)} />
+      <Row label="Subtotal (excl. GST)" value={inrPaise(subTotal)} />
+      <Row label="CGST" value={inrPaise(cgstTotal)} />
+      <Row label="SGST" value={inrPaise(sgstTotal)} />
+      {Math.abs(roundOff) >= 0.001 && (
+        <Row label="Round off" value={inrPaise(roundOff)} />
+      )}
       <Row label="Total" value={inr(total)} bold />
     </dl>
     {error && (

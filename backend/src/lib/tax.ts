@@ -3,11 +3,15 @@
  *
  * Design decisions:
  *  - A numeric `gstRate` (%) lives on Product; ProductVariant may override it.
- *  - Intra-state (same seller + place-of-supply) → CGST + SGST (rate/2 each).
+ *  - Intra-state (same seller + place-of-supply) → CGST + SGST, each computed
+ *    on taxable value at half the headline rate (GSTN invoice practice — equal
+ *    components, not “split total tax in half” which causes ₹0.01 mismatches).
  *  - Inter-state → IGST (full rate).
  *  - When `pricingIncludesGst` is ON, entered rates are treated as GST-inclusive;
  *    taxable value is back-calculated before tax split.
  *  - All rounding is paise-level (Math.round to 2 decimal places).
+ *  - UI tax breakdowns must use paise formatting (inrPaise) — whole-rupee
+ *    display makes 5% GST look like ~6% (e.g. ₹114 + ₹3 + ₹3 vs ₹114.29 + ₹2.86 + ₹2.85).
  */
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -57,12 +61,39 @@ export interface TaxContext {
   placeOfSupplyState: string | null;
   pricingInclusive: boolean;
   defaultGstRate?: number;
+  /** When false, freight is billed without GST (default true). */
+  transportGstEnabled?: boolean;
 }
 
 // GST on freight / goods transport agency services (SAC 9965) in India.
 export const TRANSPORT_GST_RATE = 18;
 
 const round2 = (n: number): number => Math.round(n * 100) / 100;
+
+/** Sum of qty×rate line amounts (MRP / Amount column total). */
+export const sumGrossLineAmounts = (
+  items: Pick<LineInput, "qty" | "rate" | "discount">[]
+): number =>
+  round2(
+    items.reduce(
+      (s, l) => s + round2(l.qty * l.rate * (1 - (l.discount ?? 0) / 100)),
+      0
+    )
+  );
+
+/**
+ * Paise adjustment so taxable + GST + roundOff equals the entered MRP line
+ * totals when pricing is GST-inclusive. Zero when exclusive or already exact.
+ */
+export const computeGoodsRoundOff = (
+  items: Pick<LineInput, "qty" | "rate" | "discount">[],
+  subTotal: number,
+  goodsTax: number,
+  pricingInclusive: boolean
+): number => {
+  if (!pricingInclusive) return 0;
+  return round2(sumGrossLineAmounts(items) - subTotal - goodsTax);
+};
 
 export const isInterState = (
   sellerState?: string | null,
@@ -77,13 +108,31 @@ export const isInterState = (
 export const resolveTaxKind = (ctx: Pick<TaxContext, "sellerState" | "placeOfSupplyState">): TaxKind =>
   isInterState(ctx.sellerState, ctx.placeOfSupplyState) ? "inter" : "intra";
 
-/** Split a total tax amount into CGST+SGST (intra) or IGST (inter). */
+/** @deprecated Prefer splitTaxOnTaxable — splitting total tax in half can make CGST ≠ SGST by ₹0.01. */
 export const splitTaxAmount = (totalTax: number, taxKind: TaxKind): Pick<LineTax, "cgst" | "sgst" | "igst"> => {
   const tax = round2(totalTax);
   if (tax <= 0) return { cgst: 0, sgst: 0, igst: 0 };
   if (taxKind === "inter") return { cgst: 0, sgst: 0, igst: tax };
   const half = round2(tax / 2);
   return { cgst: half, sgst: tax - half, igst: 0 };
+};
+
+/**
+ * GSTN-style split: CGST and SGST each = round2(taxable × halfRate / 100).
+ * Both components are always equal; totalTax = cgst + sgst (or igst inter-state).
+ */
+export const splitTaxOnTaxable = (
+  taxableValue: number,
+  gstRate: number,
+  taxKind: TaxKind
+): Pick<LineTax, "cgst" | "sgst" | "igst"> => {
+  if (gstRate <= 0 || taxableValue <= 0) return { cgst: 0, sgst: 0, igst: 0 };
+  if (taxKind === "inter") {
+    const igst = round2(taxableValue * (gstRate / 100));
+    return { cgst: 0, sgst: 0, igst };
+  }
+  const component = round2(taxableValue * (gstRate / 2 / 100));
+  return { cgst: component, sgst: component, igst: 0 };
 };
 
 /**
@@ -99,17 +148,15 @@ export const computeLineTax = (
   const gstRate = line.gstRate;
 
   let taxableValue: number;
-  let totalTax: number;
 
   if (opts.inclusive && gstRate > 0) {
     taxableValue = round2(grossLine / (1 + gstRate / 100));
-    totalTax = round2(grossLine - taxableValue);
   } else {
     taxableValue = grossLine;
-    totalTax = round2(taxableValue * (gstRate / 100));
   }
 
-  const split = splitTaxAmount(totalTax, opts.taxKind);
+  const split = splitTaxOnTaxable(taxableValue, gstRate, opts.taxKind);
+  const totalTax = round2(split.cgst + split.sgst + split.igst);
   return {
     taxableValue,
     ...split,
@@ -128,8 +175,12 @@ export const aggregateLineTaxes = (lines: LineTax[]): DocumentTaxTotals => {
   return { subTotal, cgstTotal, sgstTotal, igstTotal, tax, lines };
 };
 
-export const computeTransportTax = (charge: number, taxKind: TaxKind = "intra"): LineTax => {
-  if (charge <= 0) {
+export const computeTransportTax = (
+  charge: number,
+  taxKind: TaxKind = "intra",
+  gstEnabled = true
+): LineTax => {
+  if (charge <= 0 || !gstEnabled) {
     return { taxableValue: 0, cgst: 0, sgst: 0, igst: 0, totalTax: 0, gross: 0 };
   }
   return computeLineTax(
@@ -143,9 +194,10 @@ export const computeGrandTotal = (
   subTotal: number,
   goodsTax: number,
   transportCharge: number,
-  taxKind: TaxKind = "intra"
+  taxKind: TaxKind = "intra",
+  transportGstEnabled = true
 ): { transportTax: number; transportCgst: number; transportSgst: number; transportIgst: number; total: number } => {
-  const freight = computeTransportTax(transportCharge, taxKind);
+  const freight = computeTransportTax(transportCharge, taxKind, transportGstEnabled);
   return {
     transportTax: freight.totalTax,
     transportCgst: freight.cgst,

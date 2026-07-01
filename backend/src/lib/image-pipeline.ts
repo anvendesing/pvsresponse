@@ -49,17 +49,25 @@ export async function processImage(
   const dir = path.join(baseDir, subDir, entityId);
   await fs.promises.mkdir(dir, { recursive: true });
 
+  // White background composited before any lossy conversion so that transparent
+  // PNGs (and other alpha-channel images) don't get filled with black.
+  const WHITE = { r: 255, g: 255, b: 255, alpha: 1 };
+
   // Archival copy (rotated, max 3000px to drop very large originals, otherwise untouched)
   const archivalBuf = await sharp(buf)
     .rotate()
     .resize({ width: 3000, withoutEnlargement: true })
+    .flatten({ background: WHITE })
     .jpeg({ quality: 90, progressive: true })
     .toBuffer();
   await fs.promises.writeFile(path.join(dir, "original.jpg"), archivalBuf);
 
   // Responsive variants
   for (const s of SIZES) {
-    const base = sharp(buf).rotate().resize({ width: s.width, withoutEnlargement: true });
+    const base = sharp(buf)
+      .rotate()
+      .resize({ width: s.width, withoutEnlargement: true })
+      .flatten({ background: WHITE });
     await base
       .clone()
       .webp({ quality: s.q })

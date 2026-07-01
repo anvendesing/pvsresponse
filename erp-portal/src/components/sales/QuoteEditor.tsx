@@ -19,12 +19,12 @@ import {
 } from "@/lib/api";
 import type { Product, ProductVariant } from "@/data/types";
 import { effectiveUom } from "@/data/types";
-import { inr, dd } from "@/lib/format";
+import { inr, inrPaise, dd } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { formatScanRef, primaryScanCode } from "@/lib/scanCode";
 import { fmtKg, sumLinesWeightKg } from "@/lib/itemWeight";
 import { searchProductsForSale } from "@/lib/productSearch";
-import { computeLineTax, computeTransportTax, resolveTaxKind } from "@/lib/documentTax";
+import { computeDocumentTax, resolveTaxKind } from "@/lib/documentTax";
 import { RevisionHistory } from "./RevisionHistory";
 import { ShareQuoteMenu } from "./ShareQuoteMenu";
 
@@ -138,6 +138,7 @@ export const QuoteEditor = ({
   const [showRevisions, setShowRevisions] = useState(false);
   const [atpCache, setAtpCache] = useState<Record<string, AtpResult>>({});
   const [pricingIncludesGst, setPricingIncludesGst] = useState(false);
+  const [transportGstEnabled, setTransportGstEnabled] = useState(true);
   const [companyState, setCompanyState] = useState<string | null>(null);
   const searchRef = useRef<HTMLDivElement | null>(null);
 
@@ -154,6 +155,7 @@ export const QuoteEditor = ({
       .getCompanyProfile()
       .then((p) => {
         setPricingIncludesGst(p.pricingIncludesGst ?? false);
+        setTransportGstEnabled(p.transportGstEnabled ?? true);
         setCompanyState(p.state ?? null);
       })
       .catch(() => {});
@@ -224,44 +226,37 @@ export const QuoteEditor = ({
     [companyState, customer?.state]
   );
 
-  const lineTaxes = useMemo(() => {
+  const docTax = useMemo(() => {
     const productMap = new Map((products ?? []).map((p) => [p.id, p]));
-    return lines.map((l) => {
+    const items = lines.map((l) => {
       const product = productMap.get(l.productId);
       const variant = product?.variants?.find((v) => v.id === l.variantId);
       const gstRate = (variant?.gstRate ?? null) ?? product?.gstRate ?? 18;
-      return computeLineTax(
-        { qty: l.qty, rate: l.rate, discount: l.discount, gstRate },
-        { inclusive: pricingIncludesGst, taxKind }
-      );
+      return {
+        qty: l.qty,
+        rate: l.rate,
+        discount: l.discount,
+        gstRate,
+      };
     });
-  }, [lines, products, pricingIncludesGst, taxKind]);
+    return computeDocumentTax({
+      items,
+      transportCharge,
+      pricingInclusive: pricingIncludesGst,
+      taxKind,
+      transportGstEnabled,
+    });
+  }, [lines, products, pricingIncludesGst, transportGstEnabled, taxKind, transportCharge]);
 
-  const subTotal = useMemo(
-    () => Math.round(lineTaxes.reduce((s, l) => s + l.taxableValue, 0) * 100) / 100,
-    [lineTaxes]
-  );
-  const tax = useMemo(
-    () => Math.round(lineTaxes.reduce((s, l) => s + l.totalTax, 0) * 100) / 100,
-    [lineTaxes]
-  );
-  const cgstTotal = useMemo(
-    () => Math.round(lineTaxes.reduce((s, l) => s + l.cgst, 0) * 100) / 100,
-    [lineTaxes]
-  );
-  const sgstTotal = useMemo(
-    () => Math.round(lineTaxes.reduce((s, l) => s + l.sgst, 0) * 100) / 100,
-    [lineTaxes]
-  );
-  const igstTotal = useMemo(
-    () => Math.round(lineTaxes.reduce((s, l) => s + l.igst, 0) * 100) / 100,
-    [lineTaxes]
-  );
-  const transportTax = useMemo(
-    () => computeTransportTax(transportCharge, taxKind).totalTax,
-    [transportCharge, taxKind]
-  );
-  const total = subTotal + tax + transportCharge + transportTax;
+  const subTotal = docTax.subTotal;
+  const tax = docTax.tax;
+  const cgstTotal = docTax.cgstTotal;
+  const sgstTotal = docTax.sgstTotal;
+  const igstTotal = docTax.igstTotal;
+  const transportTaxLine = docTax.transportTaxLine;
+  const transportTax = docTax.transportTax;
+  const roundOff = docTax.roundOff;
+  const total = docTax.total;
 
   // Estimated shipping weight chip — live-derived from current lines
   // so the value updates as the user edits qty / picks a variant.
@@ -1084,13 +1079,13 @@ export const QuoteEditor = ({
 
           <section className="border-t border-border pt-4">
             <div className="grid grid-cols-2 gap-x-8 max-w-md ml-auto text-body-sm">
-              <Row k="Subtotal (excl. GST)" v={inr(subTotal)} />
+              <Row k="Subtotal (excl. GST)" v={inrPaise(subTotal)} />
               {taxKind === "inter" ? (
-                <Row k="IGST (goods)" v={inr(igstTotal)} />
+                <Row k="IGST (goods)" v={inrPaise(igstTotal)} />
               ) : (
                 <>
-                  <Row k="CGST (goods)" v={inr(cgstTotal)} />
-                  <Row k="SGST (goods)" v={inr(sgstTotal)} />
+                  <Row k="CGST (goods)" v={inrPaise(cgstTotal)} />
+                  <Row k="SGST (goods)" v={inrPaise(sgstTotal)} />
                 </>
               )}
               {transportCharge > 0 && (
@@ -1100,14 +1095,17 @@ export const QuoteEditor = ({
                     v={inr(transportCharge)}
                   />
                   {taxKind === "inter" ? (
-                    <Row k="IGST (freight)" v={inr(transportTax)} />
+                    <Row k="IGST (freight)" v={inrPaise(transportTaxLine.igst)} />
                   ) : (
                     <>
-                      <Row k="CGST (freight)" v={inr(Math.round(transportTax / 2))} />
-                      <Row k="SGST (freight)" v={inr(transportTax - Math.round(transportTax / 2))} />
+                      <Row k="CGST (freight)" v={inrPaise(transportTaxLine.cgst)} />
+                      <Row k="SGST (freight)" v={inrPaise(transportTaxLine.sgst)} />
                     </>
                   )}
                 </>
+              )}
+              {Math.abs(roundOff) >= 0.001 && (
+                <Row k="Round off" v={inrPaise(roundOff)} />
               )}
               <Row k="Total" v={inr(total)} big />
               <Row k="Est. shipping weight" v={fmtKg(totalWeightKg)} />

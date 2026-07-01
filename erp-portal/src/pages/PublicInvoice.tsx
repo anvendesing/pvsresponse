@@ -54,6 +54,7 @@ export const PublicInvoice = () => {
         goodsTax: data.tax,
         transportCharge: data.transportCharge,
         transportTax: data.transportTax,
+        roundOff: data.roundOff,
         total: data.amount,
       })
     : null;

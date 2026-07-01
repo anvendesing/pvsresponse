@@ -155,7 +155,26 @@ export const adminLogsRoutes = async (app: FastifyInstance) => {
         orderBy: { createdAt: "desc" },
         take: q.limit,
       });
-      return { rows: rows.map((r) => ({ ...r, createdAt: r.createdAt.toISOString() })) };
+
+      // Resolve customer names for authenticated rows in a single extra query.
+      const customerIds = [...new Set(rows.map((r) => r.customerId).filter((id): id is string => !!id))];
+      const customerMap = new Map<string, { name: string; contact: string | null }>();
+      if (customerIds.length > 0) {
+        const customers = await db.customer.findMany({
+          where: { id: { in: customerIds } },
+          select: { id: true, name: true, contact: true },
+        });
+        for (const c of customers) customerMap.set(c.id, { name: c.name, contact: c.contact });
+      }
+
+      return {
+        rows: rows.map((r) => ({
+          ...r,
+          createdAt: r.createdAt.toISOString(),
+          customerName: r.customerId ? (customerMap.get(r.customerId)?.name ?? null) : null,
+          customerPhone: r.customerId ? (customerMap.get(r.customerId)?.contact ?? null) : null,
+        })),
+      };
     }
   );
 

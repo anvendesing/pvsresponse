@@ -789,6 +789,7 @@ export const returnsRoutes = async (app: FastifyInstance) => {
               placeOfSupplyState: cnDoc.placeOfSupplyState,
               sellerState: cnDoc.sellerState,
               pricingInclusive: cnDoc.pricingInclusive,
+              roundOff: cnDoc.roundOff,
               total: cnTotal,
               createdById: req.user.sub,
               notes: `Credit note for return ${doc.returnNo}`,

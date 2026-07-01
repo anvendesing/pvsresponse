@@ -15,6 +15,7 @@ export const getCompanyTaxContext = async (): Promise<TaxContext> => {
     placeOfSupplyState: profile?.state ?? null,
     pricingInclusive: profile?.pricingIncludesGst ?? false,
     defaultGstRate: profile?.defaultTaxRate ?? 18,
+    transportGstEnabled: profile?.transportGstEnabled ?? true,
   };
   cached = { ctx, at: now };
   return ctx;

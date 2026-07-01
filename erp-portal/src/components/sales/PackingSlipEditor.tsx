@@ -152,6 +152,7 @@ export const PackingSlipEditor = ({ packingSlipId, onClose, onChanged }: Props) 
       taxKind: ps.invoice?.taxKind ?? ps.salesOrder?.taxKind,
       transportCharge: ps.invoice?.transportCharge ?? ps.salesOrder?.transportCharge,
       transportTax: ps.invoice?.transportTax ?? ps.salesOrder?.transportTax,
+      roundOff: ps.invoice?.roundOff ?? ps.salesOrder?.roundOff,
       total: ps.invoice?.amount,
     });
   }, [ps, drafts]);

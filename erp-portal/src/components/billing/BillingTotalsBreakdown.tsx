@@ -1,4 +1,4 @@
-import { inr } from "@/lib/format";
+import { inr, inrPaise } from "@/lib/format";
 import type { BillingTotals } from "@/lib/billingTotals";
 import { cn } from "@/lib/cn";
 
@@ -16,7 +16,7 @@ const TaxRows = ({ totals }: { totals: BillingTotals }) => {
     return (
       <div className="flex justify-between gap-4">
         <span className="text-ink-muted">IGST (goods)</span>
-        <span className="tnum">{inr(totals.igst)}</span>
+        <span className="tnum">{inrPaise(totals.igst)}</span>
       </div>
     );
   }
@@ -24,11 +24,11 @@ const TaxRows = ({ totals }: { totals: BillingTotals }) => {
     <>
       <div className="flex justify-between gap-4">
         <span className="text-ink-muted">CGST (goods)</span>
-        <span className="tnum">{inr(totals.cgst)}</span>
+        <span className="tnum">{inrPaise(totals.cgst)}</span>
       </div>
       <div className="flex justify-between gap-4">
         <span className="text-ink-muted">SGST (goods)</span>
-        <span className="tnum">{inr(totals.sgst)}</span>
+        <span className="tnum">{inrPaise(totals.sgst)}</span>
       </div>
     </>
   );
@@ -40,7 +40,7 @@ const FreightTaxRows = ({ totals }: { totals: BillingTotals }) => {
     return (
       <div className="flex justify-between gap-4">
         <span className="text-ink-muted">IGST on freight (18%)</span>
-        <span className="tnum">{inr(totals.transportIgst)}</span>
+        <span className="tnum">{inrPaise(totals.transportIgst)}</span>
       </div>
     );
   }
@@ -48,11 +48,11 @@ const FreightTaxRows = ({ totals }: { totals: BillingTotals }) => {
     <>
       <div className="flex justify-between gap-4">
         <span className="text-ink-muted">CGST on freight (9%)</span>
-        <span className="tnum">{inr(totals.transportCgst)}</span>
+        <span className="tnum">{inrPaise(totals.transportCgst)}</span>
       </div>
       <div className="flex justify-between gap-4">
         <span className="text-ink-muted">SGST on freight (9%)</span>
-        <span className="tnum">{inr(totals.transportSgst)}</span>
+        <span className="tnum">{inrPaise(totals.transportSgst)}</span>
       </div>
     </>
   );
@@ -70,16 +70,16 @@ export const BillingTotalsBreakdown = ({
   if (variant === "inline") {
     const taxLabel =
       totals.taxKind === "inter"
-        ? `IGST ${inr(totals.igst)}`
-        : `CGST ${inr(totals.cgst)} · SGST ${inr(totals.sgst)}`;
+        ? `IGST ${inrPaise(totals.igst)}`
+        : `CGST ${inrPaise(totals.cgst)} · SGST ${inrPaise(totals.sgst)}`;
     return (
       <div className={cn("text-caption text-ink-muted", className)}>
-        Sub {inr(totals.goodsSubTotal)} · {taxLabel}
+        Sub {inrPaise(totals.goodsSubTotal)} · {taxLabel}
         {hasFreight && (
           <>
             {" "}
             · Freight {inr(totals.transportCharge)}
-            {totals.transportTax > 0 && <> · Freight GST {inr(totals.transportTax)}</>}
+            {totals.transportTax > 0 && <> · Freight GST {inrPaise(totals.transportTax)}</>}
           </>
         )}
       </div>
@@ -90,7 +90,7 @@ export const BillingTotalsBreakdown = ({
     <div className={cn("space-y-1 text-body-sm", className)}>
       <div className="flex justify-between gap-4">
         <span className="text-ink-muted">{goodsSubLabel}</span>
-        <span className="tnum">{inr(totals.goodsSubTotal)}</span>
+        <span className="tnum">{inrPaise(totals.goodsSubTotal)}</span>
       </div>
       <TaxRows totals={totals} />
       {hasFreight && (
@@ -101,6 +101,12 @@ export const BillingTotalsBreakdown = ({
           </div>
           <FreightTaxRows totals={totals} />
         </>
+      )}
+      {Math.abs(totals.roundOff) >= 0.001 && (
+        <div className="flex justify-between gap-4">
+          <span className="text-ink-muted">Round off</span>
+          <span className="tnum">{inrPaise(totals.roundOff)}</span>
+        </div>
       )}
       <div className="flex justify-between gap-4 pt-1 border-t border-border font-bold">
         <span>{totalLabel}</span>

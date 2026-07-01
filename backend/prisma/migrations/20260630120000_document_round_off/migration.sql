@@ -1,0 +1,5 @@
+-- Round-off paise adjustment on GST-inclusive documents (MRP line total vs tax-derived total).
+ALTER TABLE "Quote" ADD COLUMN "roundOff" DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE "SalesOrder" ADD COLUMN "roundOff" DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE "Invoice" ADD COLUMN "roundOff" DOUBLE PRECISION NOT NULL DEFAULT 0;
+ALTER TABLE "CreditNote" ADD COLUMN "roundOff" DOUBLE PRECISION NOT NULL DEFAULT 0;

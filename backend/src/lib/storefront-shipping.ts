@@ -37,6 +37,7 @@ export type ShippingQuote = {
   sgstTotal: number;
   igstTotal: number;
   taxKind: "intra" | "inter";
+  roundOff: number;
   source: "shiprocket" | "fallback";
   options: ShippingOption[];
 };
@@ -132,6 +133,7 @@ async function computeCartGoodsTax(
     sgstTotal: doc.sgstTotal,
     igstTotal: doc.igstTotal,
     taxKind: doc.taxKind,
+    roundOff: doc.roundOff,
   };
 }
 
@@ -154,8 +156,9 @@ const buildOption = (
     },
   });
   const transportTax = fee > 0 ? withFreight.transportTax : 0;
-  const payableTotal =
-    Math.round((goodsDoc.subTotal + goodsDoc.tax + fee + transportTax) * 100) / 100;
+  const payableTotal = Math.round(
+    (goodsDoc.subTotal + goodsDoc.tax + goodsDoc.roundOff + fee + transportTax) * 100
+  ) / 100;
   return {
     id,
     label,
@@ -307,6 +310,7 @@ export async function quoteStorefrontShipping(params: {
       sgstTotal: goods.sgstTotal,
       igstTotal: goods.igstTotal,
       taxKind: goods.taxKind,
+      roundOff: goods.roundOff,
       source,
       options,
     },

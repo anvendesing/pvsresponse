@@ -111,7 +111,7 @@ export const Products = () => {
       cell: (r) => {
         const src = resolveUploadUrl(r.imageUrl) ?? null;
         return src ? (
-          <img src={src} alt={r.name} className="w-9 h-9 object-cover rounded border border-border" />
+          <img src={src} alt={r.name} className="w-9 h-9 object-contain rounded border border-border bg-white" />
         ) : (
           <div
             className="w-9 h-9 rounded border border-border bg-canvas grid place-items-center text-ink-muted"
@@ -249,6 +249,7 @@ export const Products = () => {
           "Parent Name",
           "Type",
           "Variant SKU",
+          "Barcode",
           "Size",
           "Color",
           "UOM",
@@ -262,6 +263,7 @@ export const Products = () => {
           product.name,
           product.type,
           variant.sku,
+          variant.barcode ?? "",
           variant.size ?? "",
           variant.color ?? "",
           variant.uom ?? product.uom,
@@ -502,7 +504,7 @@ export const Products = () => {
                   <img
                     src={resolveUploadUrl(selected.imageUrl)}
                     alt={selected.name}
-                    className="w-full aspect-[4/3] object-cover rounded-lg border border-border"
+                    className="w-full aspect-[4/3] object-contain rounded-lg border border-border bg-white"
                   />
                 ) : (
                   <div className="aspect-[4/3] bg-canvas rounded-lg border-2 border-dashed border-border flex flex-col items-center justify-center gap-2 text-ink-muted">
@@ -1224,9 +1226,9 @@ const VariantImgCell = ({
       title={canUpload ? "Click to upload variant image" : ""}
     >
       {src ? (
-        <img src={src} alt="variant" className="w-full h-full object-cover" />
+        <img src={src} alt="variant" className="w-full h-full object-contain bg-white" />
       ) : (
-        <div className="w-full h-full bg-canvas flex items-center justify-center">
+        <div className="w-full h-full bg-white flex items-center justify-center">
           <ImagePlus size={16} className="text-ink-muted" />
         </div>
       )}

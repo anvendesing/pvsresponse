@@ -345,7 +345,7 @@ export const SystemLogsViewer = () => {
                   <th className="text-left px-3 py-2">Time</th>
                   <th className="text-left px-3 py-2">Event</th>
                   <th className="text-left px-3 py-2">Anon ID</th>
-                  <th className="text-left px-3 py-2">Customer ID</th>
+                  <th className="text-left px-3 py-2">Customer</th>
                   <th className="text-left px-3 py-2">Path / Product</th>
                   <th className="text-left px-3 py-2">IP</th>
                 </tr>
@@ -362,8 +362,12 @@ export const SystemLogsViewer = () => {
                     <td className="px-3 py-2 font-mono text-caption" title={r.anonId}>
                       {r.anonId.slice(0, 8)}…
                     </td>
-                    <td className="px-3 py-2 font-mono text-caption">
-                      {r.customerId ? r.customerId.slice(0, 10) + "…" : <span className="text-ink-muted">anon</span>}
+                    <td className="px-3 py-2 text-body-sm">
+                      {r.customerId
+                        ? r.customerName
+                          ? <span title={r.customerId}>{r.customerName}{r.customerPhone ? <span className="text-ink-muted"> · {r.customerPhone}</span> : null}</span>
+                          : <span className="font-mono text-caption">{r.customerId.slice(0, 10)}…</span>
+                        : <span className="text-ink-muted">anon</span>}
                     </td>
                     <td className="px-3 py-2 max-w-[220px] truncate text-caption">
                       {r.path ?? r.productId ?? "—"}

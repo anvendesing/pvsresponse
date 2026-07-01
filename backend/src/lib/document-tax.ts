@@ -1,5 +1,6 @@
 import {
   aggregateLineTaxes,
+  computeGoodsRoundOff,
   computeLineTax,
   computeTransportTax,
   type LineInput,
@@ -26,6 +27,7 @@ export interface DocumentTaxResult {
   tax: number;
   transportCharge: number;
   transportTax: number;
+  roundOff: number;
   total: number;
   taxKind: TaxKind;
   placeOfSupplyState: string | null;
@@ -46,7 +48,20 @@ export const computeDocumentTax = (input: DocumentTaxInput): DocumentTaxResult =
   });
 
   const agg = aggregateLineTaxes(lineResults);
-  const freight = computeTransportTax(transportCharge, taxCtx.taxKind);
+  const freight = computeTransportTax(
+    transportCharge,
+    taxCtx.taxKind,
+    taxCtx.transportGstEnabled ?? true
+  );
+  const roundOff = computeGoodsRoundOff(
+    items,
+    agg.subTotal,
+    agg.tax,
+    taxCtx.pricingInclusive
+  );
+  const total = Math.round(
+    (agg.subTotal + agg.tax + roundOff + transportCharge + freight.totalTax) * 100
+  ) / 100;
 
   return {
     subTotal: agg.subTotal,
@@ -56,7 +71,8 @@ export const computeDocumentTax = (input: DocumentTaxInput): DocumentTaxResult =
     tax: agg.tax,
     transportCharge,
     transportTax: freight.totalTax,
-    total: Math.round((agg.subTotal + agg.tax + transportCharge + freight.totalTax) * 100) / 100,
+    roundOff,
+    total,
     taxKind: taxCtx.taxKind,
     placeOfSupplyState: taxCtx.placeOfSupplyState,
     sellerState: taxCtx.sellerState,
@@ -77,6 +93,7 @@ export const documentTaxHeaderFields = (doc: DocumentTaxResult) => ({
   pricingInclusive: doc.pricingInclusive,
   transportCharge: doc.transportCharge,
   transportTax: doc.transportTax,
+  roundOff: doc.roundOff,
   total: doc.total,
 });
 

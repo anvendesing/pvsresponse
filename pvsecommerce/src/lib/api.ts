@@ -13,7 +13,9 @@ const getApiOrigin = (): string => {
   if (API_URL) {
     try { return new URL(API_URL).origin; } catch { /* fall through */ }
   }
-  return typeof window !== "undefined" ? window.location.origin : "http://localhost:4000";
+  if (typeof window !== "undefined") return window.location.origin;
+  // SSR / non-browser fallback only. Never hit in the WebView or browser.
+  return "";
 };
 export const API_ORIGIN = getApiOrigin();
 
@@ -79,7 +81,7 @@ export function resolveImageSet(
 
 const buildUrl = (path: string, query?: Record<string, string | number | undefined>): string => {
   const base =
-    API_URL || (typeof window !== "undefined" ? window.location.origin : "http://localhost");
+    API_URL || (typeof window !== "undefined" ? window.location.origin : "");
   const url = new URL(`/v1${path}`, base);
   if (query) {
     for (const [k, v] of Object.entries(query)) {
@@ -149,6 +151,7 @@ export interface CatalogProduct {
   /** Featured on home page best-sellers grid when true. */
   bestSellerEnabled?: boolean;
   tags: string[];
+  searchAliases: string[];
   concernSlugs?: string[];
   concernNames?: string[];
   variants: CatalogVariant[];
@@ -213,6 +216,7 @@ export interface ShippingQuoteResult {
   sgstTotal?: number;
   igstTotal?: number;
   taxKind?: "intra" | "inter";
+  roundOff?: number;
   source: "shiprocket" | "fallback";
   options: ShippingQuoteOption[];
 }

@@ -23,7 +23,7 @@ import {
 } from "../lib/document-weight.js";
 import { recordChange } from "../sync/log.js";
 import { resolveGstRate, computeTransportTax, type TaxKind } from "../lib/tax.js";
-import { getTaxContextForCustomer } from "../lib/company-tax.js";
+import { getCompanyTaxContext, getTaxContextForCustomer } from "../lib/company-tax.js";
 import { computeDocumentTax, documentTaxHeaderFields, lineTaxDbFields } from "../lib/document-tax.js";
 import {
   releaseSalesOrderReservations,
@@ -936,7 +936,8 @@ export const salesRoutes = async (app: FastifyInstance) => {
       body.dispatchOptionId !== undefined
     ) {
       const taxKind = (before.taxKind ?? "intra") as TaxKind;
-      const freight = computeTransportTax(transportCharge, taxKind);
+      const { transportGstEnabled } = await getCompanyTaxContext();
+      const freight = computeTransportTax(transportCharge, taxKind, transportGstEnabled ?? true);
       headerData.transportCharge = transportCharge;
       headerData.transportTax = freight.totalTax;
       headerData.total = before.subTotal + before.tax + transportCharge + freight.totalTax;

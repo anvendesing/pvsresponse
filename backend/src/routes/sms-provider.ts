@@ -1,7 +1,8 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { db } from "../db.js";
-import { maskSmsConfig, sendSms } from "../lib/smsidea.js";
+import { maskSmsConfig, sendOtpSms, sendSms } from "../lib/smsidea.js";
+import { DLT_TEMPLATES } from "../lib/dlt-templates.js";
 import { recordChange } from "../sync/log.js";
 
 const updateSchema = z.object({
@@ -12,6 +13,9 @@ const updateSchema = z.object({
   senderId: z.string().trim().max(40).nullable().optional(),
   templateId: z.string().trim().max(80).nullable().optional(),
   templateText: z.string().trim().max(500).nullable().optional(),
+  orderTemplateId: z.string().trim().max(80).nullable().optional(),
+  orderTemplateText: z.string().trim().max(500).nullable().optional(),
+  peid: z.string().trim().max(80).nullable().optional(),
   active: z.boolean().optional(),
 });
 
@@ -43,9 +47,12 @@ export const smsProviderRoutes = async (app: FastifyInstance) => {
         mode: "test",
         username: null,
         password: null,
-        senderId: null,
-        templateId: null,
-        templateText: "Your PVS verification code is {otp}. Valid for 10 minutes.",
+        senderId: DLT_TEMPLATES.otp.senderId,
+        templateId: DLT_TEMPLATES.otp.templateId,
+        templateText: DLT_TEMPLATES.otp.content,
+        orderTemplateId: DLT_TEMPLATES.orderConfirm.templateId,
+        orderTemplateText: DLT_TEMPLATES.orderConfirm.content,
+        peid: null,
         active: false,
         hasPassword: false,
       };
@@ -66,6 +73,9 @@ export const smsProviderRoutes = async (app: FastifyInstance) => {
       senderId?: string | null;
       templateId?: string | null;
       templateText?: string | null;
+      orderTemplateId?: string | null;
+      orderTemplateText?: string | null;
+      peid?: string | null;
       active?: boolean;
     } = {};
     if (data.provider !== undefined) patch.provider = data.provider;
@@ -75,6 +85,9 @@ export const smsProviderRoutes = async (app: FastifyInstance) => {
     if (data.senderId !== undefined) patch.senderId = data.senderId;
     if (data.templateId !== undefined) patch.templateId = data.templateId;
     if (data.templateText !== undefined) patch.templateText = data.templateText;
+    if (data.orderTemplateId !== undefined) patch.orderTemplateId = data.orderTemplateId;
+    if (data.orderTemplateText !== undefined) patch.orderTemplateText = data.orderTemplateText;
+    if (data.peid !== undefined) patch.peid = data.peid;
     if (data.active !== undefined) patch.active = data.active;
 
     const updated = await db.smsProviderConfig.upsert({
@@ -86,9 +99,11 @@ export const smsProviderRoutes = async (app: FastifyInstance) => {
         username: data.username ?? null,
         password: data.password ?? null,
         senderId: data.senderId ?? null,
-        templateId: data.templateId ?? null,
-        templateText:
-          data.templateText ?? "Your PVS verification code is {otp}. Valid for 10 minutes.",
+        templateId: data.templateId ?? DLT_TEMPLATES.otp.templateId,
+        templateText: data.templateText ?? DLT_TEMPLATES.otp.content,
+        orderTemplateId: data.orderTemplateId ?? DLT_TEMPLATES.orderConfirm.templateId,
+        orderTemplateText: data.orderTemplateText ?? DLT_TEMPLATES.orderConfirm.content,
+        peid: data.peid ?? null,
         active: data.active ?? false,
       },
       update: patch,
@@ -108,8 +123,18 @@ export const smsProviderRoutes = async (app: FastifyInstance) => {
   app.post("/settings/sms-provider/test", { preHandler: [app.authenticate] }, async (req, reply) => {
     if (!requireAdmin(req, reply)) return;
     const body = testSchema.parse(req.body);
-    const message = body.message ?? "PVS SMS test message.";
-    const result = await sendSms(body.phone, message);
+    const credsRow = await db.smsProviderConfig.findUnique({ where: { id: "default" } });
+    if (body.message) {
+      const result = await sendSms(body.phone, body.message, credsRow?.templateId ?? undefined);
+      if (!result.ok) {
+        return reply.code(502).send({
+          error: { code: "send_failed", message: result.error ?? "SMS send failed." },
+        });
+      }
+      return { ok: true, ref: result.ref };
+    }
+
+    const result = await sendOtpSms(body.phone, "123456", "settings_test");
     if (!result.ok) {
       return reply.code(502).send({
         error: { code: "send_failed", message: result.error ?? "SMS send failed." },

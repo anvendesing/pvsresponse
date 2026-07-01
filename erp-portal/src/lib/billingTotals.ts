@@ -3,8 +3,12 @@ export const TRANSPORT_GST_RATE = 18;
 
 export type TaxKind = "intra" | "inter";
 
-export const computeTransportTax = (charge: number, taxKind: TaxKind = "intra"): number => {
-  if (charge <= 0) return 0;
+export const computeTransportTax = (
+  charge: number,
+  taxKind: TaxKind = "intra",
+  gstEnabled = true
+): number => {
+  if (charge <= 0 || !gstEnabled) return 0;
   const tax = Math.round(charge * (TRANSPORT_GST_RATE / 100) * 100) / 100;
   if (taxKind === "inter") return tax;
   return tax;
@@ -22,6 +26,7 @@ export interface BillingTotals {
   transportCgst: number;
   transportSgst: number;
   transportIgst: number;
+  roundOff: number;
   grandTotal: number;
 }
 
@@ -65,11 +70,14 @@ export const resolveBillingTotals = (input: {
   taxKind?: TaxKind | null;
   transportCharge?: number;
   transportTax?: number;
+  transportGstEnabled?: boolean;
+  roundOff?: number;
   total?: number;
 }): BillingTotals => {
   const goodsSubTotal = input.goodsSubTotal ?? input.subTotal ?? 0;
   const goodsTax = input.goodsTax ?? input.tax ?? 0;
   const transportCharge = input.transportCharge ?? 0;
+  const roundOff = input.roundOff ?? 0;
   const split = splitStoredTax(
     goodsTax,
     input.cgstTotal,
@@ -78,11 +86,16 @@ export const resolveBillingTotals = (input: {
     input.taxKind
   );
   const transportTax =
-    input.transportTax ?? (transportCharge > 0 ? computeTransportTax(transportCharge, split.taxKind) : 0);
+    input.transportTax ??
+    (transportCharge > 0
+      ? computeTransportTax(transportCharge, split.taxKind, input.transportGstEnabled ?? true)
+      : 0);
   const freightSplit = splitFreightTax(transportTax, split.taxKind);
-  const computedGrand = goodsSubTotal + goodsTax + transportCharge + transportTax;
+  const computedGrand = goodsSubTotal + goodsTax + roundOff + transportCharge + transportTax;
   const grandTotal =
-    transportCharge > 0 || transportTax > 0 ? computedGrand : (input.total ?? computedGrand);
+    transportCharge > 0 || transportTax > 0 || roundOff !== 0
+      ? computedGrand
+      : (input.total ?? computedGrand);
   return {
     goodsSubTotal,
     goodsTax,
@@ -90,6 +103,7 @@ export const resolveBillingTotals = (input: {
     transportCharge,
     transportTax,
     ...freightSplit,
+    roundOff,
     grandTotal,
   };
 };

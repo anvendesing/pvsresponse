@@ -29,11 +29,9 @@
 
 import type { Prisma, PrismaClient } from "@prisma/client";
 import { mintShareToken } from "../lib/share.js";
-import {
-  nextFulfilmentDocNo,
-  nextImportedInvoiceNo,
-} from "../lib/pick-list-helpers.js";
+import { allocateInvoiceNumber } from "../lib/document-series.js";
 import { computeLineTax, computeTransportTax, type TaxKind } from "../lib/tax.js";
+import { getCompanyTaxContext } from "../lib/company-tax.js";
 import { applyAdvancesToInvoice } from "../routes/customer-payments.js";
 import { recomputeInvoiceWeight } from "../lib/document-weight.js";
 import { aggregateLineTaxes } from "../lib/tax.js";
@@ -84,13 +82,15 @@ export const ensureInvoiceForSalesOrder = async (
 
   const pricingInclusive = so.pricingInclusive ?? false;
 
-  const invoiceNo =
-    so.source === "imported"
-      ? await nextImportedInvoiceNo(2026)
-      : await nextFulfilmentDocNo("INV", 2026, 5500);
+  const { documentNo: invoiceNo, seriesId, seriesSeq } = await allocateInvoiceNumber(
+    client,
+    { customerId: so.customerId, source: so.source }
+  );
   const invoice = await client.invoice.create({
     data: {
       invoiceNo,
+      documentSeriesId: seriesId,
+      seriesSeq,
       shareToken: mintShareToken(),
       customerId: so.customerId,
       salesOrderId: so.id,
@@ -230,7 +230,8 @@ export const reconcileInvoiceWithPack = async (
   }));
   const agg = aggregateLineTaxes(lineTaxes);
   const transportCharge = invoice.transportCharge ?? 0;
-  const freight = computeTransportTax(transportCharge, taxKind);
+  const { transportGstEnabled } = await getCompanyTaxContext();
+  const freight = computeTransportTax(transportCharge, taxKind, transportGstEnabled ?? true);
   await client.invoice.update({
     where: { id: invoiceId },
     data: {

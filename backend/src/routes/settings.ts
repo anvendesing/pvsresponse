@@ -20,6 +20,10 @@ import {
 } from "../lib/container-types-seed.js";
 import { lookupPincodePlace } from "../lib/pincode-lookup.js";
 import { pincodeSchema } from "../lib/customer-address.js";
+import {
+  ensureDocumentSeriesSeeded,
+  previewNextNumber,
+} from "../lib/document-series.js";
 
 const SINGLETON_KEY = "default";
 
@@ -51,6 +55,7 @@ const profileInput = z.object({
     .optional(),
   defaultTaxRate: z.number().min(0).max(100).optional(),
   pricingIncludesGst: z.boolean().optional(),
+  transportGstEnabled: z.boolean().optional(),
   termsDefault: z.string().max(2000).nullable().optional(),
   bankName: z.string().max(100).nullable().optional(),
   bankAccountNo: z.string().max(40).nullable().optional(),
@@ -151,6 +156,12 @@ export const settingsRoutes = async (app: FastifyInstance) => {
         update: body,
         create: { key: SINGLETON_KEY, ...DEFAULT_PROFILE, ...body },
       });
+      if (body.invoicePrefix) {
+        await db.documentSeries.updateMany({
+          where: { code: "B2B", isDefault: true },
+          data: { prefix: body.invoicePrefix },
+        });
+      }
       invalidateCompanyTaxCache();
       await recordChange(
         "CompanyProfile",
@@ -343,6 +354,192 @@ export const settingsRoutes = async (app: FastifyInstance) => {
       }
       await db.containerType.delete({ where: { id } });
       await recordChange("ContainerType", id, "delete", { id }, req.user.sub);
+      return { ok: true };
+    }
+  );
+
+  // -- Document numbering series (admin CRUD) ------------------------------
+  const seriesInput = z.object({
+    code: z
+      .string()
+      .min(1)
+      .max(20)
+      .regex(/^[A-Z0-9_]+$/, "uppercase letters, digits, underscores"),
+    name: z.string().min(1).max(100),
+    documentType: z.enum(["invoice"]).default("invoice"),
+    prefix: z.string().min(1).max(20),
+    pattern: z.string().min(1).max(80),
+    padWidth: z.number().int().min(1).max(10).default(4),
+    startNumber: z.number().int().min(1).default(1),
+    nextNumber: z.number().int().min(1).optional(),
+    resetPeriod: z.enum(["never", "yearly", "fiscal", "monthly"]).default("yearly"),
+    channelSource: z
+      .enum(["internal", "imported", "ecommerce", "pos"])
+      .nullable()
+      .optional(),
+    isDefault: z.boolean().optional(),
+    active: z.boolean().optional(),
+  });
+
+  const seriesUpdate = seriesInput.partial();
+
+  const adminOnly = (role: string) => role === "admin" || role === "supervisor";
+
+  app.get(
+    "/settings/document-series",
+    { preHandler: [app.authenticate] },
+    async () => {
+      await ensureDocumentSeriesSeeded();
+      const profile = await db.companyProfile.findUnique({
+        where: { key: SINGLETON_KEY },
+        select: { fiscalYearStart: true },
+      });
+      const fiscalYearStart = profile?.fiscalYearStart ?? "04-01";
+      const rows = await db.documentSeries.findMany({
+        orderBy: [{ documentType: "asc" }, { code: "asc" }],
+      });
+      return rows.map((r) => ({
+        ...r,
+        previewNext: previewNextNumber(r, fiscalYearStart),
+      }));
+    }
+  );
+
+  app.post(
+    "/settings/document-series",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      if (!adminOnly(req.user.role)) {
+        return reply.code(403).send({ error: { code: "forbidden" } });
+      }
+      const body = seriesInput.parse(req.body);
+      const existing = await db.documentSeries.findUnique({
+        where: { code: body.code },
+      });
+      if (existing) {
+        return reply.code(409).send({
+          error: { code: "duplicate_code", message: `Series code "${body.code}" exists.` },
+        });
+      }
+      if (body.channelSource) {
+        const clash = await db.documentSeries.findFirst({
+          where: {
+            documentType: body.documentType,
+            channelSource: body.channelSource,
+            active: true,
+          },
+        });
+        if (clash) {
+          return reply.code(409).send({
+            error: {
+              code: "channel_taken",
+              message: `Channel "${body.channelSource}" is already mapped to ${clash.code}.`,
+            },
+          });
+        }
+      }
+      const created = await db.$transaction(async (tx) => {
+        if (body.isDefault) {
+          await tx.documentSeries.updateMany({
+            where: { documentType: body.documentType, isDefault: true },
+            data: { isDefault: false },
+          });
+        }
+        return tx.documentSeries.create({
+          data: {
+            ...body,
+            nextNumber: body.nextNumber ?? body.startNumber,
+            channelSource: body.channelSource ?? null,
+            isDefault: body.isDefault ?? false,
+            active: body.active ?? true,
+          },
+        });
+      });
+      await recordChange("DocumentSeries", created.id, "insert", created, req.user.sub);
+      return reply.code(201).send(created);
+    }
+  );
+
+  app.patch(
+    "/settings/document-series/:id",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      if (!adminOnly(req.user.role)) {
+        return reply.code(403).send({ error: { code: "forbidden" } });
+      }
+      const { id } = req.params as { id: string };
+      const body = seriesUpdate.parse(req.body);
+      const existing = await db.documentSeries.findUnique({ where: { id } });
+      if (!existing) {
+        return reply.code(404).send({ error: { code: "not_found" } });
+      }
+      if (body.channelSource && body.channelSource !== existing.channelSource) {
+        const clash = await db.documentSeries.findFirst({
+          where: {
+            id: { not: id },
+            documentType: body.documentType ?? existing.documentType,
+            channelSource: body.channelSource,
+            active: true,
+          },
+        });
+        if (clash) {
+          return reply.code(409).send({
+            error: {
+              code: "channel_taken",
+              message: `Channel "${body.channelSource}" is already mapped to ${clash.code}.`,
+            },
+          });
+        }
+      }
+      const updated = await db.$transaction(async (tx) => {
+        if (body.isDefault) {
+          await tx.documentSeries.updateMany({
+            where: {
+              documentType: body.documentType ?? existing.documentType,
+              isDefault: true,
+              id: { not: id },
+            },
+            data: { isDefault: false },
+          });
+        }
+        return tx.documentSeries.update({ where: { id }, data: body });
+      });
+      await recordChange("DocumentSeries", id, "update", updated, req.user.sub);
+      return updated;
+    }
+  );
+
+  app.delete(
+    "/settings/document-series/:id",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      if (!adminOnly(req.user.role)) {
+        return reply.code(403).send({ error: { code: "forbidden" } });
+      }
+      const { id } = req.params as { id: string };
+      const existing = await db.documentSeries.findUnique({ where: { id } });
+      if (!existing) {
+        return reply.code(404).send({ error: { code: "not_found" } });
+      }
+      if (existing.isDefault) {
+        return reply.code(409).send({
+          error: {
+            code: "default_series",
+            message: "Cannot delete the default series. Assign another default first.",
+          },
+        });
+      }
+      const inUse = await db.invoice.count({ where: { documentSeriesId: id } });
+      if (inUse > 0) {
+        await db.documentSeries.update({
+          where: { id },
+          data: { active: false },
+        });
+        await recordChange("DocumentSeries", id, "update", { id, active: false }, req.user.sub);
+        return { ok: true, softDeleted: true };
+      }
+      await db.documentSeries.delete({ where: { id } });
+      await recordChange("DocumentSeries", id, "delete", { id }, req.user.sub);
       return { ok: true };
     }
   );

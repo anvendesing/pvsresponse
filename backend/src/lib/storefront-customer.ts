@@ -1,6 +1,7 @@
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { db } from "../db.js";
 import { normalizePhone } from "./phone.js";
+import { defaultPriceListIdForCustomerCode } from "./customer-defaults.js";
 import { extractBearerToken, verifyStorefrontToken } from "./storefront-jwt.js";
 
 export type StorefrontUser = {
@@ -304,6 +305,7 @@ export async function findOrCreateCustomerByPhone(phone: string, name?: string) 
     trimmedName && !isPlaceholderCustomerName(trimmedName, normalized)
       ? trimmedName
       : placeholderCustomerName(normalized);
+  const priceListId = await defaultPriceListIdForCustomerCode(code);
 
   const customer = existingCustomer
     ? await db.customer.update({
@@ -315,6 +317,7 @@ export async function findOrCreateCustomerByPhone(phone: string, name?: string) 
           code,
           name: displayName,
           contact: normalized,
+          priceListId,
         },
       });
 

@@ -18,7 +18,8 @@ const matches = (p: CatalogProduct, q: string): boolean => {
     p.name.toLowerCase().includes(needle) ||
     p.sku.toLowerCase().includes(needle) ||
     p.category.toLowerCase().includes(needle) ||
-    p.variants.some((v) => v.sku.toLowerCase().includes(needle))
+    p.variants.some((v) => v.sku.toLowerCase().includes(needle)) ||
+    (p.searchAliases ?? []).some((a) => a.includes(needle))
   );
 };
 

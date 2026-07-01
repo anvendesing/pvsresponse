@@ -82,7 +82,7 @@ export const ProductVariantsTable = ({
           <img
             src={src}
             alt={r.variant.sku}
-            className="w-9 h-9 object-cover rounded border border-border"
+            className="w-9 h-9 object-contain rounded border border-border bg-white"
           />
         ) : (
           <div className="w-9 h-9 rounded border border-border bg-canvas grid place-items-center text-ink-muted">

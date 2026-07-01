@@ -8,6 +8,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { db } from "../db.js";
 import { recordChange } from "../sync/log.js";
+import { defaultPriceListIdForCustomerCode } from "../lib/customer-defaults.js";
 
 const STAGES = ["new", "contacted", "qualified", "proposal", "won", "lost"] as const;
 const TYPES = ["product", "dealership", "farm_visit", "other"] as const;
@@ -369,6 +370,7 @@ export const enquiriesRoutes = async (app: FastifyInstance) => {
 
     if (!customerId) {
       const code = await nextCustomerCode();
+      const priceListId = await defaultPriceListIdForCustomerCode(code, body.priceListId);
       const customer = await db.customer.create({
         data: {
           code,
@@ -376,7 +378,7 @@ export const enquiriesRoutes = async (app: FastifyInstance) => {
           gst: body.gst ?? null,
           city: body.city ?? enquiry.city ?? null,
           contact: body.contact ?? enquiry.phone ?? null,
-          priceListId: body.priceListId ?? null,
+          priceListId,
           creditLimit: body.creditLimit ?? 0,
         },
       });

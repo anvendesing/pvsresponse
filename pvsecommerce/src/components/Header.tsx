@@ -3,7 +3,7 @@
 // the home page uses to filter; for now it just navigates to /?q=...
 
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
-import { useState, type FormEvent } from "react";
+import { useState, useRef, useEffect, useMemo, type FormEvent } from "react";
 import {
   CartIcon,
   HeartIcon,
@@ -14,6 +14,8 @@ import {
 import { useCart } from "@/state/CartContext";
 import { useWishlist } from "@/state/WishlistContext";
 import { useAuth } from "@/state/AuthContext";
+import { useCatalog } from "@/state/CatalogContext";
+import type { CatalogProduct } from "@/lib/api";
 
 interface HeaderProps {
   onOpenMobileDrawer: () => void;
@@ -23,16 +25,94 @@ export const Header = ({ onOpenMobileDrawer }: HeaderProps) => {
   const cart = useCart();
   const wishlist = useWishlist();
   const auth = useAuth();
+  const { products } = useCatalog();
   const [query, setQuery] = useState("");
+  const [dropOpen, setDropOpen] = useState(false);
+  const [activeIdx, setActiveIdx] = useState(-1);
   const navigate = useNavigate();
   const location = useLocation();
+  const searchRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
   const concernNavActive =
     location.pathname === "/concerns" || location.pathname.startsWith("/concern/");
+
+  // Compute suggestions whenever query changes
+  const suggestions = useMemo<CatalogProduct[]>(() => {
+    const q = query.trim();
+    if (q.length < 3) return [];
+    const needle = q.toLowerCase();
+    return products
+      .filter(
+        (p) =>
+          p.name.toLowerCase().includes(needle) ||
+          (p.searchAliases ?? []).some((a) => a.toLowerCase().includes(needle))
+      )
+      .slice(0, 8);
+  }, [query, products]);
+
+  // Open dropdown when there are suggestions
+  useEffect(() => {
+    setDropOpen(suggestions.length > 0);
+    setActiveIdx(-1);
+  }, [suggestions]);
+
+  // Close dropdown on outside click
+  useEffect(() => {
+    const onMouseDown = (e: MouseEvent) => {
+      if (searchRef.current && !searchRef.current.contains(e.target as Node)) {
+        setDropOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onMouseDown);
+    return () => document.removeEventListener("mousedown", onMouseDown);
+  }, []);
+
+  const handleQueryChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setQuery(e.target.value);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (!dropOpen || suggestions.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActiveIdx((i) => Math.min(i + 1, suggestions.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActiveIdx((i) => Math.max(i - 1, -1));
+    } else if (e.key === "Escape") {
+      setDropOpen(false);
+      setActiveIdx(-1);
+    } else if (e.key === "Enter" && activeIdx >= 0) {
+      e.preventDefault();
+      pickProduct(suggestions[activeIdx]);
+    }
+  };
 
   const submitSearch = (e: FormEvent) => {
     e.preventDefault();
     const q = query.trim();
+    setDropOpen(false);
     navigate(q ? `/?q=${encodeURIComponent(q)}` : "/");
+  };
+
+  const pickProduct = (p: CatalogProduct) => {
+    setQuery("");
+    setDropOpen(false);
+    navigate(`/product/${p.id}`);
+  };
+
+  // Highlight matching portion of text
+  const highlight = (text: string, needle: string) => {
+    const idx = text.toLowerCase().indexOf(needle.toLowerCase());
+    if (idx === -1) return <>{text}</>;
+    return (
+      <>
+        {text.slice(0, idx)}
+        <mark className="search-highlight">{text.slice(idx, idx + needle.length)}</mark>
+        {text.slice(idx + needle.length)}
+      </>
+    );
   };
 
   return (
@@ -69,19 +149,100 @@ export const Header = ({ onOpenMobileDrawer }: HeaderProps) => {
             />
           </Link>
 
-          <form className="search-shell" onSubmit={submitSearch}>
-            <input
-              type="text"
-              className="search-input"
-              placeholder="Search for products..."
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              aria-label="Search products"
-            />
-            <button className="search-trigger" type="submit" aria-label="Search">
-              <SearchIcon />
-            </button>
-          </form>
+          {/* Search with typeahead dropdown */}
+          <div className="search-shell" ref={searchRef} style={{ position: "relative", overflow: "visible" }}>
+            <form onSubmit={submitSearch} style={{ display: "contents" }}>
+              <input
+                ref={inputRef}
+                type="text"
+                className="search-input"
+                placeholder="Search products, herbs, remedies…"
+                value={query}
+                onChange={handleQueryChange}
+                onKeyDown={handleKeyDown}
+                onFocus={() => suggestions.length > 0 && setDropOpen(true)}
+                aria-label="Search products"
+                aria-autocomplete="list"
+                aria-expanded={dropOpen}
+                aria-controls="search-suggestions"
+                autoComplete="off"
+              />
+              <button className="search-trigger" type="submit" aria-label="Search">
+                <SearchIcon />
+              </button>
+            </form>
+
+            {dropOpen && suggestions.length > 0 && (
+              <ul
+                id="search-suggestions"
+                className="search-dropdown"
+                role="listbox"
+                aria-label="Search suggestions"
+              >
+                {suggestions.map((p, i) => (
+                  <li
+                    key={p.id}
+                    role="option"
+                    aria-selected={i === activeIdx}
+                    className={`search-dropdown__item${i === activeIdx ? " search-dropdown__item--active" : ""}`}
+                    onMouseEnter={() => setActiveIdx(i)}
+                    onMouseDown={(e) => {
+                      e.preventDefault(); // prevent input blur before click
+                      pickProduct(p);
+                    }}
+                  >
+                    {p.image && (
+                      <img
+                        src={p.image}
+                        alt=""
+                        className="search-dropdown__thumb"
+                        loading="lazy"
+                      />
+                    )}
+                    <div className="search-dropdown__info">
+                      <span className="search-dropdown__name">
+                        {highlight(p.name, query.trim())}
+                      </span>
+                      <div className="search-dropdown__meta">
+                        {p.category && (
+                          <span className="search-dropdown__cat">{p.category}</span>
+                        )}
+                        {p.searchAliases && p.searchAliases.length > 0 && (
+                          <span
+                            className="search-dropdown__aliases"
+                            title={p.searchAliases.join(" · ")}
+                          >
+                            {p.searchAliases.slice(0, 3).join(" · ")}
+                            {p.searchAliases.length > 3 && (
+                              <span className="search-dropdown__aliases-more">
+                                {" "}+{p.searchAliases.length - 3} more
+                              </span>
+                            )}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <svg className="search-dropdown__arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}>
+                      <polyline points="9 18 15 12 9 6" />
+                    </svg>
+                  </li>
+                ))}
+                <li className="search-dropdown__footer" role="presentation">
+                  <button
+                    type="button"
+                    className="search-dropdown__see-all"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      setDropOpen(false);
+                      navigate(`/?q=${encodeURIComponent(query.trim())}`);
+                    }}
+                  >
+                    See all results for "<strong>{query.trim()}</strong>"
+                  </button>
+                </li>
+              </ul>
+            )}
+          </div>
 
           <div className="header-utils">
             <button

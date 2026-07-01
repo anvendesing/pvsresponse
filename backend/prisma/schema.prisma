@@ -258,6 +258,7 @@ model Product {
   description        String? // short product description shown on detail page
   ingredients        String? // free-form ingredients / what's inside text
   tags               String? // comma-separated search/filter tags
+  searchAliases      String? // comma-separated alternate/regional names (e.g. "amla, gooseberry, usiri")
   imageHint          String? // e.g. "oils" | "millets" | "soap" for PackagingArt
   imageUrl           String? // optional product photo path (relative to API origin) e.g. /uploads/products/abc.jpg
   // When false, hidden from storefront / ecommerce catalog UIs.
@@ -445,6 +446,9 @@ model Customer {
   // null => fall through to product default selling price.
   priceListId     String?
   priceList       PriceList?        @relation(fields: [priceListId], references: [id])
+  // Optional invoice numbering scheme override (null → channel default).
+  documentSeriesId String?
+  documentSeries   DocumentSeries?  @relation(fields: [documentSeriesId], references: [id])
   active          Boolean           @default(true)
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
@@ -459,6 +463,7 @@ model Customer {
   enquiries       Enquiry[]
 
   @@index([priceListId])
+  @@index([documentSeriesId])
 }
 
 // ─── CRM: Enquiries / leads pipeline ──────────────────────────────────────
@@ -652,8 +657,11 @@ model SmsProviderConfig {
   username     String?
   password     String?
   senderId     String?
-  templateId   String?
-  templateText String?
+  templateId   String? // DLT template id for OTP
+  templateText String? // DLT OTP template body (must match registration)
+  orderTemplateId   String?
+  orderTemplateText String?
+  peid         String? // DLT Principal Entity ID
   active       Boolean  @default(false)
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -1538,6 +1546,7 @@ model Invoice {
   pricingInclusive   Boolean                     @default(false)
   transportCharge    Float                       @default(0)
   transportTax       Float                       @default(0)
+  roundOff           Float                       @default(0)
   // Estimated shipping weight in kg. For invoices generated from a
   // PackingSlip we copy the cached slip total (which folds in actual
   // scale readings when present); for direct/walk-in invoices we
@@ -1547,12 +1556,16 @@ model Invoice {
   paymentMode        String // cash | card | upi | credit | split
   dispatchOptionId   String?
   notes              String?
+  // Numbering scheme used when this invoice was minted (audit trail).
+  documentSeriesId   String?
+  seriesSeq          Int?
   createdAt          DateTime                    @default(now())
   updatedAt          DateTime                    @updatedAt
   customer           Customer                    @relation(fields: [customerId], references: [id])
   salesOrder         SalesOrder?                 @relation(fields: [salesOrderId], references: [id])
   packingSlip        PackingSlip?                @relation(fields: [packingSlipId], references: [id])
   dispatchOption     DispatchOption?             @relation(fields: [dispatchOptionId], references: [id])
+  documentSeries     DocumentSeries?             @relation(fields: [documentSeriesId], references: [id])
   items              InvoiceItem[]
   paymentAllocations CustomerPaymentAllocation[]
   dispatches         DispatchOrder[]
@@ -1563,6 +1576,7 @@ model Invoice {
   @@index([customerId])
   @@index([salesOrderId])
   @@index([dispatchOptionId])
+  @@index([documentSeriesId])
 }
 
 model InvoiceItem {
@@ -1756,6 +1770,7 @@ model Quote {
   // transportTax at 18% (SAC 9965 — goods transport agency services).
   transportCharge       Float           @default(0)
   transportTax          Float           @default(0)
+  roundOff              Float           @default(0)
   total                 Float           @default(0)
   // Estimated shipping weight in kg: sum(item.qty * unitWeightKg(variant, product)).
   // Recomputed on every item mutation by recomputeQuoteWeight() so the
@@ -1860,6 +1875,7 @@ model SalesOrder {
   pricingInclusive Boolean          @default(false)
   transportCharge  Float            @default(0)
   transportTax     Float            @default(0)
+  roundOff         Float            @default(0)
   total            Float            @default(0)
   // Estimated shipping weight in kg. Inherited from Quote.totalWeightKg
   // on confirmation and re-derived on any line edit. Trip planning uses
@@ -2376,6 +2392,34 @@ model SyncConflict {
 // Settings
 // =====================================================================
 
+// Configurable document numbering schemes (invoice, quote, etc.).
+// Each scheme holds an atomic counter; invoices store which scheme was used.
+model DocumentSeries {
+  id            String     @id @default(cuid())
+  code          String     @unique
+  name          String
+  documentType  String     @default("invoice") // invoice | quote | sales_order | credit_note
+  prefix        String     @default("INV")
+  // Tokens: {PREFIX} {YYYY} {YY} {FY} {MM} {SEQ}
+  pattern       String     @default("{PREFIX}-{YYYY}-{SEQ}")
+  padWidth      Int        @default(4)
+  startNumber   Int        @default(1)
+  nextNumber    Int        @default(1)
+  resetPeriod   String     @default("yearly") // never | yearly | fiscal | monthly
+  lastPeriodKey String?
+  // Auto-route when SalesOrder.source / POS channel matches (imported, ecommerce, internal, pos).
+  channelSource String?
+  isDefault     Boolean    @default(false)
+  active        Boolean    @default(true)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  customers     Customer[]
+  invoices      Invoice[]
+
+  @@index([documentType, active])
+  @@index([channelSource])
+}
+
 // Singleton row that holds the deployment's company identity.
 // Used on invoices, quotes (including the public share viewer), POS receipts,
 // e-Way bill payloads, and SMS sender config.
@@ -2406,6 +2450,7 @@ model CompanyProfile {
   fiscalYearStart             String   @default("04-01") // MM-DD; India default = 1 Apr
   defaultTaxRate              Float    @default(18) // % GST applied if product has none
   pricingIncludesGst          Boolean  @default(false) // when true, catalog/list prices include GST
+  transportGstEnabled         Boolean  @default(true) // when true, freight charges attract 18% GST
   termsDefault                String?
   bankName                    String?
   bankAccountNo               String?
@@ -2511,6 +2556,7 @@ model CreditNote {
   placeOfSupplyState String?
   sellerState       String?
   pricingInclusive  Boolean          @default(false)
+  roundOff          Float            @default(0)
   total             Float
   status            String           @default("issued") // issued | applied
   notes             String?

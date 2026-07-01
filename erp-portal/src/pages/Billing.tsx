@@ -31,10 +31,10 @@ import { InvoiceDetail } from "@/components/billing/InvoiceDetail";
 import { useApi } from "@/hooks/useApi";
 import type { Invoice, Product, ProductVariant } from "@/data/types";
 import { effectiveUom } from "@/data/types";
-import { dd, dt, inr } from "@/lib/format";
+import { computeDocumentTax } from "@/lib/documentTax";
+import { dd, dt, inr, inrPaise } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { effectivePrice, searchProductsForSale, variantLabel } from "@/lib/productSearch";
-import { aggregateLineTaxes, computeLineTax } from "@/lib/documentTax";
 import { formatScanRef, primaryScanCode } from "@/lib/scanCode";
 
 interface Line {
@@ -153,23 +153,24 @@ export const Billing = () => {
 
   const posTax = useMemo(() => {
     const taxKind = "intra" as const;
-    const computed = lines.map((l) => {
+    const items = lines.map((l) => {
       const p = products.find((x) => x.id === l.productId);
       const v = p?.variants?.find((x) => x.id === l.variantId);
       const gstRate = (v?.gstRate ?? null) ?? p?.gstRate ?? 18;
-      return computeLineTax(
-        { qty: l.qty, rate: l.price, gstRate },
-        { inclusive: pricingIncludesGst, taxKind }
-      );
+      return { qty: l.qty, rate: l.price, gstRate };
     });
-    const agg = aggregateLineTaxes(computed);
-    return { ...agg, taxKind, total: agg.subTotal + agg.tax };
+    return computeDocumentTax({
+      items,
+      pricingInclusive: pricingIncludesGst,
+      taxKind,
+    });
   }, [lines, products, pricingIncludesGst]);
 
   const subTotal = posTax.subTotal;
   const tax = posTax.tax;
   const cgstTotal = posTax.cgstTotal;
   const sgstTotal = posTax.sgstTotal;
+  const roundOff = posTax.roundOff;
   const total = posTax.total;
 
   const customer = customers.find((c) => c.id === customerId);
@@ -969,9 +970,12 @@ export const Billing = () => {
                   )}
                 </div>
                 <div className="border border-border rounded-md p-3 bg-canvas">
-                  <Row k="Subtotal (excl. GST)" v={inr(subTotal)} />
-                  <Row k="CGST" v={inr(cgstTotal)} />
-                  <Row k="SGST" v={inr(sgstTotal)} />
+                  <Row k="Subtotal (excl. GST)" v={inrPaise(subTotal)} />
+                  <Row k="CGST" v={inrPaise(cgstTotal)} />
+                  <Row k="SGST" v={inrPaise(sgstTotal)} />
+                  {Math.abs(roundOff) >= 0.001 && (
+                    <Row k="Round off" v={inrPaise(roundOff)} />
+                  )}
                   <Row k="Discount" v="—" />
                   <div className="border-t border-border my-2" />
                   <Row k="Total" v={inr(total)} big />

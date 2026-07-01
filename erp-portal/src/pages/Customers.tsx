@@ -16,6 +16,7 @@ import {
   type CustomerInput,
   type CustomerRow,
   type CustomerStatement,
+  type InvoiceSeriesOption,
   type PriceListRow,
 } from "@/lib/api";
 import { inr, arBalanceInr } from "@/lib/format";
@@ -45,9 +46,11 @@ export const Customers = () => {
   // can flip between Active / Inactive / All without re-fetching.
   const live = useApi(() => api.customers({ includeInactive: true }), []);
   const livePriceLists = useApi<PriceListRow[]>(() => api.priceLists(), []);
+  const liveInvoiceSeries = useApi<InvoiceSeriesOption[]>(() => api.listInvoiceSeries(), []);
 
   const customers = live.data ?? [];
   const priceLists = livePriceLists.data ?? [];
+  const invoiceSeries = liveInvoiceSeries.data ?? [];
 
   const filtered = useMemo(() => {
     const term = q.trim().toLowerCase();
@@ -375,6 +378,7 @@ export const Customers = () => {
         <CustomerEditor
           customer={editing}
           priceLists={priceLists}
+          invoiceSeries={invoiceSeries}
           onClose={() => setEditorOpen(false)}
           onSaved={(saved, mode) => {
             setEditorOpen(false);
@@ -418,12 +422,14 @@ export const Customers = () => {
 const CustomerEditor = ({
   customer,
   priceLists,
+  invoiceSeries,
   onClose,
   onSaved,
   onDeleted,
 }: {
   customer: CustomerRow | null;
   priceLists: PriceListRow[];
+  invoiceSeries: InvoiceSeriesOption[];
   onClose: () => void;
   onSaved: (saved: CustomerRow, mode: "create" | "edit") => void;
   onDeleted: (
@@ -449,10 +455,23 @@ const CustomerEditor = ({
   const [contact, setContact] = useState(customer?.contact ?? "");
   const [creditLimit, setCreditLimit] = useState<number>(customer?.creditLimit ?? 0);
   const [priceListId, setPriceListId] = useState<string>(customer?.priceListId ?? "");
+  const [documentSeriesId, setDocumentSeriesId] = useState<string>(
+    customer?.documentSeriesId ?? ""
+  );
   const [active, setActive] = useState<boolean>(customer?.active !== false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const lastAutofillPinRef = useRef(customer?.pincode?.replace(/\D/g, "").slice(0, 6) ?? "");
+
+  useEffect(() => {
+    if (isEdit || priceLists.length === 0) return;
+    const retail = priceLists.find((p) => p.code === "RETAIL");
+    const dealer = priceLists.find((p) => p.code === "DEALER");
+    const trimmed = code.trim();
+    const isSystemCode = !trimmed || /^CUST-\d+$/i.test(trimmed);
+    const nextId = isSystemCode ? retail?.id : dealer?.id;
+    if (nextId) setPriceListId(nextId);
+  }, [code, isEdit, priceLists]);
 
   const pincodeError = validatePincode(pincode);
   const canSave =
@@ -512,6 +531,7 @@ const CustomerEditor = ({
         contact: contact.trim() || null,
         creditLimit: Number.isFinite(creditLimit) ? Math.max(0, creditLimit) : 0,
         priceListId: priceListId || null,
+        documentSeriesId: documentSeriesId || null,
         active,
       };
       if (isEdit && customer) {
@@ -705,6 +725,26 @@ const CustomerEditor = ({
                         : ""}
                     </option>
                   ))}
+              </select>
+            </Field>
+            <Field
+              label="Invoice numbering scheme"
+              hint="Optional — overrides channel default for this customer's invoices"
+              className="col-span-2"
+            >
+              <select
+                className="h-9 w-full bg-surface border border-border rounded-md px-2 text-body-sm"
+                value={documentSeriesId}
+                onChange={(e) => setDocumentSeriesId(e.target.value)}
+                disabled={busy}
+              >
+                <option value="">Channel / company default</option>
+                {invoiceSeries.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.code} · {s.name}
+                    {s.isDefault ? " (default)" : ""}
+                  </option>
+                ))}
               </select>
             </Field>
             {isEdit && (

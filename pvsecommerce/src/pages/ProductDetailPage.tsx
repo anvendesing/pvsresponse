@@ -99,13 +99,13 @@ export const ProductDetailPage = () => {
   const descriptionText =
     product.description ??
     `${product.name} is a premium natural product from the farms of Prakruthivanam. ` +
-      `Made with care and sourced directly from organic farms, it preserves the ` +
+      `Made with care and sourced directly from certified farms, it preserves the ` +
       `goodness of nature for your everyday wellness.`;
 
   const ingredientsText =
     product.ingredients ??
-    `100% natural ${product.name.toLowerCase()}. No artificial additives, ` +
-      `preservatives, or colorants. Sourced from certified organic farms.`;
+    `100% natural ${product.name.toLowerCase()}. No artificial additives, preservatives, or colorants. ` +
+      `Sourced from certified farms.`;
 
   return (
     <main className="pdp-page">
@@ -305,7 +305,7 @@ export const ProductDetailPage = () => {
               <ul className="pdp-benefits">
                 <li>Rich in natural nutrients and antioxidants</li>
                 <li>Free from chemical processing</li>
-                <li>Ethically sourced from small-scale organic farms</li>
+                <li>Ethically sourced from small-scale certified farms</li>
                 <li>Suitable for everyday use</li>
               </ul>
             </div>
@@ -314,18 +314,26 @@ export const ProductDetailPage = () => {
           {tab === "ingredients" && (
             <div className="pdp-ingredients">
               <p className="pdp-ingredients-intro">{ingredientsText}</p>
-              <div className="pdp-ingredients-grid">
-                {ingredientsText
-                  .split(/[,\n]/)
-                  .map((item) => item.trim())
-                  .filter(Boolean)
-                  .map((item, i) => (
-                    <div key={i} className="pdp-ingredient-card">
-                      <span className="pdp-ingredient-icon">🌱</span>
-                      <span>{item}</span>
-                    </div>
-                  ))}
-              </div>
+              {(() => {
+                // Only build ingredient cards when the text contains newline-separated items
+                // (i.e. real structured ingredient data from the DB). The fallback sentence
+                // is a single paragraph and should not be split into cards.
+                const cards = ingredientsText
+                  .split(/\n/)
+                  .map((item) => item.replace(/^[-•*]\s*/, "").trim())
+                  .filter((item) => item.length > 0);
+                if (cards.length <= 1) return null;
+                return (
+                  <div className="pdp-ingredients-grid">
+                    {cards.map((item, i) => (
+                      <div key={i} className="pdp-ingredient-card">
+                        <span className="pdp-ingredient-icon">🌱</span>
+                        <span>{item}</span>
+                      </div>
+                    ))}
+                  </div>
+                );
+              })()}
             </div>
           )}
 

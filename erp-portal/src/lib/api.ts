@@ -320,6 +320,14 @@ export interface CustomerRow {
     multiplier?: number;
     basis?: string;
   } | null;
+  documentSeriesId?: string | null;
+  documentSeries?: {
+    id: string;
+    code: string;
+    name: string;
+    prefix: string;
+    pattern: string;
+  } | null;
   active?: boolean;
   // Populated by /customers and /customers/:id so the UI can show
   // transaction counts and disable hard-delete when history exists.
@@ -418,6 +426,7 @@ export interface CustomerInput {
   contact?: string | null;
   creditLimit?: number;
   priceListId?: string | null;
+  documentSeriesId?: string | null;
   active?: boolean;
 }
 
@@ -1401,6 +1410,7 @@ export interface PublicQuotePayload {
   tax: number;
   transportCharge?: number;
   transportTax?: number;
+  roundOff?: number;
   total: number;
   dispatchOption?: { code: string; name: string; category: string } | null;
   createdAt: string;
@@ -1600,6 +1610,7 @@ export interface PublicSalesOrderPayload {
   placeOfSupplyState?: string | null;
   transportCharge?: number;
   transportTax?: number;
+  roundOff?: number;
   total: number;
   createdAt: string;
   quoteNo?: string | null;
@@ -1744,6 +1755,7 @@ export interface QuoteRow {
   tax: number;
   transportCharge?: number;
   transportTax?: number;
+  roundOff?: number;
   total: number;
   // Estimated shipping weight (kg) rolled up from item qty * variant
   // weight. Re-derived on every edit; carries to the SO on accept.
@@ -1846,6 +1858,7 @@ export interface SalesOrderRow {
   pricingInclusive?: boolean;
   transportCharge?: number;
   transportTax?: number;
+  roundOff?: number;
   total: number;
   // Estimated shipping weight (kg). Inherited from quote and recomputed
   // on any line edit.
@@ -2192,6 +2205,9 @@ export interface SmsProviderConfigRow {
   senderId: string | null;
   templateId: string | null;
   templateText: string | null;
+  orderTemplateId?: string | null;
+  orderTemplateText?: string | null;
+  peid?: string | null;
   active: boolean;
   hasPassword?: boolean;
   updatedAt?: string;
@@ -2235,6 +2251,8 @@ export interface CustomerActivityRow {
   id: string;
   anonId: string;
   customerId: string | null;
+  customerName: string | null;
+  customerPhone: string | null;
   sessionId: string | null;
   event: string;
   path: string | null;
@@ -2405,6 +2423,7 @@ export interface CompanyProfile {
   fiscalYearStart: string;
   defaultTaxRate: number;
   pricingIncludesGst?: boolean;
+  transportGstEnabled?: boolean;
   termsDefault: string | null;
   bankName: string | null;
   bankAccountNo: string | null;
@@ -2418,6 +2437,49 @@ export interface CompanyProfile {
   pickSortByBinEnabled?: boolean;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface DocumentSeriesRow {
+  id: string;
+  code: string;
+  name: string;
+  documentType: string;
+  prefix: string;
+  pattern: string;
+  padWidth: number;
+  startNumber: number;
+  nextNumber: number;
+  resetPeriod: string;
+  lastPeriodKey: string | null;
+  channelSource: string | null;
+  isDefault: boolean;
+  active: boolean;
+  previewNext?: string;
+}
+
+export interface DocumentSeriesInput {
+  code: string;
+  name: string;
+  documentType?: "invoice";
+  prefix: string;
+  pattern: string;
+  padWidth?: number;
+  startNumber?: number;
+  nextNumber?: number;
+  resetPeriod?: "never" | "yearly" | "fiscal" | "monthly";
+  channelSource?: "internal" | "imported" | "ecommerce" | "pos" | null;
+  isDefault?: boolean;
+  active?: boolean;
+}
+
+export interface InvoiceSeriesOption {
+  id: string;
+  code: string;
+  name: string;
+  prefix: string;
+  pattern: string;
+  channelSource: string | null;
+  isDefault: boolean;
 }
 
 // Public projection used by the share/quote viewer; bank/UPI fields are
@@ -2702,6 +2764,9 @@ export const api = {
       senderId: string | null;
       templateId: string | null;
       templateText: string | null;
+      orderTemplateId: string | null;
+      orderTemplateText: string | null;
+      peid: string | null;
       active: boolean;
     }>
   ) =>
@@ -4671,6 +4736,16 @@ export const api = {
   getCompanyProfile: () => fetcher<CompanyProfile>("/settings/company"),
   updateCompanyProfile: (body: CompanyProfileUpdate) =>
     fetcher<CompanyProfile>("/settings/company", { method: "PUT", body }),
+  getDocumentSeries: () => fetcher<DocumentSeriesRow[]>("/settings/document-series"),
+  createDocumentSeries: (body: DocumentSeriesInput) =>
+    fetcher<DocumentSeriesRow>("/settings/document-series", { method: "POST", body }),
+  updateDocumentSeries: (id: string, body: Partial<DocumentSeriesInput>) =>
+    fetcher<DocumentSeriesRow>(`/settings/document-series/${id}`, { method: "PATCH", body }),
+  deleteDocumentSeries: (id: string) =>
+    fetcher<{ ok: boolean; softDeleted?: boolean }>(`/settings/document-series/${id}`, {
+      method: "DELETE",
+    }),
+  listInvoiceSeries: () => fetcher<InvoiceSeriesOption[]>("/document-series"),
   pincodeLookup: (pin: string) =>
     fetcher<{
       pincode: string;

@@ -3,6 +3,7 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
 import { db } from "../db.js";
 import { recordChange } from "../sync/log.js";
+import { defaultPriceListIdForCustomerCode } from "../lib/customer-defaults.js";
 import { invalidateCatalog } from "../lib/catalog-cache.js";
 import { syncProductStockCache } from "../lib/stock-cache.js";
 import { normalizeUomCode } from "../lib/uom.js";
@@ -1519,6 +1520,24 @@ export const catalogRoutes = async (app: FastifyInstance) => {
   // now obsolete now that procurement.ts owns the table.)
 
   // ============= Customers =============
+  app.get("/document-series", { preHandler: [app.authenticate] }, async () => {
+    const { ensureDocumentSeriesSeeded } = await import("../lib/document-series.js");
+    await ensureDocumentSeriesSeeded();
+    return db.documentSeries.findMany({
+      where: { documentType: "invoice", active: true },
+      orderBy: [{ isDefault: "desc" }, { code: "asc" }],
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        prefix: true,
+        pattern: true,
+        channelSource: true,
+        isDefault: true,
+      },
+    });
+  });
+
   app.get("/customers", async (req) => {
     const q = (req.query as Record<string, string>) ?? {};
     const rows = await db.customer.findMany({
@@ -1526,6 +1545,7 @@ export const catalogRoutes = async (app: FastifyInstance) => {
       orderBy: { name: "asc" },
       include: {
         priceList: { select: { id: true, code: true, name: true, multiplier: true, basis: true } },
+        documentSeries: { select: { id: true, code: true, name: true, prefix: true, pattern: true } },
         _count: { select: { quotes: true, salesOrders: true, invoices: true } },
       },
     });
@@ -1548,6 +1568,7 @@ export const catalogRoutes = async (app: FastifyInstance) => {
       where: { id },
       include: {
         priceList: { select: { id: true, code: true, name: true, multiplier: true, basis: true } },
+        documentSeries: { select: { id: true, code: true, name: true, prefix: true, pattern: true } },
         _count: { select: { quotes: true, salesOrders: true, invoices: true } },
       },
     });
@@ -1580,6 +1601,7 @@ export const catalogRoutes = async (app: FastifyInstance) => {
     contact: z.string().trim().nullable().optional(),
     creditLimit: z.number().nonnegative().default(0),
     priceListId: z.string().nullable().optional(),
+    documentSeriesId: z.string().nullable().optional(),
     active: z.boolean().default(true),
     ...customerAddressBody,
   });
@@ -1599,6 +1621,7 @@ export const catalogRoutes = async (app: FastifyInstance) => {
     const distance = place
       ? { distanceKm: place.distanceKm, dispatchPincode: place.dispatchPincode }
       : await computeAddressDistanceFields(body.pincode);
+    const priceListId = await defaultPriceListIdForCustomerCode(code, body.priceListId);
     const created = await db.customer.create({
       data: {
         code,
@@ -1613,11 +1636,13 @@ export const catalogRoutes = async (app: FastifyInstance) => {
         dispatchPincode: distance.dispatchPincode,
         contact: body.contact ?? null,
         creditLimit: body.creditLimit,
-        priceListId: body.priceListId ?? null,
+        priceListId,
+        documentSeriesId: body.documentSeriesId ?? null,
         active: body.active,
       },
       include: {
         priceList: { select: { id: true, code: true, name: true, multiplier: true, basis: true } },
+        documentSeries: { select: { id: true, code: true, name: true, prefix: true, pattern: true } },
         _count: { select: { quotes: true, salesOrders: true, invoices: true } },
       },
     });
@@ -1635,6 +1660,7 @@ export const catalogRoutes = async (app: FastifyInstance) => {
         contact: z.string().nullable().optional(),
         creditLimit: z.number().nonnegative().optional(),
         priceListId: z.string().nullable().optional(),
+        documentSeriesId: z.string().nullable().optional(),
         active: z.boolean().optional(),
         ...customerAddressPatch,
       })

@@ -47,6 +47,7 @@ import { importedOrderRoutes } from "./routes/imported-orders.js";
 import { adminLogsRoutes } from "./routes/admin-logs.js";
 import { startStockRulesInterval } from "./lib/stock-rules-runner.js";
 import { rebuildInStockSets } from "./lib/stock-cache.js";
+import { ensureDocumentSeriesSeeded } from "./lib/document-series.js";
 import multipart from "@fastify/multipart";
 import fastifyStatic from "@fastify/static";
 import { fileURLToPath } from "url";
@@ -296,6 +297,7 @@ await app.register(
 
 try {
   await app.listen({ host: config.host, port: config.port });
+  await ensureDocumentSeriesSeeded();
   startStockRulesInterval(app.log);
   // Pre-populate the Redis in-stock sets so the first storefront request is a cache hit.
   void rebuildInStockSets();

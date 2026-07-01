@@ -11,6 +11,7 @@ import { evaluateCreditGate } from "./sales.js";
 import { applyAdvancesToInvoice } from "./customer-payments.js";
 import { formatCustomerDestination } from "../lib/customer-address.js";
 import { recomputeInvoiceWeight } from "../lib/document-weight.js";
+import { allocateInvoiceNumber } from "../lib/document-series.js";
 
 const invoiceCreate = z.object({
   customerId: z.string(),
@@ -224,40 +225,47 @@ export const billingRoutes = async (app: FastifyInstance) => {
       }
     }
 
-    const next = await db.invoice.count();
-    const inv = await db.invoice.create({
-      data: {
-        invoiceNo: `INV-2026-${String(5500 + next)}`,
-        shareToken: mintShareToken(),
+    const inv = await db.$transaction(async (tx) => {
+      const { documentNo, seriesId, seriesSeq } = await allocateInvoiceNumber(tx, {
         customerId: body.customerId,
-        amount: doc.total,
-        tax: doc.tax,
-        cgstTotal: doc.cgstTotal,
-        sgstTotal: doc.sgstTotal,
-        igstTotal: doc.igstTotal,
-        taxKind: doc.taxKind,
-        placeOfSupplyState: doc.placeOfSupplyState,
-        sellerState: doc.sellerState,
-        pricingInclusive: doc.pricingInclusive,
-        paymentMode: body.paymentMode,
-        status: "issued",
-        items: {
-          create: doc.lineResults.map((line, idx) => {
-            const src = body.items[idx];
-            const fields = lineTaxDbFields(line);
-            return {
-              productId: src.productId,
-              variantId: src.variantId ?? null,
-              qty: src.qty,
-              ...fields,
-            };
-          }),
+        channel: "pos",
+      });
+      return tx.invoice.create({
+        data: {
+          invoiceNo: documentNo,
+          documentSeriesId: seriesId,
+          seriesSeq,
+          shareToken: mintShareToken(),
+          customerId: body.customerId,
+          amount: doc.total,
+          tax: doc.tax,
+          cgstTotal: doc.cgstTotal,
+          sgstTotal: doc.sgstTotal,
+          igstTotal: doc.igstTotal,
+          taxKind: doc.taxKind,
+          placeOfSupplyState: doc.placeOfSupplyState,
+          sellerState: doc.sellerState,
+          pricingInclusive: doc.pricingInclusive,
+          paymentMode: body.paymentMode,
+          status: "issued",
+          items: {
+            create: doc.lineResults.map((line, idx) => {
+              const src = body.items[idx];
+              const fields = lineTaxDbFields(line);
+              return {
+                productId: src.productId,
+                variantId: src.variantId ?? null,
+                qty: src.qty,
+                ...fields,
+              };
+            }),
+          },
         },
-      },
-      include: {
-        items: { include: { product: true, variant: true } },
-        customer: true,
-      },
+        include: {
+          items: { include: { product: true, variant: true } },
+          customer: true,
+        },
+      });
     });
     // Direct/walk-in invoice — derive weight from line items
     // (no packing slip yet).

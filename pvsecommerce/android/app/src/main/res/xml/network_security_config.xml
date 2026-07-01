@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Allow cleartext (HTTP) traffic to the VPS IP.
+  Switch to HTTPS and remove this when a domain + TLS cert is configured.
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">217.216.78.119</domain>
+    </domain-config>
+</network-security-config>

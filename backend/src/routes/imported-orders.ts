@@ -27,6 +27,7 @@ import { resolveInternalSku } from "./channel-mappings.js";
 import { mintShareToken } from "../lib/share.js";
 import { nextDocNo } from "./sales.js";
 import { recordChange } from "../sync/log.js";
+import { defaultPriceListIdForCustomerCode } from "../lib/customer-defaults.js";
 import { reserveSalesOrderStock } from "../lib/so-reservations.js";
 import { recomputeSalesOrderWeight } from "../lib/document-weight.js";
 import { computeTax, computeGrandTotal } from "../lib/tax.js";
@@ -265,6 +266,7 @@ export const importedOrderRoutes = async (app: FastifyInstance) => {
         });
         customerId = updated.id;
       } else {
+        const priceListId = await defaultPriceListIdForCustomerCode(code);
         const created = await db.customer.create({
           data: {
             code,
@@ -277,6 +279,7 @@ export const importedOrderRoutes = async (app: FastifyInstance) => {
             gst: body.customer.gst ?? null,
             creditLimit: 0,
             active: true,
+            priceListId,
           },
         });
         customerId = created.id;

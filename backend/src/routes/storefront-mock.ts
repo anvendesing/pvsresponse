@@ -590,6 +590,9 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
         imageUpdatedAt: p.updatedAt ? p.updatedAt.getTime() : null,
         bestSellerEnabled: p.bestSellerEnabled,
         tags: p.tags ? p.tags.split(",").map((t) => t.trim()).filter(Boolean) : [],
+        searchAliases: p.searchAliases
+          ? p.searchAliases.split(",").map((a) => a.trim()).filter(Boolean)
+          : [],
         concernSlugs: p.concernLinks
           .filter((l) => l.concern.active)
           .map((l) => l.concern.slug),
@@ -671,6 +674,9 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
       imageUrl: p.imageUrl ?? null,
       bestSellerEnabled: p.bestSellerEnabled,
       tags: p.tags ? p.tags.split(",").map((t) => t.trim()).filter(Boolean) : [],
+      searchAliases: p.searchAliases
+        ? p.searchAliases.split(",").map((a) => a.trim()).filter(Boolean)
+        : [],
       concernSlugs: p.concernLinks
         .filter((l) => l.concern.active)
         .map((l) => l.concern.slug),

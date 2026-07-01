@@ -63,6 +63,7 @@ export const PublicSalesOrder = () => {
         taxKind: data.taxKind,
         transportCharge: data.transportCharge,
         transportTax: data.transportTax,
+        roundOff: data.roundOff,
         total: data.total,
       })
     : null;

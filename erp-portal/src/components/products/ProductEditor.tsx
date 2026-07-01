@@ -348,7 +348,7 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
           {/* Product image */}
           <section className="flex gap-4 items-start">
             <div
-              className="relative w-32 h-32 rounded-lg border-2 border-dashed border-border bg-canvas overflow-hidden flex items-center justify-center cursor-pointer hover:border-primary transition-colors group flex-shrink-0"
+              className="relative w-32 h-32 rounded-lg border-2 border-dashed border-border bg-white overflow-hidden flex items-center justify-center cursor-pointer hover:border-primary transition-colors group flex-shrink-0"
               onClick={() => {
                 if (mode === "edit" && form.id) productImgRef.current?.click();
               }}
@@ -358,7 +358,7 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
                 <img
                   src={resolveUploadUrl(form.imageUrl)}
                   alt={form.name}
-                  className="w-full h-full object-cover"
+                  className="w-full h-full object-contain"
                 />
               ) : (
                 <div className="flex flex-col items-center gap-1 text-ink-muted group-hover:text-primary">
@@ -1163,12 +1163,12 @@ const VariantImagePicker = ({
   return (
     <div className="flex items-center gap-2">
       <div
-        className={`relative w-12 h-12 rounded border-2 border-dashed border-border bg-canvas overflow-hidden flex items-center justify-center ${canUpload ? "cursor-pointer hover:border-primary group" : "opacity-50"}`}
+        className={`relative w-12 h-12 rounded border-2 border-dashed border-border bg-white overflow-hidden flex items-center justify-center ${canUpload ? "cursor-pointer hover:border-primary group" : "opacity-50"}`}
         onClick={() => { if (canUpload) inputRef.current?.click(); }}
         title={canUpload ? "Click to upload variant image" : "Save product first"}
       >
         {resolvedSrc ? (
-          <img src={resolvedSrc} alt="variant" className="w-full h-full object-cover" />
+          <img src={resolvedSrc} alt="variant" className="w-full h-full object-contain" />
         ) : (
           <ImagePlus size={14} className="text-ink-muted group-hover:text-primary" />
         )}

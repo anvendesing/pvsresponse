@@ -5,6 +5,15 @@ export const inr = (n: number) =>
     maximumFractionDigits: 0,
   }).format(n);
 
+/** Paise-precision currency — for GST splits and taxable subtotals (avoids 5% looking like 6%). */
+export const inrPaise = (n: number) =>
+  new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(n);
+
 /** AR ledger running balance — Dr = customer owes us, Cr = advance on account. */
 export function arBalanceInr(balance: number): {
   text: string;

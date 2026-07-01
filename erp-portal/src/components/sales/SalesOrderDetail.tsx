@@ -355,6 +355,7 @@ export const SalesOrderDetail = ({ salesOrderId, onClose, onChanged }: Props) =>
                       taxKind: so.taxKind,
                       transportCharge: so.transportCharge,
                       transportTax: so.transportTax,
+                      roundOff: so.roundOff,
                       total: so.total,
                     });
                     return (

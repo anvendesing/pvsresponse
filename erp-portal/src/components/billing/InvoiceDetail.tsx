@@ -109,6 +109,7 @@ export const InvoiceDetail = ({ invoiceId, onClose, onChanged }: Props) => {
       taxKind: inv.taxKind,
       transportCharge: inv.transportCharge,
       transportTax: inv.transportTax,
+      roundOff: inv.roundOff,
       total: inv.amount,
     });
   }, [inv]);

@@ -16,6 +16,8 @@ import { recordChange } from "../sync/log.js";
 import { createPickListForSalesOrder } from "./pick-list-create.js";
 import { resolveGstRate } from "../lib/tax.js";
 import { getTaxContextForCustomer } from "../lib/company-tax.js";
+import { defaultPriceListIdForCustomerCode } from "../lib/customer-defaults.js";
+import { sendOrderConfirmSms } from "../lib/smsidea.js";
 import { computeDocumentTax, lineTaxDbFields } from "../lib/document-tax.js";
 import {
   quoteStorefrontShipping,
@@ -28,6 +30,7 @@ import {
 import { logSystemError, logSystemInfo, logSystemWarn } from "../lib/system-log.js";
 import { nextPaymentNo } from "../routes/customer-payments.js";
 import { pincodeSchema } from "../lib/customer-address.js";
+import { allocateInvoiceNumber } from "../lib/document-series.js";
 
 export const storefrontOrderItemSchema = z.object({
   productId: z.string().min(1),
@@ -396,18 +399,6 @@ const nextSoNo = async (): Promise<string> => {
   return `SO-2026-${String(max + 1).padStart(4, "0")}`;
 };
 
-const nextInvoiceNo = async (): Promise<string> => {
-  const rows = await db.invoice.findMany({
-    where: { invoiceNo: { startsWith: "INV-2026-" } },
-    select: { invoiceNo: true },
-  });
-  const tail = rows
-    .map((r) => parseInt(r.invoiceNo.split("-").pop() ?? "0", 10))
-    .filter((n) => Number.isFinite(n));
-  const max = tail.length > 0 ? Math.max(...tail) : 5499;
-  return `INV-2026-${String(max + 1).padStart(4, "0")}`;
-};
-
 let systemUserIdCache: string | null | undefined;
 export const getSystemUserId = async (): Promise<string | null> => {
   if (systemUserIdCache !== undefined) return systemUserIdCache;
@@ -584,6 +575,7 @@ export async function fulfillPrepaidStorefrontOrder(
     } else {
       const code = await nextCustomerCode();
       const distance = await computeAddressDistanceFields(shipPincode);
+      const priceListId = await defaultPriceListIdForCustomerCode(code);
       customer = await tx.customer.create({
         data: {
           code,
@@ -595,6 +587,7 @@ export async function fulfillPrepaidStorefrontOrder(
           pincode: shipPincode,
           distanceKm: distance.distanceKm,
           dispatchPincode: distance.dispatchPincode,
+          priceListId,
         },
       });
       account = await tx.customerAccount.create({
@@ -662,10 +655,15 @@ export async function fulfillPrepaidStorefrontOrder(
       }
     }
 
-    const invoiceNo = await nextInvoiceNo();
+    const { documentNo: invoiceNo, seriesId, seriesSeq } = await allocateInvoiceNumber(tx, {
+      customerId: customer.id,
+      source: "ecommerce",
+    });
     const invoice = await tx.invoice.create({
       data: {
         invoiceNo,
+        documentSeriesId: seriesId,
+        seriesSeq,
         shareToken: mintShareToken(),
         customerId: customer.id,
         salesOrderId: so.id,
@@ -745,6 +743,12 @@ export async function fulfillPrepaidStorefrontOrder(
       sysUserId
     );
   }
+
+  void sendOrderConfirmSms(txResult.account.phone, txResult.so.soNo).then((sms) => {
+    if (!sms.ok && !sms.devMode) {
+      console.warn("[SMS] order confirm failed:", sms.error);
+    }
+  });
 
   return {
     ok: true,
