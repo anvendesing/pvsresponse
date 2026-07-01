@@ -744,7 +744,7 @@ export async function fulfillPrepaidStorefrontOrder(
     );
   }
 
-  void sendOrderConfirmSms(txResult.account.phone, txResult.so.soNo).then((sms) => {
+  void sendOrderConfirmSms(txResult.account.phone ?? "", txResult.so.soNo).then((sms) => {
     if (!sms.ok && !sms.devMode) {
       console.warn("[SMS] order confirm failed:", sms.error);
     }

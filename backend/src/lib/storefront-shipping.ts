@@ -86,6 +86,7 @@ async function computeCartGoodsTax(
   sgstTotal: number;
   igstTotal: number;
   taxKind: "intra" | "inter";
+  roundOff: number;
 }> {
   const variantIds = items
     .map((i) => i.variantId)
