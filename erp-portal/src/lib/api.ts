@@ -1554,6 +1554,7 @@ export interface InvoiceDetail {
   pricingInclusive?: boolean;
   transportCharge?: number;
   transportTax?: number;
+  roundOff?: number;
   // Estimated shipping weight (kg). For pack-derived invoices this
   // mirrors the packing slip's cached weight (incl. actual scale
   // readings); for direct/walk-in it's summed from invoice items.
@@ -1583,6 +1584,7 @@ export interface PublicInvoicePayload {
   amount: number;
   transportCharge?: number;
   transportTax?: number;
+  roundOff?: number;
   createdAt: string;
   customer: {
     name: string;
@@ -2099,6 +2101,7 @@ export interface PackingSlipRow {
     total?: number;
     transportCharge?: number;
     transportTax?: number;
+    roundOff?: number;
     dispatchOption?: { id: string; name: string; code: string } | null;
     customer?: {
       id: string;
@@ -2120,6 +2123,7 @@ export interface PackingSlipRow {
     taxKind?: "intra" | "inter";
     transportCharge?: number;
     transportTax?: number;
+    roundOff?: number;
     status: string;
     date: string;
   } | null;

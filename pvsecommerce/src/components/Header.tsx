@@ -191,9 +191,9 @@ export const Header = ({ onOpenMobileDrawer }: HeaderProps) => {
                       pickProduct(p);
                     }}
                   >
-                    {p.image && (
+                    {p.imageUrl && (
                       <img
-                        src={p.image}
+                        src={p.imageUrl}
                         alt=""
                         className="search-dropdown__thumb"
                         loading="lazy"

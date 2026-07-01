@@ -221,8 +221,8 @@ export const MobileHeader = ({ onOpenDrawer }: Props) => {
                     className="search-overlay__product-item"
                     onClick={() => pickProduct(p)}
                   >
-                    {p.image ? (
-                      <img src={p.image} alt="" className="search-overlay__product-thumb" loading="lazy" />
+                    {p.imageUrl ? (
+                      <img src={p.imageUrl} alt="" className="search-overlay__product-thumb" loading="lazy" />
                     ) : (
                       <div className="search-overlay__product-thumb search-overlay__product-thumb--placeholder" />
                     )}

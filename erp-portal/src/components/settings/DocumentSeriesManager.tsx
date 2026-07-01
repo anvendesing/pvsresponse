@@ -126,7 +126,7 @@ export const DocumentSeriesManager = () => {
       startNumber: r.startNumber,
       nextNumber: r.nextNumber,
       resetPeriod: r.resetPeriod as DocumentSeriesInput["resetPeriod"],
-      channelSource: r.channelSource,
+      channelSource: r.channelSource as DocumentSeriesInput["channelSource"],
       isDefault: r.isDefault,
       active: r.active,
     });
