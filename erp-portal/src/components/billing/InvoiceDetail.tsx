@@ -7,6 +7,7 @@
 // or create a new one - much faster than typing vehicle/driver/ETA
 // per invoice.
 
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -205,7 +206,7 @@ export const InvoiceDetail = ({ invoiceId, onClose, onChanged }: Props) => {
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-ink/40 grid place-items-end" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-ink/40 grid place-items-end" {...backdropDismissProps(onClose)}>
       <div
         className="bg-surface w-full max-w-4xl h-full overflow-hidden flex flex-col elevation-3"
         onClick={(e) => e.stopPropagation()}

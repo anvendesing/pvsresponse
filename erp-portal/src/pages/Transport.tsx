@@ -11,6 +11,7 @@
 // either auto-schedule one trip per day for the next 4 days or
 // create a single trip, and then drop invoices on it.
 
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -890,7 +891,7 @@ const NewTripModal = ({
   return (
     <div
       className="fixed inset-0 z-50 bg-ink/40 grid place-items-center"
-      onClick={onClose}
+      {...backdropDismissProps(onClose)}
     >
       <div
         className="bg-surface w-full max-w-md rounded-lg elevation-3 overflow-hidden"
@@ -988,7 +989,7 @@ const CancelTripModal = ({
   return (
     <div
       className="fixed inset-0 z-50 bg-ink/40 grid place-items-center"
-      onClick={onClose}
+      {...backdropDismissProps(onClose)}
     >
       <div
         className="bg-surface w-full max-w-md rounded-lg elevation-3 overflow-hidden"

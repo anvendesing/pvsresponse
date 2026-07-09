@@ -3,6 +3,7 @@
 // differ from picked qty (damage, weight variance, short count) and
 // becomes the source of truth for invoicing.
 
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -337,7 +338,7 @@ export const PackingSlipEditor = ({ packingSlipId, onClose, onChanged }: Props) 
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-ink/40 grid place-items-end" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-ink/40 grid place-items-end" {...backdropDismissProps(onClose)}>
       <div
         className="bg-surface w-full max-w-4xl h-full overflow-hidden flex flex-col elevation-3"
         onClick={(e) => e.stopPropagation()}
@@ -629,6 +630,20 @@ export const PackingSlipEditor = ({ packingSlipId, onClose, onChanged }: Props) 
                   slipId={ps.id}
                   status={ps.status}
                   items={ps.items}
+                  draftPacked={drafts}
+                  onSavePacked={async () => {
+                    if (!ps || isLocked) return;
+                    const items = Object.entries(drafts).map(([id, qtyPacked]) => ({
+                      id,
+                      qtyPacked,
+                    }));
+                    await api.updatePackingSlip(ps.id, { items });
+                    const fresh = await api.packingSlip(packingSlipId);
+                    setPs(fresh);
+                    setDrafts(
+                      Object.fromEntries(fresh.items.map((it) => [it.id, it.qtyPacked]))
+                    );
+                  }}
                   requireSealConfirmation={requireSealConfirm}
                   onChanged={() => setAllocIssues([])}
                 />

@@ -4,6 +4,7 @@
 // the full editor seeded with both. Used as a full page at
 // /manufacturing/boms or historically as a drawer overlay.
 
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import {
@@ -525,7 +526,7 @@ export const BomListPanel = ({
   return (
     <div
       className="fixed inset-0 z-50 bg-ink/40 grid place-items-end"
-      onClick={onClose}
+      {...backdropDismissProps(onClose)}
     >
       <div onClick={(e) => e.stopPropagation()}>{panel}</div>
     </div>
@@ -585,7 +586,7 @@ interface NewBomModalProps {
   onConfirm: (productId: string, variantId: string | null) => void;
 }
 
-const NewBomModal = ({
+export const NewBomModal = ({
   products,
   bomScopeIndex,
   onClose,
@@ -671,7 +672,7 @@ const NewBomModal = ({
   return (
     <div
       className="fixed inset-0 z-50 bg-ink/40 grid place-items-center p-4"
-      onClick={onClose}
+      {...backdropDismissProps(onClose)}
     >
       <div
         onClick={(e) => e.stopPropagation()}

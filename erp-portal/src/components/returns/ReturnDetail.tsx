@@ -7,6 +7,7 @@
 //
 // When status is "processed" or "cancelled" — read-only view.
 
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 import { useEffect, useState } from "react";
 import {
   AlertTriangle,
@@ -142,7 +143,7 @@ export const ReturnDetail = ({ returnId, onClose, onChanged }: Props) => {
       {/* Backdrop */}
       <div
         className="fixed inset-0 z-40 bg-black/20"
-        onClick={onClose}
+        {...backdropDismissProps(onClose)}
         aria-hidden
       />
 

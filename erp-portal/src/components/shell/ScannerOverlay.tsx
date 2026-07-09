@@ -1,3 +1,4 @@
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 import { useEffect, useRef, useState } from "react";
 import { ScanLine, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
@@ -54,7 +55,7 @@ export const ScannerOverlay = ({ open, onClose }: Props) => {
   return (
     <div
       className="fixed inset-0 z-50 bg-ink/50 backdrop-blur-sm flex items-start justify-center pt-[16vh] animate-fade-in"
-      onClick={onClose}
+      {...backdropDismissProps(onClose)}
     >
       <div
         className="w-full max-w-[520px] bg-surface rounded-xl shadow-e3 border border-border mx-4 overflow-hidden"

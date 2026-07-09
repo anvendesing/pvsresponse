@@ -41,13 +41,22 @@ export const TopCommandBar = ({
 
   useEffect(() => {
     if (!menuOpen) return;
-    const onDoc = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+    let downOutside = false;
+    const onDocDown = (e: MouseEvent) => {
+      downOutside = !!(menuRef.current && !menuRef.current.contains(e.target as Node));
+    };
+    const onDocUp = (e: MouseEvent) => {
+      if (downOutside && menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setMenuOpen(false);
       }
+      downOutside = false;
     };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
+    document.addEventListener("mousedown", onDocDown);
+    document.addEventListener("mouseup", onDocUp);
+    return () => {
+      document.removeEventListener("mousedown", onDocDown);
+      document.removeEventListener("mouseup", onDocUp);
+    };
   }, [menuOpen]);
   // First letter of the brand drives the monogram tile when no logo
   // has been uploaded - keeps the chrome looking branded immediately

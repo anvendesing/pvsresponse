@@ -3,6 +3,7 @@
 // stored verbatim on the server so what you see is exactly what the
 // quote looked like at that revision.
 
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 import { useEffect, useMemo, useState } from "react";
 import { ArrowRight, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
@@ -204,7 +205,7 @@ export const RevisionHistory = ({ quoteId, onClose }: Props) => {
   return (
     <div
       className="fixed inset-0 z-[60] bg-ink/60 grid place-items-end"
-      onClick={onClose}
+      {...backdropDismissProps(onClose)}
     >
       <div
         className="bg-surface w-full max-w-2xl h-full overflow-hidden flex flex-col elevation-3"

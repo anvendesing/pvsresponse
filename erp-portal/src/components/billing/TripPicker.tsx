@@ -3,6 +3,7 @@
 // vs capacity per trip, and offers a "Create new trip" shortcut for
 // when none of the listed trips fit.
 
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 import { useEffect, useMemo, useState } from "react";
 import { CalendarPlus, Plus, Truck, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
@@ -116,7 +117,7 @@ export const TripPicker = ({ onClose, onPick }: Props) => {
   };
 
   return (
-    <div className="fixed inset-0 z-[60] bg-ink/40 grid place-items-center" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] bg-ink/40 grid place-items-center" {...backdropDismissProps(onClose)}>
       <div
         className="bg-surface w-full max-w-2xl max-h-[85vh] rounded-lg elevation-3 overflow-hidden flex flex-col"
         onClick={(e) => e.stopPropagation()}

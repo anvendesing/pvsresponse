@@ -1,193 +1,334 @@
 sku,name,category,type,state,imageUrl,reason
-6RKS,6 Rasa Kashaya,Dry Fruits & Health,finished,active,,no_image_url
-AGRB,Agarbathi,Cosmetics & Herbal,finished,active,,no_image_url
-AJWN,Ajwain,Spices & Pickles,finished,active,,no_image_url
-AKPD,Andukorra Papad,Spices & Pickles,finished,active,,no_image_url
-AMRS,Amaranth Seeds,Dry Fruits & Health,finished,active,,no_image_url
-ANPA,Anapa pappu,Rice Cereals & Pulses,finished,active,,no_image_url
-BAJA,Bajra,Millets,finished,active,,no_image_url
-BAJP,Bajra Poha,Millets,finished,active,,no_image_url
-BHMP,Brahmi Powder,Dry Fruits & Health,finished,active,,no_image_url
-BK01,Siridhanyalatho sampoorna Arogyam,Books,consumable,active,,no_image_url
-BK02,Siridhanyalu (sampoorna Arogyam),Books,consumable,active,,no_image_url
-BKSL,Black Salt,Spices & Pickles,finished,active,,no_image_url
-BLRC,Boiled Rice,Rice Cereals & Pulses,finished,active,,no_image_url
-BLVD,Bilva / Maredu Drink,Dry Fruits & Health,finished,active,,no_image_url
-BLYG,Barley Grass Powder,Dry Fruits & Health,finished,active,,no_image_url
-BPSC,Black Pesalu Stone Crushed,Rice Cereals & Pulses,finished,active,,no_image_url
-BRCK,Bricks,Water Filter,consumable,active,,no_image_url
-BRLD,Borugulu Laddu,Sweets & Savories,finished,active,,no_image_url
-BRTI,Bajra rotti,Sweets & Savories,finished,active,,no_image_url
-BSMR,Besan murukulu,Sweets & Savories,finished,active,,no_image_url
-BSOP,Bath Soap,Cosmetics & Herbal,finished,active,,no_image_url
-BTRC,Bathroom Cleaner,Cosmetics & Herbal,finished,active,,no_image_url
-BYLF,Bay Leaf,Spices & Pickles,finished,active,,no_image_url
-BYMP,Barnyard Millet Poha,Millets,finished,active,,no_image_url
-BYMT,Barnyard Millet,Millets,finished,active,,no_image_url
-CARD,Cardamom,Spices & Pickles,finished,active,,no_image_url
-CART,cartridge (filled),Water Filter,consumable,active,,no_image_url
-CCAK,Coconut Cake,Edible Oils,finished,active,,no_image_url
-CHIA,Chia Seeds,Dry Fruits & Health,finished,active,,no_image_url
-CHPW,Chilli Powder,Spices & Pickles,finished,active,,no_image_url
-CINN,Cinnamon,Spices & Pickles,finished,active,,no_image_url
-CMRC,Chitti Muthyalu rice,Rice Cereals & Pulses,finished,active,,no_image_url
-CNLD,Coconut Laddu,Sweets & Savories,finished,active,,no_image_url
-COAL,Coal,Water Filter,consumable,active,,no_image_url
-COFP,Coffee Powder,Spices & Pickles,finished,active,,no_image_url
-CONS-CTN-12,Carton box (holds 12 bottles),Packaging,consumable,active,,no_image_url
-CONS-POUCH-LG,Inner pouch (large) - for 30pcs packs,Packaging,consumable,active,,no_image_url
-CONS-POUCH-SM,Inner pouch (small) - for 10pcs packs,Packaging,consumable,active,,no_image_url
-CONS-SHRINK,Shrink wrap (per metre),Packaging,consumable,active,,no_image_url
-CONS-VITAMIN-E,Vitamin E premix,Additives,consumable,active,,no_image_url
-CPLT,Copper Plate,Cosmetics & Herbal,finished,active,,no_image_url
-CRPK,Coriander Leaf Pickle,Spices & Pickles,finished,active,,no_image_url
-CSHW,Cashew,Dry Fruits & Health,finished,active,,no_image_url
-CTPK,Chintha tokku pickle,Spices & Pickles,finished,active,,no_image_url
-CWBT,Copper Water Bottle,Cosmetics & Herbal,finished,active,,no_image_url
-CWPD,Cowpea Dal,Rice Cereals & Pulses,finished,active,,no_image_url
-DATE,Dates,Dry Fruits & Health,finished,active,,no_image_url
-DBOM-PARENT,Smoke parent,Test,raw,active,,no_image_url
-DBOM-PARENT-585bafcc,Smoke parent,Test,raw,active,,no_image_url
-DBR1,DIABETIC RICE,Rice Cereals & Pulses,finished,active,,no_image_url
-DBRC,Desi Basmati Rice,Rice Cereals & Pulses,finished,active,,no_image_url
-DCGH,Desi cow ghee pvs,Sweets & Savories,finished,active,,no_image_url
-DDPD,Dry Dates powder,Dry Fruits & Health,finished,active,,no_image_url
-DGWB,Drinking Glass Water Bottle,Cosmetics & Herbal,finished,active,,no_image_url
-FGRN,Fried Groundnuts,Edible Oils,finished,active,,no_image_url
-FLCC,Floor Cleaner,Cosmetics & Herbal,finished,active,,no_image_url
-FXBR,Flaxseed Burfie,Sweets & Savories,finished,active,,no_image_url
-FXMP,Foxtail Millet Poha,Millets,finished,active,,no_image_url
-GCAK,Groundnut Cake,Edible Oils,finished,active,,no_image_url
-GNDK,Gond Katira,Dry Fruits & Health,finished,active,,no_image_url
-GNGP,Ginger Powder,Spices & Pickles,finished,active,,no_image_url
-GNMS,Groundnut Masala,Sweets & Savories,finished,active,,no_image_url
-HCKR,Herbal Cockroach Repellent,Cosmetics & Herbal,finished,active,,no_image_url
-HDRO,Headache relief oil,Cosmetics & Herbal,finished,active,,no_image_url
-HLDW,Herbal Liquid Dish Wash,Cosmetics & Herbal,finished,active,,no_image_url
-HLZR,Herbal Lizard Repellent Spray,Cosmetics & Herbal,finished,active,,no_image_url
-HNYF,Forest Honey,Sweets & Savories,finished,active,,no_image_url
-HNYG,Honey (Farm Collection) Glass,Sweets & Savories,finished,active,,no_image_url
-HNYT,Tree Bark Honey,Sweets & Savories,finished,active,,no_image_url
-IACT,Iron Appam Chatti Tawa,Miscellaneous,consumable,active,,no_image_url
-IATW,Iron Amboli Tawa,Miscellaneous,consumable,active,,no_image_url
-IAUM,Instant Arika Upma Mix,Spices & Pickles,finished,active,,no_image_url
-IDLT,Idly Ravva (Little Millet),Millets,finished,active,,no_image_url
-IDWH,Iron Dosa Tawa (Wooden Handle),Miscellaneous,consumable,active,,no_image_url
-IFPS,Iron Frying Pan (Steel Handle),Miscellaneous,consumable,active,,no_image_url
-IFPW,Iron Frying Pan (Wooden Handle),Miscellaneous,consumable,active,,no_image_url
-IKSH,Iron Kadai (Steel Handle),Miscellaneous,consumable,active,,no_image_url
-IKSI,Iron Kadai (Steel Handle)-Induction,Miscellaneous,consumable,active,,no_image_url
-IKUM,Instant Korra Upma Mix,Spices & Pickles,finished,active,,no_image_url
-IKWH,Iron Kadai (Wooden Handle),Miscellaneous,consumable,active,,no_image_url
-IKWI,Iron Kadai (Wooden Handle)-Induction,Miscellaneous,consumable,active,,no_image_url
-IMPM,Instant Millet Pongal Mix,Millets,finished,active,,no_image_url
-IPSH,Iron Ponganalu Kadai (Steel Handle),Miscellaneous,consumable,active,,no_image_url
-IPWH,Iron Ponganalu Kadai (Wooden Handle),Miscellaneous,consumable,active,,no_image_url
-IRKM,Idly Ravva (Kodo Millet ),Millets,finished,active,,no_image_url
-IRWH,Iron Roti Tawa (Wooden Handle),Miscellaneous,consumable,active,,no_image_url
-JAGB,jaggery Small Balls,Dry Fruits & Health,finished,active,,no_image_url
-JPTR,Japatri,Spices & Pickles,finished,active,,no_image_url
-JRTI,Jowar rotti,Sweets & Savories,finished,active,,no_image_url
-JWHF,Jowar (White) Flour,Millets,finished,active,,no_image_url
-JWHR,Jowar (White) Ravva,Millets,finished,active,,no_image_url
-JWPH,Jowar Poha,Millets,finished,active,,no_image_url
-JWWH,Jowar (White),Millets,finished,active,,no_image_url
-KDMP,Kodo Millet Poha,Millets,finished,active,,no_image_url
-KDMT,Kodo Millet,Millets,finished,active,,no_image_url
-KLNJ,Kalonji seeds,Dry Fruits & Health,finished,active,,no_image_url
-KRPD,Korra Papad,Spices & Pickles,finished,active,,no_image_url
-KSGR,Khandsari sugar,Sweets & Savories,finished,active,,no_image_url
-KSME,Kasuri Methi,Spices & Pickles,finished,active,,no_image_url
-KTCC,Kitchen Cleaner Spray,Cosmetics & Herbal,finished,active,,no_image_url
-KTRM,Kasturi Turmeric,Spices & Pickles,finished,active,,no_image_url
-KWDP,kitchen waste digester powder,Cosmetics & Herbal,finished,active,,no_image_url
-KWDT,kitchen waste digester tin,Cosmetics & Herbal,finished,active,,no_image_url
-LMST,Lime Stone,Water Filter,consumable,active,,no_image_url
-LTMF,Little Millet Flour,Millets,finished,active,,no_image_url
-LTMP,Little Millet Poha,Millets,finished,active,,no_image_url
-LTMT,Little Millet,Millets,finished,active,,no_image_url
-MBAG,Mineral Bag,Water Filter,consumable,active,,no_image_url
-MFGTST-FG-100G,Test almond pack,Test,finished,active,,no_image_url
-MFGTST-FG-100G-7aa33b29,Test almond pack,Test,finished,active,,no_image_url
-MFGTST-RAW-ALMN,Test bulk almonds,Test,raw,active,,no_image_url
-MFGTST-RAW-ALMN-7aa33b29,Test bulk almonds,Test,raw,active,,no_image_url
-MGMF,Multigrain Malt Flour,Millets,finished,active,,no_image_url
-MGPK,Mango Pickle,Spices & Pickles,finished,active,,no_image_url
-MGPP,Mango Powder,Spices & Pickles,finished,active,,no_image_url
-MGPW,Moringa Powder (Plain),Spices & Pickles,finished,active,,no_image_url
-MLAD,Millet Laddu,Sweets & Savories,finished,active,,no_image_url
-MLIM,Millet Laddu Instant Mix,Sweets & Savories,finished,active,,no_image_url
-MMIM,Multi Millet Idly Mix,Millets,finished,active,,no_image_url
-MMLD,Multi Millet Laddu,Sweets & Savories,finished,active,,no_image_url
-MMPD,Millet Mix Papad,Spices & Pickles,finished,active,,no_image_url
-MMPS,Multani Mitti & Palapak soap,Cosmetics & Herbal,finished,active,,no_image_url
-MNLD,Minapa Laddu,Sweets & Savories,finished,active,,no_image_url
-MNPT,Millet Nippattu,Sweets & Savories,finished,active,,no_image_url
-MNTI,Menthi,Spices & Pickles,finished,active,,no_image_url
-MRLQ,Mosrelief Liquid,Cosmetics & Herbal,finished,active,,no_image_url
-MSPD,Masala papad,Spices & Pickles,finished,active,,no_image_url
-MSPW,Mango Seed Powder,Spices & Pickles,finished,active,,no_image_url
-NCMP,Natural Camphor,Dry Fruits & Health,finished,active,,no_image_url
-NDWP,Natural Dish Wash Powder,Cosmetics & Herbal,finished,active,,no_image_url
-NFAB,Natural Fabric Wash,Cosmetics & Herbal,finished,active,,no_image_url
-NHDY,Natural Hair Dye,Cosmetics & Herbal,finished,active,,no_image_url
-NLKR,Nalla Karam,Spices & Pickles,finished,active,,no_image_url
-NNRD,Nannari Drink,Dry Fruits & Health,finished,active,,no_image_url
-NSGR,Natural Sugar,Sweets & Savories,finished,active,,no_image_url
-ODTS,Organic Dried Tomato Slices,Spices & Pickles,finished,active,,no_image_url
-PHPW,Pulihora mix powder,Spices & Pickles,finished,active,,no_image_url
-PHRO,Panchagavya Hair oil,Cosmetics & Herbal,finished,active,,no_image_url
-PMPS,Pumpkin Seed,Dry Fruits & Health,finished,active,,no_image_url
-PSLD,Pesara Laddu,Sweets & Savories,finished,active,,no_image_url
-PTNL,Patnalu,Sweets & Savories,finished,active,,no_image_url
-RAGI,Finger Millet,Millets,finished,active,,no_image_url
-RAGP,Finger Millet Poha,Millets,finished,active,,no_image_url
-RAW-BOT-1L,PET bottle 1 L (clear),Packaging,raw,active,,no_image_url
-RAW-CAP-S38,Cap with safety seal (38 mm),Packaging,raw,active,,no_image_url
-RCPD,Rice papad,Spices & Pickles,finished,active,,no_image_url
-RCSC,Rock Salt (crystal),Spices & Pickles,finished,active,,no_image_url
-RCSL,Rock Salt,Spices & Pickles,finished,active,,no_image_url
-RCWP,Red CowPea,Rice Cereals & Pulses,finished,active,,no_image_url
-RGMR,Ragi Muruku,Sweets & Savories,finished,active,,no_image_url
-RGVR,Ragi Vermicelly,Millets,finished,active,,no_image_url
-RJMA,Rajma beans,Rice Cereals & Pulses,finished,active,,no_image_url
-RMRK,Rice Muruku,Sweets & Savories,finished,active,,no_image_url
-RRAR,Red Rice Ariselu,Sweets & Savories,finished,active,,no_image_url
-RTRP,Rat Trap,Cosmetics & Herbal,finished,active,,no_image_url
-SAFR,Saffron,Dry Fruits & Health,finished,active,,no_image_url
-SAND,Sand,Water Filter,consumable,active,,no_image_url
-SBJA,Sabja Seeds,Dry Fruits & Health,finished,active,,no_image_url
-SBWF,Sambhava wheat flour,Rice Cereals & Pulses,finished,active,,no_image_url
-SBWR,Sambhava wheat rawa,Rice Cereals & Pulses,finished,active,,no_image_url
-SCPD,Spicy Coconut Podwer,Dry Fruits & Health,finished,active,,no_image_url
-SEMI-FB-1L,Filled bottle (1 L) - capped,Intermediates,semi,active,,no_image_url
-SEMI-OBL-1L,Oil blend (1 L) - vitamin-fortified,Intermediates,semi,active,,no_image_url
-SES,Sesame - Cake,Edible Oils,finished,active,,no_image_url
-SESL,Sea Salt,Spices & Pickles,finished,active,,no_image_url
-SHKI,Sheekai,Cosmetics & Herbal,finished,active,,no_image_url
-SJPP,Sweet Jowar Pops,Sweets & Savories,finished,active,,no_image_url
-SMFT,Siridhanyalu(Millets) Food that Heals,Books,consumable,active,,no_image_url
-SMRD,316 Steel Mesh (Round),Water Filter,consumable,active,,no_image_url
-SMSH,316 Steel Mesh,Water Filter,consumable,active,,no_image_url
-SOIL,Sesame Oil,Edible Oils,finished,active,,no_image_url
-SOYA,Soya beans,Rice Cereals & Pulses,finished,active,,no_image_url
-SPNT,Soapnuts,Cosmetics & Herbal,finished,active,,no_image_url
-SSB,Sesame-Seeds (Black),Edible Oils,finished,active,,no_image_url
-SSRC,Sidda Sana Rice,Rice Cereals & Pulses,finished,active,,no_image_url
-STAR,Anasa puvvu,Spices & Pickles,finished,active,,no_image_url
-SVSP,Sajja Vada Spicy,Sweets & Savories,finished,active,,no_image_url
-TLAR,Tulasi Ark,Dry Fruits & Health,finished,active,,no_image_url
-TLTC,Toilet Cleaner,Cosmetics & Herbal,finished,active,,no_image_url
-TMRD,Tamarind,Spices & Pickles,finished,active,,no_image_url
-TPDR,Tooth powder,Cosmetics & Herbal,finished,active,,no_image_url
-TRFC,Trifala Churn,Dry Fruits & Health,finished,active,,no_image_url
-VNKR,Verrinuvvula karam,Spices & Pickles,finished,active,,no_image_url
-WFE2,Water Filter-SS316 - E 23,Water Filter,consumable,active,,no_image_url
-WFMS,Water Filter Stand - MS (Powder Coated),Water Filter,consumable,active,,no_image_url
-WFSS,Water Filter Stand - SS (Stainless Steel),Water Filter,consumable,active,,no_image_url
-WFST,Water Filter Stand,Water Filter,consumable,active,,no_image_url
-WGCK,White Gingely Chikki,Sweets & Savories,finished,active,,no_image_url
-WGLD,White Gingely Laddu,Sweets & Savories,finished,active,,no_image_url
-WGO,White gingelly oil,Edible Oils,finished,active,,no_image_url
-WLND,Walnuts (Desi-Akhrot),Dry Fruits & Health,finished,active,,no_image_url
-WSS,White Sesame-Seeds,Edible Oils,finished,active,,no_image_url
+AGBG,Ash Gourd (Budida Gummadi) Pickle,Oils & Oil Seeds,finished,active,,no_image_url
+AGRB,Agarbathi,Personal Care & Wellness,finished,active,,no_image_url
+AJWN,Ajwain,Spices & Condiments,finished,active,,no_image_url
+AKPD,Andukorra Papad,Millets & Millet Products,finished,active,,no_image_url
+AMRS,Amaranth Seeds,Dry Fruits & Superfoods,finished,active,,no_image_url
+ANPA,Anapa pappu,"Grains, Pulses & Flours",finished,active,,no_image_url
+BAJA,Bajra,Millets & Millet Products,finished,active,,no_image_url
+BAJA-SEMI,Semi Bajra (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+BGHK-SEMI,Semi Blackgram without Husk (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+BGRM-SEMI,Semi Blackgram whole (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+BGSC-SEMI,Semi Blackgram stone crushed (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+BHMP,Brahmi Powder,Personal Care & Wellness,finished,active,,no_image_url
+BK01,Siridhanyalatho sampoorna Arogyam,"Grains, Pulses & Flours",consumable,active,,no_image_url
+BK02,Siridhanyalu (sampoorna Arogyam),"Grains, Pulses & Flours",consumable,active,,no_image_url
+BKRC-SEMI,Semi Black Rice (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+BKSL,Black Salt,Spices & Condiments,finished,active,,no_image_url
+BLRC,Boiled Rice,Oils & Oil Seeds,finished,active,,no_image_url
+BLVD,Bilva / Maredu Drink,Dry Fruits & Superfoods,finished,active,,no_image_url
+BPSC,Black Pesalu Stone Crushed,"Grains, Pulses & Flours",finished,active,,no_image_url
+BRAR-SEMI,Semi Black Rice Arisalu (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+BRCK,Bricks,Home Utilities,consumable,active,,no_image_url
+BRLD,Borugulu Laddu,Sweets & Snacks,finished,active,,no_image_url
+BRTI,Bajra rotti,Millets & Millet Products,finished,active,,no_image_url
+BSMR,Besan murukulu,Sweets & Snacks,finished,active,,no_image_url
+BTMT-SEMI,Semi Brown Top Millet (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+BTRC,Bathroom Cleaner,Personal Care & Wellness,finished,active,,no_image_url
+BYLF,Bay Leaf,Spices & Condiments,finished,active,,no_image_url
+BYMP,Barnyard Millet Poha,Millets & Millet Products,finished,active,,no_image_url
+BYMP-SEMI,Semi Barnyard Millet Poha (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+BYMT,Barnyard Millet,Millets & Millet Products,finished,active,,no_image_url
+BYMT-SEMI,Semi Barnyard Millet (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+CARD,Cardamom,Spices & Condiments,finished,active,,no_image_url
+CART,cartridge (filled),"Grains, Pulses & Flours",consumable,active,,no_image_url
+CCAK,Coconut Cake,Oils & Oil Seeds,finished,active,,no_image_url
+CGWP,Cashew Granules with Palm Jaggery,Oils & Oil Seeds,finished,active,,no_image_url
+CHBK-SEMI,Semi Channa (black) (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+CHDL-SEMI,Semi Channa Dal (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+CHIA,Chia Seeds,Dry Fruits & Superfoods,finished,active,,no_image_url
+CHPW,Chilli Powder,Spices & Condiments,finished,active,,no_image_url
+CHWH-SEMI,Semi Channa (white) (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+CINN,Cinnamon,Spices & Condiments,finished,active,,no_image_url
+CMRC,Chitti Muthyalu rice,"Grains, Pulses & Flours",finished,active,,no_image_url
+CMRC-SEMI,Semi Chitti Muthyalu rice (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+CNLD,Coconut Laddu,Sweets & Snacks,finished,active,,no_image_url
+COAL,Coal,Home Utilities,consumable,active,,no_image_url
+COFP,Coffee Powder,Sweets & Snacks,finished,active,,no_image_url
+CONS-CTN-12,Carton box (holds 12 bottles),"Grains, Pulses & Flours",consumable,active,,no_image_url
+CONS-POUCH-LG,Inner pouch (large) - for 30pcs packs,"Grains, Pulses & Flours",consumable,active,,no_image_url
+CONS-POUCH-SM,Inner pouch (small) - for 10pcs packs,"Grains, Pulses & Flours",consumable,active,,no_image_url
+CONS-SHRINK,Shrink wrap (per metre),"Grains, Pulses & Flours",consumable,active,,no_image_url
+CONS-VITAMIN-E,Vitamin E premix,"Grains, Pulses & Flours",consumable,active,,no_image_url
+CPLT,Copper Plate,Personal Care & Wellness,finished,active,,no_image_url
+CRPK,Coriander Leaf Pickle,Spices & Condiments,finished,active,,no_image_url
+CSHW,Cashew,Dry Fruits & Superfoods,finished,active,,no_image_url
+CTPK,Chintha tokku pickle,Spices & Condiments,finished,discontinued,,no_image_url
+CWPA-SEMI,Semi CowPea (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+CWPD,Cowpea Dal,"Grains, Pulses & Flours",finished,active,,no_image_url
+CWPD-SEMI,Semi Cowpea Dal (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+DATE,Dates,Dry Fruits & Superfoods,finished,active,,no_image_url
+DBR1,DIABETIC RICE,"Grains, Pulses & Flours",finished,active,,no_image_url
+DBRC,Desi Basmati Rice,"Grains, Pulses & Flours",finished,active,,no_image_url
+DBRC-SEMI,Semi Desi Basmati Rice (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+DCGH,Desi cow ghee pvs,Oils & Oil Seeds,finished,active,,no_image_url
+DDPD,Dry Dates powder,Dry Fruits & Superfoods,finished,active,,no_image_url
+FCDL-SEMI,Semi Fried Channa dal (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+FGRN,Fried Groundnuts,Oils & Oil Seeds,finished,active,,no_image_url
+FLCC,Floor Cleaner,Personal Care & Wellness,finished,active,,no_image_url
+FRPL-SEMI,Semi Fine Rice (Single Polish) (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+FRUP-SEMI,Semi Fine Rice (Unpolished) (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+FXBR,Flaxseed Burfie,Sweets & Snacks,finished,active,,no_image_url
+FXMP,Foxtail Millet Poha,Millets & Millet Products,finished,active,,no_image_url
+FXMP-SEMI,Semi Foxtail Millet Poha (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+FXTM-SEMI,Semi Foxtail Millet (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+GCAK,Groundnut Cake,Oils & Oil Seeds,finished,active,,no_image_url
+GGDL-SEMI,Semi Greengram Dal / stone crushed (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+GNDK,Gond Katira,Dry Fruits & Superfoods,finished,active,,no_image_url
+GNGP,Ginger Powder,Spices & Condiments,finished,active,,no_image_url
+GNMS,Groundnut Masala,Sweets & Snacks,finished,active,,no_image_url
+GOIL-UNFILT,Unfiltered Groundnut Oil,Oils & Oil Seeds,semi,active,,no_image_url
+GWP-SEMI,Semi Greengram Whole/ Pesalu (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+HCKR,Herbal Cockroach Repellent,Personal Care & Wellness,finished,active,,no_image_url
+HDRO,Headache relief oil,Oils & Oil Seeds,finished,active,,no_image_url
+HGDL-SEMI,Semi Horsegram dal (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+HGWH-SEMI,Semi Horsegram whole (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+HLDW,Herbal Liquid Dish Wash,Personal Care & Wellness,finished,active,,no_image_url
+HLZR,Herbal Lizard Repellent Spray,Personal Care & Wellness,finished,active,,no_image_url
+HNYF,Forest Honey,Natural Sweeteners,finished,active,,no_image_url
+HNYG,Honey (Farm Collection) Glass,Sweets & Snacks,finished,active,,no_image_url
+HNYT,Tree Bark Honey,Sweets & Snacks,finished,active,,no_image_url
+IAUM,Instant Arika Upma Mix,Millets & Millet Products,finished,active,,no_image_url
+IDLT,Idly Ravva (Little Millet),Millets & Millet Products,finished,active,,no_image_url
+IKUM,Instant Korra Upma Mix,Spices & Condiments,finished,active,,no_image_url
+IMPM,Instant Millet Pongal Mix,Millets & Millet Products,finished,active,,no_image_url
+IMPM-SEMI,Semi Instant Millet Pongal Mix (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+IRKM,Idly Ravva (Kodo Millet ),Millets & Millet Products,finished,active,,no_image_url
+JAGB,jaggery Small Balls,Natural Sweeteners,finished,active,,no_image_url
+JJSP-SEMI,Semi jowar(Jonna ) Spicy Pops (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+JNPT-SEMI,Semi Jonna Nippatta (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+JPTR,Japatri,Spices & Condiments,finished,active,,no_image_url
+JRTI,Jowar rotti,Millets & Millet Products,finished,active,,no_image_url
+JWPH,Jowar Poha,Millets & Millet Products,finished,active,,no_image_url
+JWPH-SEMI,Semi Jowar Poha (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+JWWH,Jonnalu (white)/ Jowar,Millets & Millet Products,finished,active,,no_image_url
+JWWH-SEMI,Semi Jonnalu (white)/ Jowar (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+JWYL-SEMI,Semi Jowar (Yellow) (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+KDMP,Kodo Millet Poha,Millets & Millet Products,finished,active,,no_image_url
+KDMP-SEMI,Semi Kodo Millet Poha (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+KDMT,Kodo Millet,Millets & Millet Products,finished,active,,no_image_url
+KDMT-SEMI,Semi Kodo Millet (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+KLNJ,Kalonji seeds,Dry Fruits & Superfoods,finished,active,,no_image_url
+KRPD,Korra Papad,Spices & Condiments,finished,active,,no_image_url
+KSGR,Khandsari sugar,Natural Sweeteners,finished,active,,no_image_url
+KSME,Kasuri Methi,Spices & Condiments,finished,active,,no_image_url
+KTCC,Kitchen Cleaner Spray,Personal Care & Wellness,finished,active,,no_image_url
+KTRM,Kasturi Turmeric,Spices & Condiments,finished,active,,no_image_url
+KWDP,kitchen waste digester powder,Personal Care & Wellness,finished,active,,no_image_url
+KWDT,kitchen waste digester tin,Personal Care & Wellness,finished,active,,no_image_url
+LMST,Lime Stone,Home Utilities,consumable,active,,no_image_url
+LTMF,Little Millet Flour,Millets & Millet Products,finished,active,,no_image_url
+LTMT,Little Millet,Millets & Millet Products,finished,active,,no_image_url
+LTMT-SEMI,Semi Little Millet (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+MBAG,Mineral Bag,"Grains, Pulses & Flours",consumable,active,,no_image_url
+MGMF,Multigrain Malt Flour,Millets & Millet Products,finished,active,,no_image_url
+MGPK,Mango Pickle,Spices & Condiments,finished,active,,no_image_url
+MGPP,Mango Powder,Spices & Condiments,finished,active,,no_image_url
+MGPW,Moringa Powder (Plain),Spices & Condiments,finished,active,,no_image_url
+MILL-BROKEN,Broken grains,"Grains, Pulses & Flours",finished,active,,no_image_url
+MILL-WASTE,Mill process waste,"Grains, Pulses & Flours",consumable,active,,no_image_url
+MMDM-SEMI,Semi Multi Millet Dosa Mix (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+MMLT-SEMI,Semi Multi Millet (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+MMPD,Millet Mix Papad,Millets & Millet Products,finished,active,,no_image_url
+MMPD-SEMI,Semi Millet Mix Papad (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+MMPS,Multani Mitti & Palapak soap,Personal Care & Wellness,finished,active,,no_image_url
+MMRK-SEMI,Semi Millet Muruku (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+MNLD,Minapa Laddu,Sweets & Snacks,finished,active,,no_image_url
+MNPT,Millet Nippattu,Millets & Millet Products,finished,active,,no_image_url
+MNPT-SEMI,Semi Millet Nippattu (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+MNTI,Menthi,Spices & Condiments,finished,active,,no_image_url
+MRLQ,Mosrelief Liquid,Personal Care & Wellness,finished,active,,no_image_url
+MSPD,Masala papad,Spices & Condiments,finished,active,,no_image_url
+MSPW,Mango Seed Powder,Spices & Condiments,finished,active,,no_image_url
+MUOL-UNFILT,Unfiltered Mustard Oil,Oils & Oil Seeds,semi,active,,no_image_url
+NCMP,Natural Camphor,Dry Fruits & Superfoods,finished,active,,no_image_url
+NFAB,Natural Fabric Wash,Personal Care & Wellness,finished,active,,no_image_url
+NGOL-UNFILT,Unfiltered Niger Seed Oil,Oils & Oil Seeds,semi,active,,no_image_url
+NHDY,Natural Hair Dye,Personal Care & Wellness,finished,active,,no_image_url
+NLKR,Nalla Karam,Spices & Condiments,finished,active,,no_image_url
+NNRD,Nannari Drink,Dry Fruits & Superfoods,finished,active,,no_image_url
+NVRC-SEMI,Semi Navara Rice (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+ODTS,Organic Dried Tomato Slices,Spices & Condiments,finished,active,,no_image_url
+PHPW,Pulihora mix powder,Spices & Condiments,finished,active,,no_image_url
+PMPS,Pumpkin Seed,Dry Fruits & Superfoods,finished,active,,no_image_url
+PRD,Almonds / Badam,Oils & Oil Seeds,finished,active,,no_image_url
+PRD1,Chinthakaya Pickle,Oils & Oil Seeds,finished,active,,no_image_url
+PRD2,Cashew chikki,Oils & Oil Seeds,finished,active,,no_image_url
+PSLD,Pesara Laddu,Sweets & Snacks,finished,active,,no_image_url
+PSMT-SEMI,Semi Proso Millet (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+PTNL,Patnalu,Sweets & Snacks,finished,active,,no_image_url
+RAGI,Finger Millet,Millets & Millet Products,finished,active,,no_image_url
+RAGI-SEMI,Semi Finger Millet (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+RAGP,Finger Millet Poha,Millets & Millet Products,finished,active,,no_image_url
+RAGP-SEMI,Semi Finger Millet Poha (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+RAJWN,Raw Ajwain,Spices & Condiments,raw,active,,no_image_url
+RAMRS,Raw Amaranth Seeds,Dry Fruits & Superfoods,raw,active,,no_image_url
+RANPA,Raw Anapa pappu,"Grains, Pulses & Flours",raw,active,,no_image_url
+RAW-BOT-1L,PET bottle 1 L (clear),"Grains, Pulses & Flours",raw,active,,no_image_url
+RAW-CAP-S38,Cap with safety seal (38 mm),"Grains, Pulses & Flours",raw,active,,no_image_url
+RAW-SOAP-ALOE-GEL,Raw Aloe Vera Gel,Personal Care & Wellness,raw,active,,no_image_url
+RAW-SOAP-CASTOR-OIL,Raw Castor Oil (soap grade),Personal Care & Wellness,raw,active,,no_image_url
+RAW-SOAP-CAUSTIC-SODA,Raw Caustic Soda,Personal Care & Wellness,raw,active,,no_image_url
+RAW-SOAP-COCO-OIL,Raw Coconut Oil (soap grade),Personal Care & Wellness,raw,active,,no_image_url
+RAW-SOAP-COW-MILK,Cow Milk (soap process),Personal Care & Wellness,raw,active,,no_image_url
+RAW-SOAP-DMDM,Raw DMDM,Personal Care & Wellness,raw,active,,no_image_url
+RAW-SOAP-FLAVOUR-OIL,Raw Flavour Oil (soap),Personal Care & Wellness,raw,active,,no_image_url
+RAW-SOAP-GINGELLY-OIL,Raw Gingelly Oil (soap grade),Personal Care & Wellness,raw,active,,no_image_url
+RAW-SOAP-NEEM-OIL,Raw Neem Oil (soap grade),Personal Care & Wellness,raw,active,,no_image_url
+RAW-SOAP-TOMATO-JUICE,Tomato Juice (soap process),Personal Care & Wellness,raw,active,,no_image_url
+RBAJA,Raw Bajra,Millets & Millet Products,raw,active,,no_image_url
+RBAJP,Raw Bajra Poha,Millets & Millet Products,raw,active,,no_image_url
+RBKSL,Raw Black Salt,Spices & Condiments,raw,active,,no_image_url
+RBYLF,Raw Bay Leaf,Spices & Condiments,raw,active,,no_image_url
+RBYMP,Raw Barnyard Millet Poha,Millets & Millet Products,raw,active,,no_image_url
+RBYMT,Raw Barnyard Millet,Millets & Millet Products,raw,active,,no_image_url
+RCARD,Raw Cardamom,Spices & Condiments,raw,active,,no_image_url
+RCHIA,Raw Chia Seeds,Dry Fruits & Superfoods,raw,active,,no_image_url
+RCINN,Raw Cinnamon,Spices & Condiments,raw,active,,no_image_url
+RCMRC,Raw Chitti Muthyalu rice,"Grains, Pulses & Flours",raw,active,,no_image_url
+RCPD,Rice papad,Sweets & Snacks,finished,active,,no_image_url
+RCPD-SEMI,Semi Rice papad (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+RCSC,Rock Salt (crystal),Spices & Condiments,finished,discontinued,,no_image_url
+RCSHW,Raw Cashew,Dry Fruits & Superfoods,raw,active,,no_image_url
+RCSL,Rock Salt,Spices & Condiments,finished,active,,no_image_url
+RCWP,Red CowPea,"Grains, Pulses & Flours",finished,active,,no_image_url
+RCWP-SEMI,Semi Red CowPea (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+RDATE,Raw Dates,Dry Fruits & Superfoods,raw,active,,no_image_url
+RDBRC,Raw Desi Basmati Rice,"Grains, Pulses & Flours",raw,active,,no_image_url
+RFXMP,Raw Foxtail Millet Poha,Millets & Millet Products,raw,active,,no_image_url
+RGDL-SEMI,Semi Redgram stone crushed (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+RGMR,Ragi Muruku,Millets & Millet Products,finished,active,,no_image_url
+RGMR-SEMI,Semi Ragi Muruku (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+RGNDK,Raw Gond Katira,Dry Fruits & Superfoods,raw,active,,no_image_url
+RGNGP,Raw Ginger Powder,Spices & Condiments,raw,active,,no_image_url
+RGPD-SEMI,Semi Ragi papad (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+RJAGB,Raw jaggery Small Balls,Dry Fruits & Superfoods,raw,active,,no_image_url
+RJMA,Rajma beans,"Grains, Pulses & Flours",finished,active,,no_image_url
+RJMA-SEMI,Semi Rajma beans (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+RJPTR,Raw Japatri,Spices & Condiments,raw,active,,no_image_url
+RJRC-SEMI,Semi Rajamudi Rice (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+RJWPH,Raw Jowar Poha,Millets & Millet Products,raw,active,,no_image_url
+RJWWH,Raw Jonnalu (white)/ Jowar,Millets & Millet Products,raw,active,,no_image_url
+RKDMP,Raw Kodo Millet Poha,Millets & Millet Products,raw,active,,no_image_url
+RKDMT,Raw Kodo Millet,Millets & Millet Products,raw,active,,no_image_url
+RKLNJ,Raw Kalonji seeds,Dry Fruits & Superfoods,raw,active,,no_image_url
+RKSME,Raw Kasuri Methi,Spices & Condiments,raw,active,,no_image_url
+RKTRM,Raw Kasturi Turmeric,Spices & Condiments,raw,active,,no_image_url
+RLTMP,Raw Little Millet Poha,Millets & Millet Products,raw,active,,no_image_url
+RLTMT,Raw Little Millet,Millets & Millet Products,raw,active,,no_image_url
+RMGPP,Raw Mango Powder,Spices & Condiments,raw,active,,no_image_url
+RMNTI,Raw Menthi,Spices & Condiments,raw,active,,no_image_url
+RMRK,Rice Muruku,Sweets & Snacks,finished,active,,no_image_url
+RMRK-SEMI,Semi Rice Muruku (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+RMSPW,Raw Mango Seed Powder,Spices & Condiments,raw,active,,no_image_url
+RNCMP,Raw Natural Camphor,Dry Fruits & Superfoods,raw,active,,no_image_url
+RNHDY,Raw Natural Hair Dye,Personal Care & Wellness,raw,active,,no_image_url
+RNPT-SEMI,Semi Rice Nippattu (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+RPMPS,Raw Pumpkin Seed,Dry Fruits & Superfoods,raw,active,,no_image_url
+RRAR,Red Rice Ariselu,Sweets & Snacks,finished,active,,no_image_url
+RRAR-SEMI,Semi Red Rice Ariselu (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+RRPH-SEMI,Semi Red Rice Poha (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+RRUP-SEMI,Semi Red Rice (Unpolished) (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+RSBJA,Raw Sabja Seeds,Dry Fruits & Superfoods,raw,active,,no_image_url
+RSESL,Raw Sea Salt,Spices & Condiments,raw,active,,no_image_url
+RSHKI,Raw Sheekai,Personal Care & Wellness,raw,active,,no_image_url
+RSOYA,Raw Soya beans,"Grains, Pulses & Flours",raw,active,,no_image_url
+RSPNT,Raw Soapnuts,Dry Fruits & Superfoods,raw,active,,no_image_url
+RSSRC,Raw Sidda Sana Rice,"Grains, Pulses & Flours",raw,active,,no_image_url
+RSTAR,Raw Anasa puvvu,Spices & Condiments,raw,active,,no_image_url
+RTMRD,Raw Tamarind,Spices & Condiments,raw,active,,no_image_url
+RTRP,Rat Trap,Personal Care & Wellness,finished,active,,no_image_url
+RWLND,Raw Walnuts (Desi-Akhrot),Dry Fruits & Superfoods,raw,active,,no_image_url
+SAFR,Saffron,Dry Fruits & Superfoods,finished,active,,no_image_url
+SAJWN,Semi Ajwain,Spices & Condiments,semi,active,,no_image_url
+SAMRS,Semi Amaranth Seeds,Dry Fruits & Superfoods,semi,active,,no_image_url
+SAND,Sand,Home Utilities,consumable,active,,no_image_url
+SANPA,Semi Anapa pappu,"Grains, Pulses & Flours",semi,active,,no_image_url
+SBAJA,Semi Bajra,Millets & Millet Products,semi,active,,no_image_url
+SBAJP,Semi Bajra Poha,Millets & Millet Products,semi,active,,no_image_url
+SBJA,Sabja Seeds,Dry Fruits & Superfoods,finished,active,,no_image_url
+SBKSL,Semi Black Salt,Spices & Condiments,semi,active,,no_image_url
+SBWF,Sambhava wheat flour,"Grains, Pulses & Flours",finished,active,,no_image_url
+SBWR,Sambhava wheat rawa,"Grains, Pulses & Flours",finished,active,,no_image_url
+SBWR-SEMI,Semi Sambhava wheat rawa (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+SBWT-SEMI,Semi Sambhava wheat (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+SBYLF,Semi Bay Leaf,Spices & Condiments,semi,active,,no_image_url
+SBYMP,Semi Barnyard Millet Poha,Millets & Millet Products,semi,active,,no_image_url
+SBYMT,Semi Barnyard Millet,Millets & Millet Products,semi,active,,no_image_url
+SCARD,Semi Cardamom,Spices & Condiments,semi,active,,no_image_url
+SCHIA,Semi Chia Seeds,Dry Fruits & Superfoods,semi,active,,no_image_url
+SCINN,Semi Cinnamon,Spices & Condiments,semi,active,,no_image_url
+SCMRC,Semi Chitti Muthyalu rice,"Grains, Pulses & Flours",semi,active,,no_image_url
+SCPD,Spicy Coconut Podwer,Dry Fruits & Superfoods,finished,active,,no_image_url
+SCSHW,Semi Cashew,Dry Fruits & Superfoods,semi,active,,no_image_url
+SDATE,Semi Dates,Dry Fruits & Superfoods,semi,active,,no_image_url
+SDBRC,Semi Desi Basmati Rice,"Grains, Pulses & Flours",semi,active,,no_image_url
+SEMI-BOT-1L,Semi PET bottle 1 L (clear),"Grains, Pulses & Flours",semi,active,,no_image_url
+SEMI-CAP-S38,Semi Cap with safety seal (38 mm),"Grains, Pulses & Flours",semi,active,,no_image_url
+SEMI-FB-1L,Filled bottle (1 L) - capped,"Grains, Pulses & Flours",semi,active,,no_image_url
+SEMI-OBL-1L,Oil blend (1 L) - vitamin-fortified,Oils & Oil Seeds,semi,active,,no_image_url
+SES,Sesame - Cake,Oils & Oil Seeds,finished,active,,no_image_url
+SESL,Sea Salt,Spices & Condiments,finished,active,,no_image_url
+SFOL-UNFILT,Unfiltered Safflower / Kusuma Oil,Oils & Oil Seeds,semi,active,,no_image_url
+SFXMP,Semi Foxtail Millet Poha,Millets & Millet Products,semi,active,,no_image_url
+SGNDK,Semi Gond Katira,Dry Fruits & Superfoods,semi,active,,no_image_url
+SGNGP,Semi Ginger Powder,Spices & Condiments,semi,active,,no_image_url
+SHKI,Sheekai,Personal Care & Wellness,finished,active,,no_image_url
+SJAGB,Semi jaggery Small Balls,Dry Fruits & Superfoods,semi,active,,no_image_url
+SJPP,Sweet Jowar Pops,Millets & Millet Products,finished,active,,no_image_url
+SJPP-SEMI,Semi Sweet Jowar Pops (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+SJPTR,Semi Japatri,Spices & Condiments,semi,active,,no_image_url
+SJWPH,Semi Jowar Poha,Millets & Millet Products,semi,active,,no_image_url
+SJWWH,Semi Jonnalu (white)/ Jowar,Millets & Millet Products,semi,active,,no_image_url
+SKDMP,Semi Kodo Millet Poha,Millets & Millet Products,semi,active,,no_image_url
+SKDMT,Semi Kodo Millet,Millets & Millet Products,semi,active,,no_image_url
+SKLNJ,Semi Kalonji seeds,Dry Fruits & Superfoods,semi,active,,no_image_url
+SKSME,Semi Kasuri Methi,Spices & Condiments,semi,active,,no_image_url
+SKTRM,Semi Kasturi Turmeric,Spices & Condiments,semi,active,,no_image_url
+SLTMP,Semi Little Millet Poha,Millets & Millet Products,semi,active,,no_image_url
+SLTMT,Semi Little Millet,Millets & Millet Products,semi,active,,no_image_url
+SMFT,Siridhanyalu(Millets) Food that Heals,Millets & Millet Products,consumable,active,,no_image_url
+SMGPP,Semi Mango Powder,Spices & Condiments,semi,active,,no_image_url
+SMNTI,Semi Menthi,Spices & Condiments,semi,active,,no_image_url
+SMRD,316 Steel Mesh (Round),"Grains, Pulses & Flours",consumable,active,,no_image_url
+SMSH,316 Steel Mesh,"Grains, Pulses & Flours",consumable,active,,no_image_url
+SMSPW,Semi Mango Seed Powder,Spices & Condiments,semi,active,,no_image_url
+SNCMP,Semi Natural Camphor,Dry Fruits & Superfoods,semi,active,,no_image_url
+SNHDY,Semi Natural Hair Dye,Personal Care & Wellness,semi,active,,no_image_url
+SOAP-PROC,Processed Bath Soap (drying WIP),Personal Care & Wellness,semi,active,,no_image_url
+SOIL,Sesame Oil,Oils & Oil Seeds,finished,active,,no_image_url
+SOIL-UNFILT,Unfiltered Sesame Oil,Oils & Oil Seeds,semi,active,,no_image_url
+SOYA,Soya beans,"Grains, Pulses & Flours",finished,active,,no_image_url
+SOYA-SEMI,Semi Soya beans (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+SPMPS,Semi Pumpkin Seed,Dry Fruits & Superfoods,semi,active,,no_image_url
+SPNT,Soapnuts,Personal Care & Wellness,finished,active,,no_image_url
+SSB,Sesame-Seeds (Black),Oils & Oil Seeds,finished,active,,no_image_url
+SSBJA,Semi Sabja Seeds,Dry Fruits & Superfoods,semi,active,,no_image_url
+SSESL,Semi Sea Salt,Spices & Condiments,semi,active,,no_image_url
+SSHKI,Semi Sheekai,Personal Care & Wellness,semi,active,,no_image_url
+SSOYA,Semi Soya beans,"Grains, Pulses & Flours",semi,active,,no_image_url
+SSPNT,Semi Soapnuts,Dry Fruits & Superfoods,semi,active,,no_image_url
+SSRC,Sidda Sana Rice,"Grains, Pulses & Flours",finished,active,,no_image_url
+SSRC-SEMI,Semi Sidda Sana Rice (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+SSSRC,Semi Sidda Sana Rice,"Grains, Pulses & Flours",semi,active,,no_image_url
+SSTAR,Semi Anasa puvvu,Spices & Condiments,semi,active,,no_image_url
+STAR,Anasa puvvu,Spices & Condiments,finished,active,,no_image_url
+STMRD,Semi Tamarind,Spices & Condiments,semi,active,,no_image_url
+SVSP,Sajja Vada Spicy,Sweets & Snacks,finished,active,,no_image_url
+SWLND,Semi Walnuts (Desi-Akhrot),Dry Fruits & Superfoods,semi,active,,no_image_url
+TLTC,Toilet Cleaner,Oils & Oil Seeds,finished,active,,no_image_url
+TMRD,Tamarind,Spices & Condiments,finished,active,,no_image_url
+TPDR,Tooth powder,Personal Care & Wellness,finished,active,,no_image_url
+TRFC,Trifala Churn,Personal Care & Wellness,finished,active,,no_image_url
+VNKR,Verrinuvvula karam,Spices & Condiments,finished,active,,no_image_url
+WFE2,Water Filter-SS316 - E 23,"Grains, Pulses & Flours",consumable,active,,no_image_url
+WFMS,Water Filter Stand - MS (Powder Coated),"Grains, Pulses & Flours",consumable,active,,no_image_url
+WFSS,Water Filter Stand - SS (Stainless Steel),"Grains, Pulses & Flours",consumable,active,,no_image_url
+WFST,Water Filter Stand,Home Utilities,consumable,active,,no_image_url
+WGCK,White Gingely Chikki,Sweets & Snacks,finished,active,,no_image_url
+WGLD,White Gingely Laddu,Sweets & Snacks,finished,active,,no_image_url
+WGO,White gingelly oil,Oils & Oil Seeds,finished,active,,no_image_url
+WGO-UNFILT,Unfiltered White gingelly oil,Oils & Oil Seeds,semi,active,,no_image_url
+WHET-SEMI,Semi Wheat (milled),"Grains, Pulses & Flours",semi,active,,no_image_url
+WLND,Walnuts (Desi-Akhrot),Dry Fruits & Superfoods,finished,active,,no_image_url
+WSS,White Sesame-Seeds,Oils & Oil Seeds,finished,active,,no_image_url

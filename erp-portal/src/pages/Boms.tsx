@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { BomEditor } from "@/components/manufacturing/BomEditor";
-import { BomListPanel } from "@/components/manufacturing/BomListPanel";
+import { BomBrowseTable } from "@/components/manufacturing/BomBrowseTable";
 import { Button } from "@/components/common/Button";
 import { useApi } from "@/hooks/useApi";
 import { api } from "@/lib/api";
@@ -17,7 +17,7 @@ export const Boms = () => {
   const [searchParams] = useSearchParams();
 
   const liveBoms = useApi(() => api.boms(), []);
-  const liveProducts = useApi(() => api.products({ limit: 500 }), []);
+  const liveProducts = useApi(() => api.products({ limit: 2000 }), []);
   const boms = liveBoms.data ?? [];
   const products = liveProducts.data ?? [];
 
@@ -136,12 +136,9 @@ export const Boms = () => {
         </div>
       )}
       <div className="flex-1 min-h-0">
-      <BomListPanel
-        variant="page"
+      <BomBrowseTable
         boms={boms}
         products={products}
-        onClose={() => navigate("/manufacturing")}
-        onEdit={(b) => navigate(`/manufacturing/boms/${b.id}`)}
         onCreate={({ productId, variantId } = {}) => {
           const params = new URLSearchParams();
           if (productId) params.set("productId", productId);

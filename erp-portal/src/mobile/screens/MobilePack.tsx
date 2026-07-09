@@ -1,3 +1,4 @@
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
@@ -1095,7 +1096,7 @@ const ContainerPickerSheet = ({
   onAddNew: () => void;
   onClose: () => void;
 }) => (
-  <div className={SHEET_OVERLAY} onClick={onClose}>
+  <div className={SHEET_OVERLAY} {...backdropDismissProps(onClose)}>
     <div className={SHEET_PANEL} onClick={(e) => e.stopPropagation()}>
       <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-slate-300" />
       <div className="text-lg font-bold text-slate-900">Active container</div>
@@ -1166,7 +1167,7 @@ const TypePickerSheet = ({
   onPick: (id: string | null) => void;
   onClose: () => void;
 }) => (
-  <div className={SHEET_OVERLAY} onClick={onClose}>
+  <div className={SHEET_OVERLAY} {...backdropDismissProps(onClose)}>
     <div className={SHEET_PANEL} onClick={(e) => e.stopPropagation()}>
       <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-slate-300" />
       <div className="mb-2 text-sm font-bold text-slate-900">
@@ -1222,7 +1223,7 @@ const QtyPadSheet = ({
   const num = Number(val) || 0;
   const ok = num > 0 && num <= max;
   return (
-    <div className={SHEET_OVERLAY} onClick={onClose}>
+    <div className={SHEET_OVERLAY} {...backdropDismissProps(onClose)}>
       <div className={SHEET_PANEL} onClick={(e) => e.stopPropagation()}>
         <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-slate-300" />
         <div className="mb-1 text-center text-xs text-slate-500">
@@ -1281,7 +1282,7 @@ const SealConfirmSheet = ({
   );
   const units = container.items.reduce((s, ci) => s + ci.qty, 0);
   return (
-    <div className={SHEET_OVERLAY} onClick={onClose}>
+    <div className={SHEET_OVERLAY} {...backdropDismissProps(onClose)}>
       <div className={SHEET_PANEL} onClick={(e) => e.stopPropagation()}>
         <div className="mx-auto mb-3 h-1.5 w-12 rounded-full bg-slate-300" />
         <div className="text-lg font-bold text-slate-900">

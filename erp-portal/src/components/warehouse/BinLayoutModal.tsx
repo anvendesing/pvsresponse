@@ -11,6 +11,7 @@
 // Existing labels are surfaced as datalist suggestions so operators
 // don't accidentally create "A1" and "A-1" side by side.
 
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 import { useEffect, useMemo, useState } from "react";
 import { Boxes, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
@@ -147,7 +148,7 @@ export const BinLayoutModal = ({
   };
 
   return (
-    <div className="fixed inset-0 z-[60] bg-ink/40 grid place-items-center" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] bg-ink/40 grid place-items-center" {...backdropDismissProps(onClose)}>
       <div
         className="bg-surface w-full max-w-xl rounded-lg elevation-3 overflow-hidden flex flex-col max-h-[90vh]"
         onClick={(e) => e.stopPropagation()}

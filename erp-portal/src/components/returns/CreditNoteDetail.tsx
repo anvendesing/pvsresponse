@@ -1,6 +1,7 @@
 // CreditNoteDetail — read-only overlay for a Credit Note document.
 // Opened from ReturnDetail when the user clicks "View Credit Note".
 
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 import { useEffect, useState } from "react";
 import { FileText, X } from "lucide-react";
 import { Chip } from "@/components/common/Chip";
@@ -31,7 +32,7 @@ export const CreditNoteDetail = ({ creditNoteId, onClose }: Props) => {
       {/* Backdrop */}
       <div
         className="fixed inset-0 z-60 bg-black/30"
-        onClick={onClose}
+        {...backdropDismissProps(onClose)}
         aria-hidden
       />
 

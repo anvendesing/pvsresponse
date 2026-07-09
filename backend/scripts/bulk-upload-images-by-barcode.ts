@@ -24,7 +24,11 @@
  *   --user      Admin username (default: admin)
  *   --pass      Admin password (will prompt if omitted)
  *
- * On success, the backend generates 7 variants per product automatically:
+ * Barcode lookup matches Product.barcode or any ProductVariant.barcode.
+ * Each matched image is uploaded to the parent product AND every variant
+ * under that product (same photo on parent + all variant image slots).
+ *
+ * On success, the backend generates 7 size variants per upload automatically:
  *   original.jpg  (archival, max 3000px)
  *   large.webp / large.jpg    (1200px - desktop hero)
  *   medium.webp / medium.jpg  (600px  - cards)
@@ -56,8 +60,8 @@ const db = new PrismaClient();
 
 function promptPassword(prompt: string): Promise<string> {
   return new Promise((resolve) => {
-    const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
-    process.stderr.write(prompt);
+    console.log(prompt);
+    const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
     rl.question("", (answer) => {
       rl.close();
       resolve(answer.trim());
@@ -79,33 +83,108 @@ async function login(username: string, password: string): Promise<string> {
   return data.token;
 }
 
-async function lookupByBarcode(barcode: string): Promise<{ id: string; name: string; sku: string } | null> {
-  // Direct DB lookup — fastest, no HTTP hop needed
+type BarcodeMatch = {
+  productId: string;
+  name: string;
+  sku: string;
+  variantIds: string[];
+};
+
+async function lookupByBarcode(barcode: string): Promise<BarcodeMatch | null> {
+  // Direct DB lookup — parent barcode first, then variant barcode
   const product = await db.product.findFirst({
     where: { barcode: { equals: barcode, mode: "insensitive" } },
-    select: { id: true, name: true, sku: true },
+    select: {
+      id: true,
+      name: true,
+      sku: true,
+      variants: { select: { id: true } },
+    },
   });
-  return product ?? null;
+  if (product) {
+    return {
+      productId: product.id,
+      name: product.name,
+      sku: product.sku,
+      variantIds: product.variants.map((v) => v.id),
+    };
+  }
+
+  const variant = await db.productVariant.findFirst({
+    where: { barcode: { equals: barcode, mode: "insensitive" } },
+    select: {
+      product: {
+        select: {
+          id: true,
+          name: true,
+          sku: true,
+          variants: { select: { id: true } },
+        },
+      },
+    },
+  });
+  if (!variant) return null;
+
+  return {
+    productId: variant.product.id,
+    name: variant.product.name,
+    sku: variant.product.sku,
+    variantIds: variant.product.variants.map((v) => v.id),
+  };
 }
 
-async function uploadImage(token: string, productId: string, filePath: string): Promise<void> {
+function buildImageForm(filePath: string): FormData {
   const buf = readFileSync(filePath);
   const ext = path.extname(filePath).toLowerCase();
   const mime = ext === ".png" ? "image/png" : ext === ".webp" ? "image/webp" : "image/jpeg";
 
-  // Use native FormData + Blob (available in Node 18+)
   const form = new FormData();
   form.append("image", new Blob([buf], { type: mime }), path.basename(filePath));
+  return form;
+}
 
+async function uploadProductImage(token: string, productId: string, filePath: string): Promise<void> {
   const res = await fetch(`${API_BASE}/products/${productId}/image`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}` },
-    body: form,
+    body: buildImageForm(filePath),
   });
   if (!res.ok) {
     const body = await res.text();
-    throw new Error(`Upload failed (${res.status}): ${body}`);
+    throw new Error(`Product upload failed (${res.status}): ${body}`);
   }
+}
+
+async function uploadVariantImage(
+  token: string,
+  productId: string,
+  variantId: string,
+  filePath: string
+): Promise<void> {
+  const res = await fetch(`${API_BASE}/products/${productId}/variants/${variantId}/image`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: buildImageForm(filePath),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Variant upload failed (${res.status}): ${body}`);
+  }
+}
+
+async function uploadToProductAndVariants(
+  token: string,
+  match: BarcodeMatch,
+  filePath: string
+): Promise<{ variantsUploaded: number }> {
+  await uploadProductImage(token, match.productId, filePath);
+
+  let variantsUploaded = 0;
+  for (const variantId of match.variantIds) {
+    await uploadVariantImage(token, match.productId, variantId, filePath);
+    variantsUploaded++;
+  }
+  return { variantsUploaded };
 }
 
 // ── Main ───────────────────────────────────────────────────────────────────────
@@ -137,42 +216,54 @@ async function main() {
   let token = "";
   if (!DRY_RUN) {
     if (!ADMIN_PASS) {
-      ADMIN_PASS = await promptPassword(`Password for "${ADMIN_USER}": `);
+      ADMIN_PASS = await promptPassword(`\nEnter password for "${ADMIN_USER}" (input is hidden): `);
     }
-    console.log("\nLogging in...");
+    console.log("\nLogging in to", API_BASE, "...");
     token = await login(ADMIN_USER, ADMIN_PASS);
-    console.log("  Logged in OK.\n");
+    console.log("  Logged in OK.");
+    console.log(`\nUploading up to ${files.length} file(s) — each product also updates all variants.`);
+    console.log("  This can take 10–30+ minutes for a large batch. Progress prints below.\n");
   }
 
-  // Match each file to a product
+  // Match each file to a product (parent + variants)
   let matched = 0, notFound = 0, uploaded = 0, failed = 0, skipped = 0;
+  let variantUploads = 0, wouldUploadVariants = 0;
   const notFoundList: string[] = [];
   const failedList: string[] = [];
+  let fileIndex = 0;
 
   for (const { file, barcode, filePath } of files) {
-    const product = await lookupByBarcode(barcode);
+    fileIndex++;
+    const progress = `[${fileIndex}/${files.length}]`;
+    const match = await lookupByBarcode(barcode);
 
-    if (!product) {
+    if (!match) {
       notFound++;
       notFoundList.push(barcode);
-      console.log(`  ✗ NOT FOUND  ${file}`);
+      console.log(`  ${progress} ✗ NOT FOUND  ${file}`);
       continue;
     }
 
     matched++;
-    const label = `${product.sku} — ${product.name}`;
+    const label = `${match.sku} — ${match.name}`;
+    const variantNote =
+      match.variantIds.length === 0
+        ? "parent only (no variants)"
+        : `parent + ${match.variantIds.length} variant(s)`;
 
     if (DRY_RUN) {
-      console.log(`  ✓ MATCH      ${file}  →  ${label}`);
+      console.log(`  ${progress} ✓ MATCH      ${file}  →  ${label}  [${variantNote}]`);
       skipped++;
+      wouldUploadVariants += match.variantIds.length;
       continue;
     }
 
     try {
-      process.stdout.write(`  ↑ UPLOADING  ${file}  →  ${label} ... `);
-      await uploadImage(token, product.id, filePath);
+      process.stdout.write(`  ${progress} ↑ UPLOADING  ${file}  →  ${label}  [${variantNote}] ... `);
+      const { variantsUploaded } = await uploadToProductAndVariants(token, match, filePath);
       console.log("done");
       uploaded++;
+      variantUploads += variantsUploaded;
     } catch (e) {
       console.log("FAILED");
       console.error(`     ${(e as Error).message}`);
@@ -186,10 +277,10 @@ async function main() {
   console.log(`  Matched in DB : ${matched}`);
   console.log(`  Not in DB     : ${notFound}`);
   if (DRY_RUN) {
-    console.log(`  Would upload  : ${matched}`);
+    console.log(`  Would upload  : ${matched} parent(s) + ${wouldUploadVariants} variant(s)`);
     console.log("\n  Run with --apply to upload.");
   } else {
-    console.log(`  Uploaded OK   : ${uploaded}`);
+    console.log(`  Uploaded OK   : ${uploaded} parent(s) + ${variantUploads} variant(s)`);
     console.log(`  Failed        : ${failed}`);
   }
 

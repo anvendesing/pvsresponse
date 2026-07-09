@@ -6,6 +6,7 @@
 // Clicking any enquiry opens a detail drawer with line items, an activity
 // timeline + follow-up tasks, stage controls, and a Convert-to-Customer action.
 
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 import { useMemo, useState } from "react";
 import {
   AlertTriangle, BarChart3, Building2, CheckCircle2, Clock, KanbanSquare,
@@ -45,7 +46,7 @@ const PRIORITY_META: Record<string, { label: string; cls: string }> = {
 
 const TYPE_OPTIONS: EnquiryType[] = ["product", "dealership", "farm_visit", "other"];
 const SOURCE_OPTIONS = [
-  "walk_in", "phone", "website", "whatsapp", "referral", "exhibition", "social", "other",
+  "walk_in", "phone", "website", "contact_page", "whatsapp", "referral", "exhibition", "social", "other",
 ];
 
 export const Enquiries = () => {
@@ -411,7 +412,7 @@ const EnquiryDrawer = ({
   };
 
   return (
-    <div className="fixed inset-0 z-[60] bg-ink/40 flex justify-end" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] bg-ink/40 flex justify-end" {...backdropDismissProps(onClose)}>
       <div className="bg-surface w-full max-w-2xl flex flex-col elevation-3" onClick={(ev) => ev.stopPropagation()}>
         {!e ? (
           <div className="p-10 text-center text-ink-muted">{detail.loading ? "Loading…" : "Not found"}</div>
@@ -640,7 +641,7 @@ const NewEnquiryModal = ({ onClose, onCreated }: { onClose: () => void; onCreate
   };
 
   return (
-    <div className="fixed inset-0 z-[60] bg-ink/40 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] bg-ink/40 flex items-center justify-center p-4" {...backdropDismissProps(onClose)}>
       <div className="bg-surface w-full max-w-xl rounded-lg elevation-3 flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-border flex items-center justify-between">
           <div className="text-h3 font-bold">New enquiry</div>

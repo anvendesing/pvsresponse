@@ -1,3 +1,4 @@
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, History, ImagePlus, Lock, Plus, RefreshCw, Trash2, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
@@ -226,7 +227,7 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
         categoryId: form.categoryId?.trim() || undefined,
         concernIds: form.concernIds ?? [],
         hsn: form.hsn.trim(),
-        gstRate: Number(form.gstRate) || 18,
+        gstRate: Number(form.gstRate ?? 18),
         costPrice: Number(form.costPrice) || 0,
         sellingPrice: Number(form.sellingPrice) || 0,
         reorderLevel: Number(form.reorderLevel) || 0,
@@ -241,8 +242,7 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
         batchTracked: !!form.batchTracked,
         ecommerceEnabled: form.ecommerceEnabled !== false,
         priceListEnabled: form.priceListEnabled !== false,
-        bestSellerEnabled:
-          form.ecommerceEnabled !== false && !!form.bestSellerEnabled,
+        bestSellerEnabled: !!form.bestSellerEnabled,
         // Send null when the user cleared the field so the backend
         // explicitly drops the previous value.
         description: form.description?.trim() ? form.description.trim() : null,
@@ -318,7 +318,7 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-ink/40 grid place-items-end" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-ink/40 grid place-items-end" {...backdropDismissProps(onClose)}>
       <div
         className="bg-surface w-full max-w-3xl h-full overflow-hidden flex flex-col elevation-3"
         onClick={(e) => e.stopPropagation()}
@@ -604,37 +604,23 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
                 <label className="flex items-center gap-2 text-body-sm text-ink-muted">
                   <input
                     type="checkbox"
-                    checked={form.ecommerceEnabled !== false}
-                    onChange={(e) => {
-                      const on = e.target.checked;
-                      update("ecommerceEnabled", on);
-                      if (!on) update("bestSellerEnabled", false);
-                    }}
-                  />
-                  E-commerce / storefront
-                </label>
-                <label className="flex items-center gap-2 text-body-sm text-ink-muted">
-                  <input
-                    type="checkbox"
                     checked={form.priceListEnabled !== false}
                     onChange={(e) => update("priceListEnabled", e.target.checked)}
                   />
-                  Price lists
+                  Price lists / bulk order
                 </label>
                 <label className="flex items-center gap-2 text-body-sm text-ink-muted">
                   <input
                     type="checkbox"
                     checked={!!form.bestSellerEnabled}
                     onChange={(e) => update("bestSellerEnabled", e.target.checked)}
-                    disabled={form.ecommerceEnabled === false}
                   />
-                  Best seller (home page)
+                  Best seller (storefront home)
                 </label>
               </div>
               <p className="text-caption text-ink-muted mt-1">
-                Applies to this product when it has no variants, or as the default bulk-parent row.
-                Per-variant toggles are below. Best sellers appear in the storefront home grid when
-                e-commerce is enabled.
+                Storefront listing is controlled per variant below — parent SKUs are bulk/packaging only.
+                Best sellers appear on the storefront home grid.
               </p>
             </Field>
             <Field label="Description" full>
@@ -905,7 +891,7 @@ export const ProductEditor = ({ open, mode, product, onClose, onSaved }: Props) 
                               updateVariant(i, { ecommerceEnabled: e.target.checked })
                             }
                           />
-                          e-commerce
+                          storefront
                         </label>
                         <label className="flex items-center gap-1 text-caption text-ink-muted">
                           <input
@@ -1008,7 +994,7 @@ const StockLedgerDrawer = ({
   return (
     <div
       className="fixed inset-0 z-[60] bg-ink/40 flex items-stretch justify-end"
-      onClick={onClose}
+      {...backdropDismissProps(onClose)}
     >
       <div
         className="bg-surface w-full max-w-2xl flex flex-col elevation-3"

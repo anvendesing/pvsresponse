@@ -9,7 +9,7 @@ import { useConcerns } from "@/state/ConcernsContext";
 
 const HIDDEN_ROUTES = [
   "/account", "/cart", "/checkout", "/login",
-  "/track", "/enquiry", "/order", "/bulk-order",
+  "/track", "/enquiry", "/order", "/bulk-order", "/product", "/search", "/policies",
 ];
 
 const isConcernRoute = (p: string) =>

@@ -2,6 +2,7 @@
 // for create/update, and a soft-delete that preserves history when there
 // are linked quotes / sales orders / invoices.
 
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 import { useMemo, useRef, useState, useEffect } from "react";
 import { AlertTriangle, BookOpen, DollarSign, Filter, Pencil, Plus, Search, Trash2, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
@@ -572,7 +573,7 @@ const CustomerEditor = ({
   return (
     <div
       className="fixed inset-0 z-[60] bg-ink/40 grid place-items-center"
-      onClick={onClose}
+      {...backdropDismissProps(onClose)}
     >
       <div
         className="bg-surface w-full max-w-2xl rounded-lg elevation-3 overflow-hidden flex flex-col max-h-[90vh]"
@@ -866,7 +867,7 @@ const CustomerStatementPanel = ({
   return (
     <div
       className="fixed inset-0 z-[60] bg-ink/40 flex justify-end"
-      onClick={(e) => e.target === e.currentTarget && onClose()}
+      {...backdropDismissProps(onClose)}
     >
       <div className="bg-surface h-full w-full max-w-3xl flex flex-col shadow-2xl">
         {/* Header */}

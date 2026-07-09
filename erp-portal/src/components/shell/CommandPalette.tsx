@@ -1,3 +1,4 @@
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
@@ -297,7 +298,7 @@ export const CommandPalette = ({ open, onClose }: Props) => {
   return (
     <div
       className="fixed inset-0 z-50 bg-ink/40 backdrop-blur-sm flex items-start justify-center pt-[12vh] animate-fade-in"
-      onClick={onClose}
+      {...backdropDismissProps(onClose)}
     >
       <div
         className="w-full max-w-[640px] bg-surface rounded-xl shadow-e3 border border-border overflow-hidden mx-4"

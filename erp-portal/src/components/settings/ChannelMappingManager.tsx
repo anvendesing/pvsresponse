@@ -12,13 +12,14 @@
 //   * Inline edit / delete — for one-off corrections after the bulk
 //     import.
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertCircle, CheckCircle2, Loader2, Pencil, Plus, Trash2, Upload, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Card } from "@/components/common/Card";
 import { Chip } from "@/components/common/Chip";
 import { Input } from "@/components/common/Input";
 import { api, apiEnabled, type ChannelMappingRow } from "@/lib/api";
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 
 interface FormState {
   channel: string;
@@ -84,6 +85,10 @@ export const ChannelMappingManager = () => {
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
 
   const [importOpen, setImportOpen] = useState(false);
+  const closeModal = useCallback(() => setModalOpen(false), []);
+
+  const closeImport = useCallback(() => setImportOpen(false), []);
+
   const [importChannel, setImportChannel] = useState("DTDC");
   const [importText, setImportText] = useState("");
   const [importReplace, setImportReplace] = useState(false);
@@ -381,7 +386,7 @@ export const ChannelMappingManager = () => {
       {modalOpen && (
         <div
           className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
-          onClick={() => setModalOpen(false)}
+          {...backdropDismissProps(closeModal)}
         >
           <div
             className="bg-surface rounded-lg shadow-xl w-full max-w-md"
@@ -457,7 +462,7 @@ export const ChannelMappingManager = () => {
       {importOpen && (
         <div
           className="fixed inset-0 z-50 bg-black/40 flex items-center justify-center p-4"
-          onClick={() => setImportOpen(false)}
+          {...backdropDismissProps(closeImport)}
         >
           <div
             className="bg-surface rounded-lg shadow-xl w-full max-w-2xl"

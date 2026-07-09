@@ -5,6 +5,18 @@ import { maskShiprocketConfig } from "../lib/shiprocket-config.js";
 import { getShiprocketToken } from "../lib/shiprocket.js";
 import { recordChange } from "../sync/log.js";
 
+type ShiprocketPickupLocation = {
+  id: number;
+  pickup_location: string;
+  address: string;
+  city: string;
+  state: string;
+  pin_code: string;
+  phone: string;
+  email: string | null;
+  status: number;
+};
+
 const updateSchema = z.object({
   email: z.string().trim().email().max(120).nullable().optional(),
   password: z.string().trim().max(200).nullable().optional(),
@@ -14,6 +26,7 @@ const updateSchema = z.object({
     .regex(/^\d{6}$/, "Pickup pincode must be 6 digits")
     .nullable()
     .optional(),
+  pickupLocation: z.string().trim().max(200).nullable().optional(),
   active: z.boolean().optional(),
 });
 
@@ -56,11 +69,13 @@ export const shiprocketProviderRoutes = async (app: FastifyInstance) => {
       email?: string | null;
       password?: string | null;
       pickupPincode?: string | null;
+      pickupLocation?: string | null;
       active?: boolean;
     } = {};
     if (data.email !== undefined) patch.email = data.email;
     if (data.password !== undefined) patch.password = data.password;
     if (data.pickupPincode !== undefined) patch.pickupPincode = data.pickupPincode;
+    if (data.pickupLocation !== undefined) patch.pickupLocation = data.pickupLocation;
     if (data.active !== undefined) patch.active = data.active;
 
     const updated = await db.shiprocketConfig.upsert({
@@ -70,6 +85,7 @@ export const shiprocketProviderRoutes = async (app: FastifyInstance) => {
         email: data.email ?? null,
         password: data.password ?? null,
         pickupPincode: data.pickupPincode ?? null,
+        pickupLocation: data.pickupLocation ?? null,
         active: data.active ?? false,
       },
       update: patch,
@@ -99,5 +115,39 @@ export const shiprocketProviderRoutes = async (app: FastifyInstance) => {
       });
     }
     return { ok: true, message: "Shiprocket authentication succeeded." };
+  });
+
+  // Fetch pickup locations registered in the Shiprocket panel.
+  // The operator selects one and saves it so the dispatch call uses
+  // the exact name Shiprocket expects in the `pickup_location` field.
+  app.get("/settings/shiprocket/pickup-locations", { preHandler: [app.authenticate] }, async (req, reply) => {
+    if (!requireAdmin(req, reply)) return;
+    const token = await getShiprocketToken();
+    if (!token) {
+      return reply.code(502).send({
+        error: { code: "auth_failed", message: "Shiprocket login failed." },
+      });
+    }
+    const res = await fetch("https://apiv2.shiprocket.in/v1/external/settings/company/pickup", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      const body = (await res.json().catch(() => ({}))) as { message?: string };
+      return reply.code(502).send({
+        error: { code: "shiprocket_error", message: body.message ?? `HTTP ${res.status}` },
+      });
+    }
+    const json = (await res.json()) as {
+      data?: { shipping_address?: ShiprocketPickupLocation[] };
+    };
+    const locations: ShiprocketPickupLocation[] = json.data?.shipping_address ?? [];
+    // Shiprocket sometimes returns status as a string ("1") rather than a number.
+    // Coerce to Number so the === 1 check in the frontend works reliably.
+    return locations.map((l) => ({
+      name: l.pickup_location,
+      address: [l.address, l.city, l.state, l.pin_code].filter(Boolean).join(", "),
+      phone: l.phone,
+      status: Number(l.status),
+    }));
   });
 };

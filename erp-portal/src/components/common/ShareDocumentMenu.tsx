@@ -179,22 +179,27 @@ export const ShareDocumentMenu = ({ descriptor, size = "md", label = "Share" }: 
 
   useEffect(() => {
     if (!open) return;
-    const handleClick = (e: MouseEvent) => {
-      const target = e.target as Node;
-      if (
-        triggerRef.current?.contains(target) ||
-        menuRef.current?.contains(target)
-      ) {
-        return;
+    let downOutside = false;
+    const isOutside = (target: Node) =>
+      !triggerRef.current?.contains(target) && !menuRef.current?.contains(target);
+
+    const handleMouseDown = (e: MouseEvent) => {
+      downOutside = isOutside(e.target as Node);
+    };
+    const handleMouseUp = (e: MouseEvent) => {
+      if (downOutside && isOutside(e.target as Node)) {
+        setOpen(false);
       }
-      setOpen(false);
+      downOutside = false;
     };
     const handleScrollOrResize = () => recomputePos();
-    window.addEventListener("mousedown", handleClick);
+    window.addEventListener("mousedown", handleMouseDown);
+    window.addEventListener("mouseup", handleMouseUp);
     window.addEventListener("resize", handleScrollOrResize);
     window.addEventListener("scroll", handleScrollOrResize, true);
     return () => {
-      window.removeEventListener("mousedown", handleClick);
+      window.removeEventListener("mousedown", handleMouseDown);
+      window.removeEventListener("mouseup", handleMouseUp);
       window.removeEventListener("resize", handleScrollOrResize);
       window.removeEventListener("scroll", handleScrollOrResize, true);
     };

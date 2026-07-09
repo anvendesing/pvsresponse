@@ -109,7 +109,7 @@ export const ProductionLog = () => {
         <div className="flex flex-col">
           <button
             className="text-left font-semibold text-primary hover:underline"
-            onClick={(e) => { e.stopPropagation(); navigate(`/manufacturing?focus=${r.moId}`); }}
+            onClick={(e) => { e.stopPropagation(); navigate(`/manufacturing?moId=${r.moId}`); }}
           >
             {r.orderNo}
           </button>

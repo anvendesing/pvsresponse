@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
-import { api, type CustomerOrderRow, type PlaceOrderResult } from "@/lib/api";
+import { api, type CustomerOrderRow, type StoredOrderResult } from "@/lib/api";
+import { promotePayuPendingOrder } from "@/lib/checkoutSnapshot";
+import { track } from "@/lib/activity";
 import { OrderTimeline } from "@/components/OrderTimeline";
 import { OrderItemsList } from "@/components/OrderItemsList";
 import { useAuth } from "@/state/AuthContext";
@@ -15,10 +17,10 @@ export const OrderSuccessPage = () => {
   const auth = useAuth();
   const cart = useCart();
   const toast = useToast();
-  const [order] = useState<PlaceOrderResult | null>(() => {
+  const [order, setOrder] = useState<StoredOrderResult | null>(() => {
     try {
       const raw = window.localStorage.getItem(`pv_order_${soNo}`);
-      return raw ? (JSON.parse(raw) as PlaceOrderResult) : null;
+      return raw ? (JSON.parse(raw) as StoredOrderResult) : null;
     } catch {
       return null;
     }
@@ -34,9 +36,12 @@ export const OrderSuccessPage = () => {
     } catch {
       /* noop */
     }
+    const promoted = promotePayuPendingOrder(soNo);
+    if (promoted) setOrder(promoted);
+    track("place_order", { meta: { soNo } });
     toast.show("Payment successful — order placed!", "success");
     setSearchParams({}, { replace: true });
-  }, [cart, searchParams, setSearchParams, toast]);
+  }, [cart, searchParams, setSearchParams, soNo, toast]);
 
   useEffect(() => {
     if (!soNo || !auth.isAuthed) {
@@ -66,7 +71,7 @@ export const OrderSuccessPage = () => {
   const status = liveRow?.status ?? order?.salesOrder.status ?? "confirmed";
   const displaySoNo = liveRow?.soNo ?? order?.salesOrder.soNo ?? soNo;
   const displayTotal = liveRow?.total ?? order?.invoice.amount ?? null;
-  const items = liveRow?.items ?? [];
+  const items = liveRow?.items ?? order?.itemsSnapshot ?? [];
 
   return (
     <div style={{ padding: "3rem 5%", background: "var(--neutral-light)", minHeight: "70vh" }}>
@@ -113,14 +118,17 @@ export const OrderSuccessPage = () => {
         )}
 
         <h2 style={{ marginTop: "2.25rem", marginBottom: "0.75rem" }}>Order items</h2>
-        {loadingItems ? (
+        {loadingItems && auth.isAuthed ? (
           <p className="muted" style={{ fontSize: "0.9rem" }}>Loading items…</p>
         ) : items.length > 0 ? (
-          <OrderItemsList items={items} total={displayTotal ?? undefined} />
-        ) : !auth.isAuthed ? (
-          <p className="muted" style={{ fontSize: "0.9rem" }}>
-            <Link to="/login" className="text-link">Sign in</Link> to view line items for this order.
-          </p>
+          <>
+            <OrderItemsList items={items} total={displayTotal ?? undefined} />
+            {!auth.isAuthed && (
+              <p className="muted" style={{ fontSize: "0.85rem", marginTop: "0.75rem" }}>
+                <Link to="/login" className="text-link">Sign in</Link> with the same mobile number to save this order to your account history.
+              </p>
+            )}
+          </>
         ) : (
           <p className="muted" style={{ fontSize: "0.9rem" }}>Line items are not available yet.</p>
         )}
@@ -129,8 +137,8 @@ export const OrderSuccessPage = () => {
           <Link to="/" className="btn btn-green">
             Continue shopping
           </Link>
-          <Link to="/account/orders" className="btn btn-outline">
-            View all orders
+          <Link to={auth.isAuthed ? "/account/orders" : "/track"} className="btn btn-outline">
+            {auth.isAuthed ? "View all orders" : "Track this order"}
           </Link>
         </div>
 

@@ -1,3 +1,4 @@
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -31,6 +32,7 @@ import { InvoiceDetail } from "@/components/billing/InvoiceDetail";
 import { useApi } from "@/hooks/useApi";
 import type { Invoice, Product, ProductVariant } from "@/data/types";
 import { effectiveUom } from "@/data/types";
+import { effectiveGstRate } from "@/lib/gstRate";
 import { computeDocumentTax } from "@/lib/documentTax";
 import { dd, dt, inr, inrPaise } from "@/lib/format";
 import { cn } from "@/lib/cn";
@@ -156,7 +158,7 @@ export const Billing = () => {
     const items = lines.map((l) => {
       const p = products.find((x) => x.id === l.productId);
       const v = p?.variants?.find((x) => x.id === l.variantId);
-      const gstRate = (v?.gstRate ?? null) ?? p?.gstRate ?? 18;
+      const gstRate = p ? effectiveGstRate(p, v ?? null) : 18;
       return { qty: l.qty, rate: l.price, gstRate };
     });
     return computeDocumentTax({
@@ -1160,7 +1162,7 @@ const SalesOrderPicker = ({ onClose, onPick }: PickerProps) => {
   }, [live.data, partial.data, filter]);
 
   return (
-    <div className="fixed inset-0 z-50 bg-ink/40 grid place-items-center" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-ink/40 grid place-items-center" {...backdropDismissProps(onClose)}>
       <div
         className="bg-surface w-full max-w-2xl max-h-[80vh] overflow-hidden flex flex-col rounded-md elevation-3"
         onClick={(e) => e.stopPropagation()}

@@ -142,7 +142,7 @@ export interface CatalogProduct {
   category: string;
   uom: string;
   sellingPrice: number;
-  /** True when the product has stock > 0. Exact count is not exposed on the storefront. */
+  /** True when the product has at least one storefront-enabled variant. */
   inStock: boolean;
   description: string | null;
   imageHint: string | null;
@@ -176,6 +176,20 @@ export interface CartLine {
   rate: number;
   available: number;
   packagingHint: "craft-bag" | "bottle-oil" | "soap-pack" | "combo-bags";
+  imageUrl?: string | null;
+  imageUpdatedAt?: number | null;
+}
+
+/** Cart lines captured at checkout for guest order-success display. */
+export interface OrderItemsSnapshot {
+  productId: string;
+  productName: string;
+  variantId: string | null;
+  variantSize: string | null;
+  barcode: string | null;
+  qty: number;
+  rate: number;
+  amount: number;
 }
 
 export interface PlaceOrderInput {
@@ -280,6 +294,10 @@ export interface PlaceOrderResult {
   pickList:
     | { id: string; pickListNo: string }
     | { error: { code: string; message: string } };
+}
+
+export interface StoredOrderResult extends PlaceOrderResult {
+  itemsSnapshot?: OrderItemsSnapshot[];
 }
 
 export interface CustomerOrderItem {
@@ -579,6 +597,7 @@ export const api = {
 
 export interface EnquiryFormInput {
   type: "product" | "dealership" | "farm_visit" | "other";
+  source?: "website" | "contact_page";
   contactName: string;
   phone?: string;
   email?: string;

@@ -10,7 +10,7 @@ const sections = [
     id: "shop",
     title: "Shop",
     links: [
-      { to: "/", label: "All Products" },
+      { to: "/", label: "Home" },
       { to: "/category/oils-oil-seeds", label: "Oils" },
       { to: "/category/millets-millet-products", label: "Millets" },
       { to: "/category/wellness", label: "Wellness" },
@@ -32,10 +32,10 @@ const sections = [
     links: [
       { to: "/enquiry", label: "Bulk / Dealership Enquiry" },
       { to: "/track", label: "Track Order" },
-      { href: "mailto:prakruthivanam@gmail.com", label: "Contact Us" },
-      { href: "#", label: "Shipping Policy" },
-      { href: "#", label: "Returns & Refunds" },
-      { href: "#", label: "Privacy Policy" },
+      { to: "/contact", label: "Contact Us" },
+      { to: "/policies/shipping", label: "Shipping Policy" },
+      { to: "/policies/returns", label: "Returns & Refunds" },
+      { to: "/policies/privacy", label: "Privacy Policy" },
     ],
   },
 ] as const;
@@ -95,17 +95,11 @@ export const Footer = ({ mobile = false }: FooterProps) => {
             </button>
             {openSection === id && (
               <div className="footer-accordion__body">
-                {links.map((l) =>
-                  "to" in l ? (
-                    <Link key={l.label} to={l.to} className="footer-accordion__link">
-                      {l.label}
-                    </Link>
-                  ) : (
-                    <a key={l.label} href={l.href} className="footer-accordion__link">
-                      {l.label}
-                    </a>
-                  )
-                )}
+                {links.map((l) => (
+                  <Link key={l.label} to={l.to} className="footer-accordion__link">
+                    {l.label}
+                  </Link>
+                ))}
               </div>
             )}
           </div>
@@ -148,7 +142,7 @@ export const Footer = ({ mobile = false }: FooterProps) => {
         <div className="footer-col">
           <h4>Shop</h4>
           <ul>
-            <li><Link to="/">All Products</Link></li>
+            <li><Link to="/">Home</Link></li>
             <li><Link to="/category/oils-oil-seeds">Oils</Link></li>
             <li><Link to="/category/millets-millet-products">Millets</Link></li>
             <li><Link to="/category/wellness">Wellness</Link></li>
@@ -168,10 +162,10 @@ export const Footer = ({ mobile = false }: FooterProps) => {
           <ul>
             <li><Link to="/enquiry">Bulk / Dealership Enquiry</Link></li>
             <li><Link to="/track">Track Order</Link></li>
-            <li><a href="mailto:prakruthivanam@gmail.com">Contact Us</a></li>
-            <li><a href="#">Shipping Policy</a></li>
-            <li><a href="#">Returns &amp; Refunds</a></li>
-            <li><a href="#">Privacy Policy</a></li>
+            <li><Link to="/contact">Contact Us</Link></li>
+            <li><Link to="/policies/shipping">Shipping Policy</Link></li>
+            <li><Link to="/policies/returns">Returns &amp; Refunds</Link></li>
+            <li><Link to="/policies/privacy">Privacy Policy</Link></li>
           </ul>
         </div>
       </div>

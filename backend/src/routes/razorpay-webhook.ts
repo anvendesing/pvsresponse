@@ -6,6 +6,7 @@ import {
   verifyWebhookSignature,
 } from "../lib/razorpay.js";
 import { confirmPaymentIntentById } from "../services/storefront-order.js";
+import { logSystemError, logSystemInfo, logSystemWarn } from "../lib/system-log.js";
 
 type ReqWithRaw = FastifyRequest & { rawBody?: string };
 
@@ -64,18 +65,55 @@ export const razorpayWebhookRoutes = async (app: FastifyInstance) => {
       const orderId = payment?.order_id;
       const paymentId = payment?.id;
       if (orderId && paymentId) {
-        const intent = await db.paymentIntent.findUnique({
-          where: { gatewayOrderId: orderId },
+        // Atomic claim: only one concurrent webhook can flip status from
+        // 'created' → 'processing'. updateMany returns count=0 for the loser,
+        // which safely skips fulfillment without creating a duplicate SO.
+        const claimed = await db.paymentIntent.updateMany({
+          where: { gatewayOrderId: orderId, status: "created" },
+          data: { status: "processing" },
         });
-        if (intent && !intent.salesOrderId) {
-          await confirmPaymentIntentById(
-            intent.id,
-            paymentId,
+        if (claimed.count === 0) {
+          // Already claimed by another webhook call or the client-side confirm.
+          await logSystemInfo("razorpay", "webhook_captured", "Intent already claimed — skipping", {
             orderId,
-            "",
-            creds.keySecret,
-            { trustedWebhook: true }
-          );
+            paymentId,
+          });
+        } else {
+          const intent = await db.paymentIntent.findUnique({
+            where: { gatewayOrderId: orderId },
+          });
+          if (intent && !intent.salesOrderId) {
+            try {
+              await confirmPaymentIntentById(
+                intent.id,
+                paymentId,
+                orderId,
+                "",
+                creds.keySecret,
+                { trustedWebhook: true }
+              );
+              await logSystemInfo("razorpay", "webhook_captured", "Order fulfilled via webhook", {
+                intentId: intent.id,
+                orderId,
+                paymentId,
+              });
+            } catch (err) {
+              // Revert claim so the operator can retry or the client-side confirm
+              // still has a chance.
+              await db.paymentIntent
+                .updateMany({
+                  where: { gatewayOrderId: orderId, status: "processing" },
+                  data: { status: "created" },
+                })
+                .catch(() => undefined);
+              await logSystemError(
+                "razorpay",
+                "webhook_captured",
+                err instanceof Error ? err.message : String(err),
+                { intentId: intent.id, orderId, paymentId }
+              );
+            }
+          }
         }
       }
     }
@@ -84,10 +122,16 @@ export const razorpayWebhookRoutes = async (app: FastifyInstance) => {
       const payment = event.payload?.payment?.entity;
       const orderId = payment?.order_id;
       if (orderId) {
-        await db.paymentIntent.updateMany({
-          where: { gatewayOrderId: orderId, status: "created" },
+        const result = await db.paymentIntent.updateMany({
+          where: { gatewayOrderId: orderId, status: { in: ["created", "processing"] } },
           data: { status: "failed", gatewayPaymentId: payment?.id ?? null },
         });
+        if (result.count > 0) {
+          await logSystemWarn("razorpay", "payment_failed", "Payment failed", {
+            orderId,
+            paymentId: payment?.id,
+          });
+        }
       }
     }
 

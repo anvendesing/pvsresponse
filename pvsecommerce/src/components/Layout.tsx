@@ -17,6 +17,7 @@ import { MobileHeader } from "./mobile/MobileHeader";
 import { CategoryChipStrip } from "./mobile/CategoryChipStrip";
 import { BottomNav } from "./mobile/BottomNav";
 import { OfflineBanner, SwUpdateToast, PwaInstallPrompt } from "./mobile/AppBanners";
+import { ScrollToTopButton } from "./ScrollToTopButton";
 import { usePlatform } from "@/state/PlatformContext";
 import { track } from "@/lib/activity";
 
@@ -68,6 +69,7 @@ export const Layout = () => {
       )}
 
       <CartDrawer />
+      <ScrollToTopButton />
       <ScrollRestoration />
     </>
   );

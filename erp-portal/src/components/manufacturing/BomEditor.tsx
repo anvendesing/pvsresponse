@@ -16,6 +16,7 @@
 // "Where used" is shown for the root product so the operator can see
 // what depends on this BOM before they break it.
 
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
@@ -307,14 +308,7 @@ export const BomEditor = ({
   const [showAddRow, setShowAddRow] = useState(false);
   const [showAddByproduct, setShowAddByproduct] = useState(false);
 
-  // Load variant info whenever the parent product changes. Also
-  // reset the selected variant scope when the user switches parent
-  // mid-creation, since a variantId from one product is invalid for
-  // another - leaving the stale id would cause a backend rejection
-  // on save with a confusing error.
-  // version counter lets imperative actions (e.g. generate default
-  // BOMs) trigger a refetch without duplicating the fetch code.
-  const [variantsInfoVersion, setVariantsInfoVersion] = useState(0);
+  // Load variant info for clone modal (which scopes already have BOMs).
   useEffect(() => {
     if (!parentId) {
       setVariantsInfo(null);
@@ -326,7 +320,7 @@ export const BomEditor = ({
         const info = await api.variantsWithBoms(parentId);
         if (cancelled) return;
         setVariantsInfo(info);
-        if (isNew) {
+        if (isNew && !seedVariantId) {
           setVariantId((prev) => {
             if (prev === null) return null;
             const stillBelongs = info.variants.some((v) => v.id === prev);
@@ -340,36 +334,7 @@ export const BomEditor = ({
     return () => {
       cancelled = true;
     };
-  }, [parentId, isNew, variantsInfoVersion]);
-
-  // Count variants that don't have an active BOM yet - we only show the
-  // "Generate default BOMs" button when there's at least one to make.
-  const variantsMissingBom =
-    variantsInfo?.variants.filter((v) => !v.activeBom).length ?? 0;
-  const [generating, setGenerating] = useState(false);
-  const handleGenerateDefaults = async () => {
-    if (!parentId || generating) return;
-    setGenerating(true);
-    setError(null);
-    try {
-      const result = await api.generateDefaultBoms(parentId);
-      setVariantsInfoVersion((v) => v + 1);
-      if (result.created.length === 0) {
-        setError(
-          `No variants needed a default BOM. ${result.skipped.length} were skipped (already had one).`
-        );
-      } else {
-        setError(
-          `Generated ${result.created.length} default BOM${result.created.length === 1 ? "" : "s"}. ` +
-            `Each consumes the parent product per the variant's pack size. Review and tweak as needed.`
-        );
-      }
-    } catch (e) {
-      setError((e as Error).message);
-    } finally {
-      setGenerating(false);
-    }
-  };
+  }, [parentId, isNew, seedVariantId]);
 
   // Refresh the explosion preview when the previewed BOM or qty
   // change. Skipped while no BOM exists yet (new-mode before save).
@@ -663,18 +628,23 @@ export const BomEditor = ({
             <div className="min-w-0">
               <div className="text-caption text-ink-muted uppercase font-semibold flex items-center gap-2">
                 {isNew ? "New BOM" : "Edit BOM"}
-                {bom?.variantId ? (
+                {variantId ? (
                   <Chip size="sm" tone="primary" icon={<Package size={10} />}>
-                    {bom.variantLabel ?? bom.variantSku ?? "variant"}
+                    {bom?.variantLabel ??
+                      bom?.variantSku ??
+                      parentProduct?.variants?.find((v) => v.id === variantId)?.sku ??
+                      "Variant"}
                   </Chip>
-                ) : !isNew ? (
-                  <Chip size="sm" tone="neutral">Product-level (default)</Chip>
-                ) : null}
+                ) : (
+                  <Chip size="sm" tone="neutral">
+                    Product-level
+                  </Chip>
+                )}
               </div>
-              <div className="text-body-sm truncate">
+              <div className="text-body-sm truncate font-medium">
                 {parentProduct
                   ? `${parentProduct.sku} · ${parentProduct.name}`
-                  : "Pick a parent product"}
+                  : "—"}
               </div>
             </div>
           </div>
@@ -707,92 +677,6 @@ export const BomEditor = ({
             isPage ? "flex-1 min-h-0 overflow-y-auto" : "flex-1 min-h-0 flex flex-col overflow-hidden"
           )}
         >
-        {/* Variant scope strip.
-            Always rendered in create mode so the concept is visible
-            even before the user picks a variant-bearing parent. In
-            edit mode the source BOM's scope is highlighted but pills
-            are disabled - cloning to another scope is the explicit
-            way to copy. */}
-        {(isNew || (variantsInfo && variantsInfo.variants.length > 0)) && (
-          <div className="px-5 py-2 border-b border-border bg-primary-50/40 shrink-0">
-            <div className="flex items-center gap-2">
-              <span className="text-caption text-ink-muted uppercase font-semibold shrink-0">
-                Variant scope
-              </span>
-              {/* Horizontally scrollable so the strip stays a single
-                  row even with 7+ variants - keeps the components
-                  panel below tall enough to actually use. */}
-              <div className="flex items-center gap-2 overflow-x-auto pb-0.5 -mb-0.5 flex-1 min-w-0">
-                <VariantPill
-                  label="Product-level"
-                  sub="default"
-                  hint={
-                    variantsInfo?.productLevelBom
-                      ? `${variantsInfo.productLevelBom.componentCount} comp.`
-                      : "no BOM"
-                  }
-                  hasBom={!!variantsInfo?.productLevelBom}
-                  selected={variantId === null}
-                  disabled={!isNew}
-                  onClick={() => setVariantId(null)}
-                />
-                {variantsInfo?.variants.map((v) => (
-                  <VariantPill
-                    key={v.id}
-                    label={v.label}
-                    sub={v.sku}
-                    hint={
-                      v.activeBom
-                        ? `${v.activeBom.componentCount} comp.`
-                        : v.inheritsFromProductLevel
-                          ? "inherits"
-                          : "no BOM"
-                    }
-                    hasBom={!!v.activeBom}
-                    selected={variantId === v.id}
-                    disabled={!isNew}
-                    onClick={() => setVariantId(v.id)}
-                  />
-                ))}
-              </div>
-              {!isNew && (
-                <span className="text-caption text-ink-muted shrink-0 hidden lg:inline">
-                  (use <strong>Clone…</strong> to switch variant)
-                </span>
-              )}
-              {/* Auto-generate a packaging BOM for every variant that
-                  doesn't already have one. The generated BOM consumes
-                  the parent product at qty = variant.packSize, in the
-                  parent's stock UoM. Hidden when nothing's missing. */}
-              {parentId && variantsMissingBom > 0 && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  icon={<Plus size={14} />}
-                  onClick={handleGenerateDefaults}
-                  disabled={generating}
-                  className="shrink-0"
-                  title={`Create a default packaging BOM for ${variantsMissingBom} variant${variantsMissingBom === 1 ? "" : "s"} that don't have one yet. Each consumes the parent at qty = packSize.`}
-                >
-                  {generating
-                    ? "Generating…"
-                    : `Generate default BOMs (${variantsMissingBom})`}
-                </Button>
-              )}
-            </div>
-            {/* Helpful note when the parent product has no active
-                variants - explains why only "Product-level" is
-                shown so users don't think the picker is broken. */}
-            {isNew && (!variantsInfo || variantsInfo.variants.length === 0) && (
-              <div className="text-caption text-ink-muted mt-1 ml-1">
-                {parentProduct
-                  ? `${parentProduct.sku} has no active variants - this BOM will apply at the product level.`
-                  : "Pick a parent product below to see its variants."}
-              </div>
-            )}
-          </div>
-        )}
-
         {error && (
           <div className="px-4 py-2 bg-danger-soft border-b border-danger text-danger text-body-sm flex items-center gap-2">
             <AlertTriangle size={14} />
@@ -806,114 +690,65 @@ export const BomEditor = ({
           </div>
         )}
 
-        {/* Top settings strip */}
-        <div className="px-5 py-3 grid grid-cols-12 gap-3 border-b border-border bg-canvas shrink-0">
-          <div className="col-span-4">
-            <div className="text-caption text-ink-muted uppercase font-semibold mb-1">
-              Parent product
-            </div>
-            <select
-              value={parentId}
-              onChange={(e) => setParentId(e.target.value)}
-              disabled={!isNew}
-              className="h-10 w-full bg-white border border-border rounded-md px-3 text-body outline-none focus:border-primary disabled:bg-canvas disabled:text-ink-muted"
-            >
-              {products.map((p) => {
-                const variantCount = p.variants?.length ?? 0;
-                const activeVariantCount =
-                  p.variants?.filter((v) => v.active).length ?? 0;
-                const suffix =
-                  activeVariantCount > 0
-                    ? ` · ${activeVariantCount} variant${activeVariantCount === 1 ? "" : "s"}`
-                    : variantCount > 0
-                      ? ` · ${variantCount} variant${variantCount === 1 ? "" : "s"} (inactive)`
-                      : "";
-                return (
-                  <option key={p.id} value={p.id}>
-                    {p.sku} · {p.name}
-                    {suffix}
-                  </option>
-                );
-              })}
-            </select>
-            {isNew && parentProduct && (
-              <div className="text-caption text-ink-muted mt-1">
-                {(() => {
-                  const total = parentProduct.variants?.length ?? 0;
-                  const active =
-                    parentProduct.variants?.filter((v) => v.active).length ?? 0;
-                  if (active > 0)
-                    return `${active} active variant${active === 1 ? "" : "s"} - pick a scope above`;
-                  if (total > 0)
-                    return `${total} variant${total === 1 ? "" : "s"} defined but inactive`;
-                  return "no variants - product-level BOM only";
-                })()}
+        {/* BOM settings — product/variant come from navigation (header); no parent picker here. */}
+        <div className="px-5 py-3 border-b border-border bg-canvas shrink-0 space-y-3">
+          <div className="flex flex-wrap items-end gap-x-5 gap-y-3">
+            <div className="w-36 shrink-0">
+              <div className="text-caption text-ink-muted uppercase font-semibold mb-1">
+                Revision
               </div>
-            )}
-          </div>
-          <div className="col-span-2">
-            <div className="text-caption text-ink-muted uppercase font-semibold mb-1">
-              Revision
-            </div>
-            <Input
-              value={revision}
-              onChange={(e) => setRevision(e.target.value)}
-              placeholder="Rev-1.0"
-            />
-          </div>
-          <div className="col-span-3">
-            <div className="text-caption text-ink-muted uppercase font-semibold mb-1 flex items-center gap-2">
-              <span>Batch size</span>
-              <span className="text-ink-muted/70 normal-case font-normal">
-                (output produced per batch run)
-              </span>
-            </div>
-            <div className="flex items-center gap-1.5">
               <Input
-                type="number"
-                min={0.001}
-                step={0.001}
-                value={outputQty}
-                onChange={(e) => setOutputQty(Number(e.target.value) || 1)}
-                className="flex-1"
+                size="sm"
+                value={revision}
+                onChange={(e) => setRevision(e.target.value)}
+                placeholder="Rev-1.0"
               />
-              <span className="text-body-sm text-ink-muted px-1">
-                {outputContext.uom}
-              </span>
             </div>
-            {outputContext.note && (
-              <div className="text-caption text-ink-muted mt-1">
-                {outputContext.note}
+
+            <div className="flex-1 min-w-[220px]">
+              <div className="text-caption text-ink-muted uppercase font-semibold mb-1">
+                Batch size
+                <span className="normal-case font-normal ml-1">(output per run)</span>
               </div>
-            )}
-            {/* Quick presets - one tap to set common batch sizes
-                (e.g. 50/100/500). These also help users understand
-                the field is a batch quantity, not a per-unit yield. */}
-            <div className="flex items-center gap-1 mt-1.5">
-              <span className="text-caption text-ink-muted">presets:</span>
-              {[1, 50, 100, 500, 1000].map((n) => (
-                <button
-                  key={n}
-                  type="button"
-                  onClick={() => setOutputQty(n)}
-                  className={cn(
-                    "text-caption px-1.5 py-0.5 rounded border transition-colors",
-                    outputQty === n
-                      ? "border-primary bg-primary text-white"
-                      : "border-border bg-white text-ink-muted hover:bg-canvas hover:text-ink"
-                  )}
-                >
-                  {n}
-                </button>
-              ))}
+              <div className="flex items-center gap-2 flex-wrap">
+                <Input
+                  size="sm"
+                  type="number"
+                  min={0.001}
+                  step={0.001}
+                  value={outputQty}
+                  onChange={(e) => setOutputQty(Number(e.target.value) || 1)}
+                  className="w-24"
+                />
+                <span className="text-body-sm text-ink-muted shrink-0">{outputContext.uom}</span>
+                <div className="flex items-center gap-1">
+                  {[1, 50, 100, 500, 1000].map((n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => setOutputQty(n)}
+                      className={cn(
+                        "text-caption px-1.5 py-0.5 rounded border transition-colors",
+                        outputQty === n
+                          ? "border-primary bg-primary text-white"
+                          : "border-border bg-white text-ink-muted hover:bg-surface hover:text-ink"
+                      )}
+                    >
+                      {n}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              {outputContext.note && (
+                <div className="text-caption text-ink-muted mt-1">{outputContext.note}</div>
+              )}
             </div>
-          </div>
-          <div className="col-span-2">
-            <div className="text-caption text-ink-muted uppercase font-semibold mb-1">
-              Status
-            </div>
-            <div className="h-10 flex items-center gap-2">
-              <label className="inline-flex items-center gap-1.5 cursor-pointer">
+
+            <div className="shrink-0">
+              <div className="text-caption text-ink-muted uppercase font-semibold mb-1">
+                Status
+              </div>
+              <label className="inline-flex items-center gap-1.5 h-8 cursor-pointer">
                 <input
                   type="checkbox"
                   checked={active}
@@ -922,105 +757,93 @@ export const BomEditor = ({
                 <span className="text-body-sm">{active ? "Active" : "Inactive"}</span>
               </label>
             </div>
-          </div>
-          <div className="col-span-1">
-            <div className="text-caption text-ink-muted uppercase font-semibold mb-1">
-              Avg scrap
-            </div>
-            <div className="h-10 flex items-center font-bold tnum">
-              {totalScrapWeighted.toFixed(1)}%
-            </div>
-          </div>
-        </div>
 
-        {/* Production routing: optional defaults that flow into a new
-            MO created from this BOM. Operators can override at MO time;
-            this just removes the per-order retyping when every batch
-            runs on the same facility/line. Leaving all blank is valid. */}
-        <div className="px-5 py-3 grid grid-cols-12 gap-3 border-b border-border bg-canvas shrink-0">
-          <div className="col-span-3">
-            <div className="text-caption text-ink-muted uppercase font-semibold mb-1 flex items-center gap-2">
-              <span>Default facility</span>
-              <span className="text-ink-muted/70 normal-case font-normal">
-                (pre-fills new MOs)
-              </span>
+            <div className="shrink-0 min-w-[4.5rem]">
+              <div className="text-caption text-ink-muted uppercase font-semibold mb-1">
+                Avg scrap
+              </div>
+              <div className="h-8 flex items-center font-bold tnum text-body-sm">
+                {totalScrapWeighted.toFixed(1)}%
+              </div>
             </div>
-            <select
-              value={defaultFacilityId}
-              onChange={(e) => { setDefaultFacilityId(e.target.value); setDefaultLineId(""); setDefaultMachineId(""); }}
-              className="h-10 w-full bg-white border border-border rounded-md px-3 text-body outline-none focus:border-primary"
-            >
-              <option value="">— No default —</option>
-              {facilityOptions.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.code} · {f.name}
-                </option>
-              ))}
-            </select>
+          </div>
+
+          <div className="pt-2 border-t border-border/60">
+            <div className="text-caption text-ink-muted uppercase font-semibold mb-2">
+              Default routing
+              <span className="normal-case font-normal ml-1">(pre-fills new MOs)</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <div className="text-caption text-ink-muted mb-1">Facility</div>
+                <select
+                  value={defaultFacilityId}
+                  onChange={(e) => {
+                    setDefaultFacilityId(e.target.value);
+                    setDefaultLineId("");
+                    setDefaultMachineId("");
+                  }}
+                  className="h-9 w-full bg-white border border-border rounded-md px-2 text-body-sm outline-none focus:border-primary"
+                >
+                  <option value="">— No default —</option>
+                  {facilityOptions.map((f) => (
+                    <option key={f.id} value={f.id}>
+                      {f.code} · {f.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <div className="text-caption text-ink-muted mb-1">Line</div>
+                <select
+                  value={defaultLineId}
+                  onChange={(e) => {
+                    setDefaultLineId(e.target.value);
+                    setDefaultMachineId("");
+                  }}
+                  disabled={!defaultFacilityId}
+                  className="h-9 w-full bg-white border border-border rounded-md px-2 text-body-sm outline-none focus:border-primary disabled:bg-canvas disabled:text-ink-muted"
+                >
+                  <option value="">
+                    {defaultFacilityId ? "— Any line —" : "— Pick facility first —"}
+                  </option>
+                  {lineOptions.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.code} · {l.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <div className="text-caption text-ink-muted mb-1">Machine</div>
+                <select
+                  value={defaultMachineId}
+                  onChange={(e) => setDefaultMachineId(e.target.value)}
+                  disabled={!defaultLineId}
+                  className="h-9 w-full bg-white border border-border rounded-md px-2 text-body-sm outline-none focus:border-primary disabled:bg-canvas disabled:text-ink-muted"
+                >
+                  <option value="">
+                    {defaultLineId ? "— Any on line —" : "— Pick line first —"}
+                  </option>
+                  {machineOptions.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.code} · {m.name}
+                    </option>
+                  ))}
+                </select>
+                {defaultLineId && machineOptions.length === 0 && (
+                  <div className="text-caption text-ink-muted mt-0.5">No machines on this line.</div>
+                )}
+              </div>
+            </div>
             {facilityOptions.length === 0 && (
-              <div className="text-caption text-ink-muted mt-1">
-                No facilities yet. Add them in <strong>Settings &raquo; Production facilities</strong>.
+              <div className="text-caption text-ink-muted mt-1.5">
+                Add facilities in <strong>Settings → Production facilities</strong>.
               </div>
             )}
-          </div>
-          <div className="col-span-3">
-            <div className="text-caption text-ink-muted uppercase font-semibold mb-1 flex items-center gap-2">
-              <span>Default line</span>
-              <span className="text-ink-muted/70 normal-case font-normal">
-                (optional)
-              </span>
-            </div>
-            <select
-              value={defaultLineId}
-              onChange={(e) => { setDefaultLineId(e.target.value); setDefaultMachineId(""); }}
-              disabled={!defaultFacilityId}
-              className="h-10 w-full bg-white border border-border rounded-md px-3 text-body outline-none focus:border-primary disabled:bg-canvas disabled:text-ink-muted"
-            >
-              <option value="">
-                {defaultFacilityId ? "— Any line —" : "— Pick a facility first —"}
-              </option>
-              {lineOptions.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.code} · {l.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="col-span-3">
-            <div className="text-caption text-ink-muted uppercase font-semibold mb-1 flex items-center gap-2">
-              <span>Default machine</span>
-              <span className="text-ink-muted/70 normal-case font-normal">
-                (optional, scoped to line)
-              </span>
-            </div>
-            <select
-              value={defaultMachineId}
-              onChange={(e) => setDefaultMachineId(e.target.value)}
-              disabled={!defaultLineId}
-              className="h-10 w-full bg-white border border-border rounded-md px-3 text-body outline-none focus:border-primary disabled:bg-canvas disabled:text-ink-muted"
-            >
-              <option value="">
-                {defaultLineId
-                  ? "— Any machine on this line —"
-                  : "— Pick a line first —"}
-              </option>
-              {machineOptions.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.code} · {m.name}
-                </option>
-              ))}
-            </select>
-            {defaultLineId && machineOptions.length === 0 && (
-              <div className="text-caption text-ink-muted mt-1">
-                No machines on this line yet.
-              </div>
-            )}
-          </div>
-          <div className="col-span-3 flex items-end">
-            <div className="text-caption text-ink-muted">
-              Operators can still override the facility/line when
-              creating a manufacturing order.
-            </div>
+            <p className="text-caption text-ink-muted mt-2">
+              Operators can override facility, line, and machine when creating an MO.
+            </p>
           </div>
         </div>
 
@@ -1568,62 +1391,10 @@ export const BomEditor = ({
   return (
     <div
       className="fixed inset-0 z-[60] bg-ink/40 grid place-items-center"
-      onClick={onClose}
+      {...backdropDismissProps(onClose)}
     >
       <div onClick={(e) => e.stopPropagation()}>{editor}</div>
     </div>
-  );
-};
-
-// ===================================================================
-// Variant pill - one button per variant scope on the chip strip.
-// Shows a green tick when a variant has its own active BOM, an
-// "inherits" hint when it falls back to product-level.
-// ===================================================================
-const VariantPill = ({
-  label,
-  sub,
-  hint,
-  hasBom,
-  selected,
-  disabled,
-  onClick,
-}: {
-  label: string;
-  sub?: string;
-  hint?: string;
-  hasBom: boolean;
-  selected: boolean;
-  disabled?: boolean;
-  onClick: () => void;
-}) => {
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      className={cn(
-        "px-2.5 py-1 rounded-md border text-left flex items-center gap-1.5 transition-colors shrink-0 whitespace-nowrap",
-        selected
-          ? "border-primary bg-primary text-white shadow-e1"
-          : hasBom
-            ? "border-success bg-success-soft text-success hover:bg-success/10"
-            : "border-border bg-white text-ink hover:bg-canvas",
-        disabled && !selected && "opacity-70 cursor-not-allowed"
-      )}
-    >
-      {hasBom && !selected && <CheckCircle2 size={11} />}
-      <div>
-        <div className="text-body-sm font-semibold leading-tight">{label}</div>
-        <div
-          className={cn(
-            "text-caption leading-tight",
-            selected ? "opacity-80" : "text-ink-muted"
-          )}
-        >
-          {sub ? `${sub} · ${hint}` : hint}
-        </div>
-      </div>
-    </button>
   );
 };
 

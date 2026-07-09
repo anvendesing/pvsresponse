@@ -1,4 +1,5 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Link, useNavigate } from "react-router-dom";
 import {
@@ -32,6 +33,7 @@ import { NormalizeUomsModal } from "@/components/products/NormalizeUomsModal";
 import { effectiveUom, type Product, type ProductType } from "@/data/types";
 import { inr, num } from "@/lib/format";
 import { csvStamp, downloadCsv } from "@/lib/csv-export";
+import { effectiveGstRate } from "@/lib/gstRate";
 import { api, auth, resolveUploadUrl } from "@/lib/api";
 import { useApi } from "@/hooks/useApi";
 
@@ -256,6 +258,7 @@ export const Products = () => {
           "Stock",
           "Cost",
           "Price",
+          "GST %",
           "Active",
         ],
         filteredVariants.map(({ product, variant }) => [
@@ -270,6 +273,7 @@ export const Products = () => {
           variant.stockOnHand,
           variant.costPriceOverride ?? product.costPrice,
           variant.sellingPriceOverride ?? product.sellingPrice,
+          effectiveGstRate(product, variant),
           variant.active ? "yes" : "no",
         ])
       );
@@ -289,6 +293,7 @@ export const Products = () => {
         "Reorder",
         "Cost",
         "Price",
+        "GST %",
         "State",
       ],
       filtered.map((p) => [
@@ -303,6 +308,7 @@ export const Products = () => {
         p.reorderLevel,
         p.costPrice,
         p.sellingPrice,
+        p.gstRate,
         p.state,
       ])
     );
@@ -780,10 +786,11 @@ const DeleteProductDialog = ({
   error: string | null;
   onCancel: () => void;
   onConfirm: () => void;
-}) => (
+}) => {
+  return (
   <div
     className="fixed inset-0 z-50 bg-ink/40 grid place-items-center p-4"
-    onClick={onCancel}
+    {...backdropDismissProps(onCancel)}
   >
     <div
       className="bg-surface w-full max-w-md rounded-lg elevation-3 overflow-hidden"
@@ -834,7 +841,8 @@ const DeleteProductDialog = ({
       </div>
     </div>
   </div>
-);
+  );
+};
 
 const Stat = ({
   label,

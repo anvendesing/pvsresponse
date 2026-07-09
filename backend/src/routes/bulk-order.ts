@@ -523,6 +523,13 @@ export const bulkOrderRoutes = async (app: FastifyInstance) => {
         });
       }
 
+      rows.sort(
+        (a, b) =>
+          a.category.localeCompare(b.category) ||
+          a.productName.localeCompare(b.productName) ||
+          b.rate - a.rate
+      );
+
       // Company name for branding
       const company = await db.companyProfile.findFirst({ select: { tradeName: true, legalName: true } });
       const brand = company?.tradeName ?? company?.legalName ?? "ERP";

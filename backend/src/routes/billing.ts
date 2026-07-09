@@ -177,8 +177,8 @@ export const billingRoutes = async (app: FastifyInstance) => {
         qty: i.qty,
         rate: i.rate,
         gstRate: resolveGstRate(
-          { gstRate: gstPMap.get(i.productId) ?? baseCtx.defaultGstRate ?? 18 },
-          i.variantId ? { gstRate: gstVMap.get(i.variantId) } : null,
+          { gstRate: gstPMap.get(i.productId) },
+          i.variantId ? { gstRate: gstVMap.get(i.variantId) ?? null } : null,
           baseCtx.defaultGstRate ?? 18
         ),
       })),

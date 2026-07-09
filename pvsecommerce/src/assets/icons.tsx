@@ -311,6 +311,20 @@ export const ChevronRightIcon = (): ReactElement => (
   </svg>
 );
 
+export const ChevronUpIcon = (): ReactElement => (
+  <svg
+    viewBox="0 0 24 24"
+    width="18"
+    height="18"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth={2}
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <path d="m18 15-6-6-6 6" />
+  </svg>
+);
+
 export const CheckIcon = (): ReactElement => (
   <svg
     viewBox="0 0 24 24"

@@ -10,6 +10,7 @@
 // Once any byproduct is logged here, the auto-yield path on
 // /complete is skipped so released components are never double-posted.
 
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, CheckCircle2, Plus, Wand2, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
@@ -177,7 +178,7 @@ export const LogOutputModal = ({ order, bom, alreadyLogged, onClose, onSaved }: 
   return (
     <div
       className="fixed inset-0 z-[60] bg-ink/40 grid place-items-center"
-      onClick={onClose}
+      {...backdropDismissProps(onClose)}
     >
       <div
         className="bg-surface w-[680px] max-w-[95vw] max-h-[90vh] rounded-lg elevation-3 overflow-hidden flex flex-col"

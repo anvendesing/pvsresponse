@@ -44,7 +44,8 @@ export async function cacheSet(key: string, value: unknown, ttlSeconds: number):
 // ── Catalog-specific keys ────────────────────────────────────────────────────
 
 export const CACHE_KEYS = {
-  all: `${CATALOG_PREFIX}all`,
+  /** Grouped product catalog (variants nested per product). */
+  all: `${CATALOG_PREFIX}all:v4`,
   product: (id: string) => `${CATALOG_PREFIX}product:${id}`,
   categories: `${CATALOG_PREFIX}categories`,
   concerns: `${CATALOG_PREFIX}concerns`,

@@ -4,6 +4,7 @@
 // for the in-house dispatch flow so operators have one mental model:
 // "assign every order to the right channel from the invoice screen".
 
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 import { useEffect, useMemo, useState } from "react";
 import { Loader2, PackageCheck, Truck, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
@@ -97,7 +98,7 @@ export const CourierPicker = ({
   return (
     <div
       className="fixed inset-0 z-[60] flex items-center justify-center bg-ink/40 px-4"
-      onClick={onClose}
+      {...backdropDismissProps(onClose)}
     >
       <div
         className="w-full max-w-md bg-surface rounded-lg shadow-xl"
@@ -156,13 +157,25 @@ export const CourierPicker = ({
                 <Input
                   value={awb}
                   onChange={(e) => setAwb(e.target.value)}
-                  placeholder="Leave blank for a mock AWB"
+                  placeholder={
+                    selectedCode === "shiprocket"
+                      ? "Leave blank to fetch AWB from Shiprocket"
+                      : "Optional tracking number"
+                  }
                   className="font-mono"
                 />
                 <div className="text-caption text-ink-muted mt-1">
-                  If left blank the server mints a mock <strong>MOCK-AWB-…</strong>{" "}
-                  string. The tracking URL is auto-built from the courier's
-                  template.
+                  {selectedCode === "shiprocket" ? (
+                    <>
+                      With <strong>Shiprocket</strong> selected, a blank AWB creates the order in
+                      Shiprocket and assigns a real AWB automatically.
+                    </>
+                  ) : (
+                    <>
+                      Paste the courier&apos;s AWB / tracking number. Required for couriers other
+                      than Shiprocket.
+                    </>
+                  )}
                 </div>
               </div>
 

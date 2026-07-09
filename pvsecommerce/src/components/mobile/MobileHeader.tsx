@@ -80,13 +80,13 @@ export const MobileHeader = ({ onOpenDrawer }: Props) => {
     const q = query.trim();
     if (!q) return;
     saveRecent(q);
-    navigate(`/?q=${encodeURIComponent(q)}`);
+    navigate(`/search?q=${encodeURIComponent(q)}`);
     closeSearch();
   };
 
   const pickRecent = (q: string) => {
     saveRecent(q);
-    navigate(`/?q=${encodeURIComponent(q)}`);
+    navigate(`/search?q=${encodeURIComponent(q)}`);
     closeSearch();
   };
 
@@ -261,7 +261,7 @@ export const MobileHeader = ({ onOpenDrawer }: Props) => {
                   style={{ marginTop: "0.5rem" }}
                   onClick={() => {
                     saveRecent(query.trim());
-                    navigate(`/?q=${encodeURIComponent(query.trim())}`);
+                    navigate(`/search?q=${encodeURIComponent(query.trim())}`);
                     closeSearch();
                   }}
                 >
@@ -282,7 +282,7 @@ export const MobileHeader = ({ onOpenDrawer }: Props) => {
                   className="search-overlay__go-btn"
                   onClick={() => {
                     saveRecent(query.trim());
-                    navigate(`/?q=${encodeURIComponent(query.trim())}`);
+                    navigate(`/search?q=${encodeURIComponent(query.trim())}`);
                     closeSearch();
                   }}
                 >

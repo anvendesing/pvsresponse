@@ -6,6 +6,7 @@
 // grid is inline-editable; one click saves the lot. A "Apply formula"
 // dialog lets ops do bulk rewrites (e.g. "Dealer = 80% off all SKUs").
 
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 import { useEffect, useMemo, useState } from "react";
 import {
   CheckCircle2,
@@ -1031,7 +1032,7 @@ const ApplyFormulaDialog = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-ink/40 grid place-items-center" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-ink/40 grid place-items-center" {...backdropDismissProps(onClose)}>
       <div
         className="bg-surface rounded-lg w-full max-w-md elevation-3"
         onClick={(e) => e.stopPropagation()}
@@ -1130,7 +1131,7 @@ const PriceListCreate = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-ink/40 grid place-items-center" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-ink/40 grid place-items-center" {...backdropDismissProps(onClose)}>
       <div
         className="bg-surface rounded-lg w-full max-w-sm elevation-3"
         onClick={(e) => e.stopPropagation()}
@@ -1277,7 +1278,7 @@ const RevisionsDrawer = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex justify-end" {...backdropDismissProps(onClose)}>
       <div
         className="w-full max-w-md h-full bg-surface shadow-2xl flex flex-col border-l border-border"
         onClick={(e) => e.stopPropagation()}

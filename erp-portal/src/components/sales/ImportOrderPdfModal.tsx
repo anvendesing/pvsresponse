@@ -12,6 +12,7 @@
 //      in the detail drawer; picking / packing proceeds as normal.
 //      The first invoice will use the IMP-INV-2026-XXXX series.
 
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
@@ -168,7 +169,7 @@ export const ImportOrderPdfModal = ({ open, onClose, onCreated }: Props) => {
   return (
     <div
       className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center p-4 overflow-y-auto"
-      onClick={onClose}
+      {...backdropDismissProps(onClose)}
     >
       <div
         className="bg-surface rounded-lg shadow-xl w-full max-w-5xl my-8"

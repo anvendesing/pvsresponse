@@ -171,7 +171,7 @@ async function materialsIssuedForMo(
 export async function startWorkOrder(db: Db, woId: string) {
   const wo = await db.workOrder.findUnique({ where: { id: woId } });
   if (!wo) throw new Error("Work order not found");
-  if (wo.status !== "ready" && wo.status !== "queued") {
+  if (wo.status !== "ready" && wo.status !== "queued" && wo.status !== "rework") {
     throw new Error(`Cannot start work order in status ${wo.status}`);
   }
   const { issued, orderNo } = await materialsIssuedForMo(
@@ -186,6 +186,56 @@ export async function startWorkOrder(db: Db, woId: string) {
   return db.workOrder.update({
     where: { id: woId },
     data: { status: "running", startTime: wo.startTime ?? new Date() },
+  });
+}
+
+/**
+ * When an operator marks a WO Done without logging machine batches, record one
+ * completed batch at 100% of the step target using the assigned line/machine.
+ * Exact weights and by-products stay at MO completion — this is cycle progress only.
+ */
+async function ensureDefaultRunOnComplete(
+  db: Db,
+  wo: {
+    id: string;
+    machineId: string | null;
+    lineId: string | null;
+    plannedSplitQty: number | null;
+    target: number;
+    startTime: Date | null;
+  }
+) {
+  const runCount = await db.workOrderRun.count({ where: { workOrderId: wo.id } });
+  if (runCount > 0) return;
+
+  const qty = wo.plannedSplitQty ?? wo.target;
+  if (qty <= 0) return;
+
+  const now = new Date();
+
+  if (wo.machineId) {
+    await db.workOrderRun.create({
+      data: {
+        workOrderId: wo.id,
+        machineId: wo.machineId,
+        lineId: wo.lineId,
+        batchSeq: 1,
+        plannedQty: qty,
+        goodQty: qty,
+        scrapQty: 0,
+        inputQty: 0,
+        status: "complete",
+        startTime: wo.startTime ?? now,
+        endTime: now,
+      },
+    });
+    await recomputeWorkOrderFromRuns(db, wo.id);
+    return;
+  }
+
+  await db.workOrder.update({
+    where: { id: wo.id },
+    data: { output: Math.round(qty * 1000) / 1000 },
   });
 }
 
@@ -209,6 +259,8 @@ export async function completeWorkOrder(db: Db, woId: string) {
     );
   }
 
+  await ensureDefaultRunOnComplete(db, wo);
+
   const needsQa = wo.bomOperation?.requiresQa ?? false;
   await db.workOrder.update({
     where: { id: woId },
@@ -225,7 +277,7 @@ export async function completeWorkOrder(db: Db, woId: string) {
   return { needsQa };
 }
 
-/** Odoo quality.check — pass unblocks; fail reopens predecessor operation. */
+/** Odoo-style quality.check — pass unblocks successors; fail reopens this step for rework. */
 export async function recordWorkOrderQa(
   db: Db,
   woId: string,
@@ -250,12 +302,14 @@ export async function recordWorkOrderQa(
     return { action: "passed" as const };
   }
 
+  // QA failed — rework the step that failed inspection, not its predecessor.
   await db.workOrder.update({
     where: { id: woId },
     data: {
       qaStatus: "fail",
       qaNotes: notes ?? null,
       status: "rework",
+      endTime: null,
     },
   });
 
@@ -264,23 +318,7 @@ export async function recordWorkOrderQa(
     data: { reworkQty: { increment: wo.output || 1 } },
   });
 
-  const prevOpId = wo.bomOperation?.blockedByOperationId;
-  if (prevOpId) {
-    await db.workOrder.updateMany({
-      where: {
-        productionOrderId: wo.productionOrderId,
-        bomOperationId: prevOpId,
-      },
-      data: {
-        status: "ready",
-        endTime: null,
-        qaStatus: null,
-        qaNotes: notes ? `Rework: ${notes}` : "Rework requested",
-      },
-    });
-  }
-
-  // Re-block all operations after the failed step.
+  // Re-block all operations after the failed step until this one passes QA.
   if (wo.bomOperationId) {
     const laterOps = await db.bomOperation.findMany({
       where: {
@@ -300,7 +338,7 @@ export async function recordWorkOrderQa(
     }
   }
 
-  return { action: "failed_reopened_predecessor" as const };
+  return { action: "failed_reopened_current" as const };
 }
 
 /** Unblock WOs when all predecessor-operation WOs are complete (+ QA pass). */

@@ -1,15 +1,13 @@
 // Product card used on Home, Category, and Concern listing grids.
-// listings. Renders one row per backend product. Variants are
-// surfaced as weight chips - clicking a chip selects that variant,
-// the price updates, and "Add to cart" pushes the chosen variant
-// into the cart.
+// One row per product; enabled variants appear as weight chips on the card.
 
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import type { CatalogProduct, CatalogVariant } from "@/lib/api";
 import { resolveImageSet, resolveUploadUrl } from "@/lib/api";
 import { inr, packagingFromName } from "@/lib/format";
 import { lineBarcode } from "@/lib/scanCode";
+import { stockCapFor } from "@/lib/cartStock";
 import { useCart } from "@/state/CartContext";
 import { useWishlist } from "@/state/WishlistContext";
 import { useToast } from "@/state/ToastContext";
@@ -40,6 +38,7 @@ export const ProductCard = ({ product, badge }: Props) => {
   const [imgFailed, setImgFailed] = useState(false);
 
   const stock = variant ? variant.inStock : product.inStock;
+  const maxQty = stockCapFor(product, variant);
   const price = variant ? variant.price : product.sellingPrice;
   const wishlistKey = variant?.id ?? product.id;
   const isWished = wishlist.has(wishlistKey);
@@ -52,7 +51,7 @@ export const ProductCard = ({ product, badge }: Props) => {
     toast.show(`Added ${product.name}`, "success");
   };
 
-  const inc = () => setQty((q) => q + 1);
+  const inc = () => setQty((q) => Math.min(q + 1, maxQty));
   const dec = () => setQty((q) => Math.max(1, q - 1));
 
   const scanCode = lineBarcode({
@@ -175,14 +174,23 @@ export const ProductCard = ({ product, badge }: Props) => {
               +
             </button>
           </span>
-          <button
-            type="button"
-            className="add-to-cart-btn"
-            disabled={!stock}
-            onClick={onAdd}
-          >
-            {stock ? "Add to Cart" : "Sold out"}
-          </button>
+          {stock ? (
+            <button
+              type="button"
+              className="add-to-cart-btn"
+              onClick={onAdd}
+            >
+              Add to Cart
+            </button>
+          ) : (
+            <Link
+              to={`/enquiry?product=${encodeURIComponent(product.name)}`}
+              className="add-to-cart-btn product-card-enquire"
+              onClick={(e) => e.stopPropagation()}
+            >
+              Enquire
+            </Link>
+          )}
         </div>
       </div>
     </article>

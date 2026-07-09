@@ -4,7 +4,7 @@
 // to the container's estimated weight rollup. Codes are uppercase
 // alphanumeric so labels look good (BOX-S, SACK-50, CARTON, ...).
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Box, Briefcase, Layers, Loader2, Package, Pencil, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Card } from "@/components/common/Card";
@@ -16,6 +16,7 @@ import {
   type ContainerKind,
   type ContainerTypeRow,
 } from "@/lib/api";
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 
 interface FormState {
   code: string;
@@ -105,12 +106,13 @@ export const ContainerTypeManager = () => {
     setModalOpen(true);
   };
 
-  const close = () => {
+  const close = useCallback(() => {
     setModalOpen(false);
     setEditing(null);
     setForm(EMPTY);
     setError(null);
-  };
+  }, []);
+
 
   const save = async () => {
     setBusy(true);
@@ -256,7 +258,7 @@ export const ContainerTypeManager = () => {
       {modalOpen && (
         <div
           className="fixed inset-0 z-50 bg-ink/40 grid place-items-center p-4"
-          onClick={close}
+          {...backdropDismissProps(close)}
         >
           <div
             className="bg-surface w-full max-w-lg rounded-md elevation-3 p-5"

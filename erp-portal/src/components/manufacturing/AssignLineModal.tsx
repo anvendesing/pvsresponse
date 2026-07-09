@@ -6,6 +6,7 @@ import { Button } from "@/components/common/Button";
 import { useApi } from "@/hooks/useApi";
 import { api } from "@/lib/api";
 import type { ProductionOrder } from "@/data/types";
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 import {
   WoLineMachineFields,
   type MachineOption,
@@ -112,6 +113,7 @@ export const AssignLineModal = ({ mo, onClose, onAssigned }: Props) => {
       }
       onAssigned();
     } catch (e) {
+
       setError((e as Error).message);
       setBusy(false);
     }
@@ -120,7 +122,7 @@ export const AssignLineModal = ({ mo, onClose, onAssigned }: Props) => {
   return (
     <div
       className="fixed inset-0 z-[70] bg-ink/40 grid place-items-center"
-      onClick={onClose}
+      {...backdropDismissProps(onClose)}
     >
       <div
         className="bg-surface w-[580px] max-w-[95vw] max-h-[90vh] rounded-lg elevation-3 overflow-hidden flex flex-col"

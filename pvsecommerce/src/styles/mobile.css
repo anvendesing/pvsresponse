@@ -29,6 +29,7 @@
   position: sticky;
   top: 0;
   z-index: 200;
+  --mobile-header-offset: calc(var(--sai-top, 0px) + 56px);
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -401,7 +402,8 @@
 /* ── Category chip strip ───────────────────────────────────── */
 .category-chip-strip {
   position: sticky;
-  top: 56px;
+  top: var(--mobile-header-offset, calc(var(--sai-top, 0px) + 56px));
+  --mobile-chip-offset: calc(var(--mobile-header-offset, calc(var(--sai-top, 0px) + 56px)) + 64px);
   z-index: 190;
   background: var(--neutral-white);
   border-bottom: 1px solid rgba(0,0,0,0.06);
@@ -447,19 +449,35 @@
 }
 
 .category-chip {
+  /* Square-rounded, multi-line, capped-width chips so long
+     category / concern names wrap to 2 lines instead of forcing
+     one long pill (works on both mobile web + APK). */
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  text-align: center;
   flex-shrink: 0;
   text-decoration: none;
-  padding: 0.35rem 0.85rem;
-  border-radius: var(--radius-full);
+  padding: 0.35rem 0.55rem;
+  min-width: 68px;
+  max-width: 110px;
+  min-height: 40px;
+  border-radius: 12px;
   border: 1.5px solid var(--border-light, #dde3d8);
   background: var(--neutral-white);
   color: var(--neutral-dark);
-  font-size: 0.78rem;
+  font-size: 0.72rem;
   font-weight: 600;
-  white-space: nowrap;
+  line-height: 1.15;
   letter-spacing: 0.01em;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  hyphens: auto;
+  /* Show up to 2 lines, ellipsise the third */
+  display: -webkit-inline-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
   transition: background var(--transition-fast), color var(--transition-fast), border-color var(--transition-fast);
   -webkit-tap-highlight-color: transparent;
 }
@@ -591,7 +609,7 @@
   background: var(--neutral-white);
   border-bottom: 1px solid rgba(34,37,31,0.07);
   position: sticky;
-  top: calc(56px + 64px); /* below header + chip strip */
+  top: var(--mobile-chip-offset, calc(var(--mobile-header-offset, calc(var(--sai-top, 0px) + 56px)) + 64px));
   z-index: 100;
   /* Must not exceed viewport width */
   width: 100%;

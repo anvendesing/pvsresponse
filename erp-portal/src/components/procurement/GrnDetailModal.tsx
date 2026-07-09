@@ -13,6 +13,7 @@
 // that caveat in the UI so operators know to reach for the stock
 // adjustment screen.
 
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 import { useEffect, useState } from "react";
 import {
   AlertTriangle,
@@ -126,7 +127,7 @@ export const GrnDetailModal = ({ grn, onClose, onUpdated }: Props) => {
   return (
     <div
       className="fixed inset-0 z-[60] bg-ink/40 grid place-items-center"
-      onClick={onClose}
+      {...backdropDismissProps(onClose)}
     >
       <div
         className="bg-surface w-[920px] max-w-[95vw] max-h-[92vh] rounded-lg elevation-3 overflow-hidden flex flex-col"

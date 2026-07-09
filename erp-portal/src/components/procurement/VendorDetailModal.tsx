@@ -3,6 +3,7 @@
 // Opened from the vendors tab when the operator clicks a vendor name.
 // Profile edits still go through VendorEditor (onEditProfile callback).
 
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
@@ -220,7 +221,7 @@ export const VendorDetailModal = ({
   return (
     <div
       className="fixed inset-0 z-[60] bg-ink/40 grid place-items-center"
-      onClick={onClose}
+      {...backdropDismissProps(onClose)}
     >
       <div
         className="bg-surface w-[960px] max-w-[95vw] max-h-[92vh] rounded-lg elevation-3 overflow-hidden flex flex-col"

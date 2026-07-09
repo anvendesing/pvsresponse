@@ -78,7 +78,8 @@ function flattenCatalog(products: CatalogProduct[]): BulkRow[] {
   return rows.sort(
     (a, b) =>
       a.categoryName.localeCompare(b.categoryName) ||
-      a.displayName.localeCompare(b.displayName)
+      a.product.name.localeCompare(b.product.name) ||
+      b.rate - a.rate
   );
 }
 

@@ -1,6 +1,5 @@
 // Yellow brand header: announcement bar + logo + search + utilities,
-// followed by the (desktop) primary nav. Search submits a query that
-// the home page uses to filter; for now it just navigates to /?q=...
+// followed by the (desktop) primary nav. Search navigates to /search?q=...
 
 import { Link, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { useState, useRef, useEffect, useMemo, type FormEvent } from "react";
@@ -93,7 +92,8 @@ export const Header = ({ onOpenMobileDrawer }: HeaderProps) => {
     e.preventDefault();
     const q = query.trim();
     setDropOpen(false);
-    navigate(q ? `/?q=${encodeURIComponent(q)}` : "/");
+    if (!q) return;
+    navigate(`/search?q=${encodeURIComponent(q)}`);
   };
 
   const pickProduct = (p: CatalogProduct) => {
@@ -234,7 +234,7 @@ export const Header = ({ onOpenMobileDrawer }: HeaderProps) => {
                     onMouseDown={(e) => {
                       e.preventDefault();
                       setDropOpen(false);
-                      navigate(`/?q=${encodeURIComponent(query.trim())}`);
+                      navigate(`/search?q=${encodeURIComponent(query.trim())}`);
                     }}
                   >
                     See all results for "<strong>{query.trim()}</strong>"
@@ -285,7 +285,7 @@ export const Header = ({ onOpenMobileDrawer }: HeaderProps) => {
         <ul className="nav-links">
           <li>
             <NavLink to="/" end className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}>
-              All Products
+              Home
             </NavLink>
           </li>
           <li>
@@ -313,9 +313,12 @@ export const Header = ({ onOpenMobileDrawer }: HeaderProps) => {
             </NavLink>
           </li>
           <li>
-            <a className="nav-link" href="mailto:hello@prakruthivanam.in">
+            <NavLink
+              to="/contact"
+              className={({ isActive }) => `nav-link ${isActive ? "active" : ""}`}
+            >
               Contact Us
-            </a>
+            </NavLink>
           </li>
         </ul>
       </nav>

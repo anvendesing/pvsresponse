@@ -41,6 +41,8 @@ import {
 import { consumeReservationsForPickedItems } from "../lib/so-reservations.js";
 import { createSaleLedgerFromPickBin } from "../lib/stock-ledger.js";
 import { recordChange } from "../sync/log.js";
+import { ecommerceCourierPatch, dispatchPackingSlipViaShiprocket, assignShiprocketAwbOnly } from "../lib/shiprocket-dispatch.js";
+import { logSystemWarn, logSystemError, logSystemInfo } from "../lib/system-log.js";
 
 // Local alias kept so the rest of this file - which already uses
 // `nextDocNo(...)` in many places - doesn't need to be touched.
@@ -1344,15 +1346,25 @@ export const fulfilmentRoutes = async (app: FastifyInstance) => {
         select: { id: true, invoiceNo: true, packingSlipId: true },
       });
 
-      let awbPatch: { awb?: string; carrier?: string } = {};
+      let awbPatch: {
+        awb?: string;
+        carrier?: string;
+        trackingUrl?: string;
+        dispatchedAt?: Date;
+        shiprocketOrderId?: string;
+        shiprocketShipmentId?: string;
+      } = {};
       if (so?.source === "ecommerce" && !ps.awb) {
-        awbPatch = {
-          awb: `MOCK-AWB-${Math.random()
-            .toString(36)
-            .slice(2, 10)
-            .toUpperCase()}`,
-          carrier: "MockCourier",
-        };
+        // Destructure out shiprocketError so it never reaches the Prisma update
+        // (PackingSlip has no such column; spreading it causes a runtime crash).
+        const { shiprocketError: _dispatchErr, ...patch } = await ecommerceCourierPatch(id);
+        if (_dispatchErr) {
+          // Non-fatal: pack proceeds without AWB; operator can assign manually.
+          await logSystemWarn("shiprocket", "dispatch", _dispatchErr, {
+            packingSlipId: id,
+          });
+        }
+        awbPatch = patch;
       }
 
       // ----- Apply the pack-complete writes -----
@@ -1577,14 +1589,17 @@ export const fulfilmentRoutes = async (app: FastifyInstance) => {
         where: { id: ps.salesOrderId },
         select: { id: true, source: true },
       });
-      let awbPatch: { awb?: string; carrier?: string } = {};
+      let awbPatch: {
+        awb?: string;
+        carrier?: string;
+        trackingUrl?: string;
+        dispatchedAt?: Date;
+        shiprocketOrderId?: string;
+        shiprocketShipmentId?: string;
+      } = {};
       let ecomInvoiced = false;
       if (so?.source === "ecommerce" && !ps.awb) {
-        const awb = `MOCK-AWB-${Math.random()
-          .toString(36)
-          .slice(2, 10)
-          .toUpperCase()}`;
-        awbPatch = { awb, carrier: "MockCourier" };
+        awbPatch = await ecommerceCourierPatch(id);
         const fullSlip = await db.packingSlip.findUnique({
           where: { id },
           include: {
@@ -1905,6 +1920,72 @@ export const fulfilmentRoutes = async (app: FastifyInstance) => {
       // can show whatever they entered.
       const known = COURIERS.find((c) => c.code === body.courier);
       const displayName = known?.name ?? body.courier;
+
+      // Live Shiprocket: create adhoc order + assign AWB when courier is
+      // shiprocket and the operator did not paste an AWB manually.
+      if (body.courier === "shiprocket" && !body.awb?.trim()) {
+        const existing = await db.packingSlip.findUnique({
+          where: { id },
+          select: { shiprocketShipmentId: true, shiprocketOrderId: true, awb: true },
+        });
+
+        // A mock AWB (MOCK-AWB-*) means no real Shiprocket order was ever created.
+        // Treat this the same as having no Shiprocket shipment ID: clear the stale
+        // data and do a full fresh dispatch.
+        const isMockAwb = existing?.awb?.startsWith("MOCK-");
+        const hasRealShipment = existing?.shiprocketShipmentId && !isMockAwb;
+
+        if (hasRealShipment) {
+          // Real Shiprocket shipment exists — only reassign the AWB at Shiprocket.
+          const sr = await assignShiprocketAwbOnly(existing.shiprocketShipmentId!, {
+            reassign: Boolean(existing.awb),
+          });
+          if (!sr.ok) {
+            return reply.code(502).send({
+              error: { code: "shiprocket_failed", message: sr.message },
+            });
+          }
+          const updated = await db.packingSlip.update({
+            where: { id },
+            data: {
+              carrier: sr.carrier,
+              awb: sr.awb,
+              trackingUrl: sr.trackingUrl,
+              dispatchedAt: ps.dispatchedAt ?? new Date(),
+            },
+            include: fullPackInclude,
+          });
+          await recordChange("PackingSlip", id, "update", updated, req.user.sub);
+          return updated;
+        }
+
+        // No real Shiprocket shipment (first dispatch, mock AWB, or manual AWB).
+        // Always do a full fresh create + AWB assign.  reassign:true clears any
+        // stale mock/manual AWB/carrier stored on the slip before dispatching.
+        const sr = await dispatchPackingSlipViaShiprocket(id, {
+          reassign: Boolean(existing?.awb),
+        });
+        if (!sr.ok) {
+          return reply.code(502).send({
+            error: { code: "shiprocket_failed", message: sr.message },
+          });
+        }
+        const updated = await db.packingSlip.update({
+          where: { id },
+          data: {
+            carrier: sr.carrier,
+            awb: sr.awb,
+            trackingUrl: sr.trackingUrl,
+            shiprocketOrderId: sr.shiprocketOrderId,
+            shiprocketShipmentId: sr.shiprocketShipmentId,
+            dispatchedAt: ps.dispatchedAt ?? new Date(),
+          },
+          include: fullPackInclude,
+        });
+        await recordChange("PackingSlip", id, "update", updated, req.user.sub);
+        return updated;
+      }
+
       const awb =
         body.awb?.trim() ||
         `MOCK-AWB-${Math.random().toString(36).slice(2, 10).toUpperCase()}`;

@@ -1,3 +1,4 @@
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
@@ -572,6 +573,13 @@ export const Warehouse = () => {
             <Button
               variant="outline"
               size="sm"
+              onClick={() => nav("/warehouse")}
+            >
+              Shelf view
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
               icon={<Download size={14} />}
               onClick={exportBins}
               title="Export bin stock as CSV"
@@ -878,7 +886,7 @@ const EditBinModal = ({
   };
 
   return (
-    <div className="fixed inset-0 z-[60] bg-ink/40 grid place-items-center" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] bg-ink/40 grid place-items-center" {...backdropDismissProps(onClose)}>
       <div
         className="bg-surface w-full max-w-sm rounded-lg elevation-3 overflow-hidden"
         onClick={(e) => e.stopPropagation()}
@@ -954,7 +962,7 @@ const ModalShell = ({
   children: ReactNode;
   onClose: () => void;
 }) => (
-  <div className="fixed inset-0 z-[60] bg-ink/40 grid place-items-center" onClick={onClose}>
+  <div className="fixed inset-0 z-[60] bg-ink/40 grid place-items-center" {...backdropDismissProps(onClose)}>
     <div
       className="bg-surface w-full max-w-sm rounded-lg elevation-3 overflow-hidden"
       onClick={(e) => e.stopPropagation()}

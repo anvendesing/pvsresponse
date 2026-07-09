@@ -352,6 +352,8 @@ export interface ProductionOrder {
   variantSize?: string | null;
   variantColor?: string | null;
   plannedQty: number;
+  /** Order shortage snapshot at MO creation — use to prioritize urgent runs. */
+  urgentQty?: number | null;
   actualQty: number;
   scrapQty: number;
   reworkQty: number;
@@ -585,7 +587,7 @@ export interface StockLedgerEntry {
 export type EnquiryStage = "new" | "contacted" | "qualified" | "proposal" | "won" | "lost";
 export type EnquiryType = "product" | "dealership" | "farm_visit" | "other";
 export type EnquirySource =
-  | "walk_in" | "phone" | "website" | "whatsapp" | "referral" | "exhibition" | "social" | "other";
+  | "walk_in" | "phone" | "website" | "contact_page" | "whatsapp" | "referral" | "exhibition" | "social" | "other";
 export type EnquiryPriority = "low" | "medium" | "high";
 export type EnquiryActivityType =
   | "note" | "call" | "email" | "meeting" | "whatsapp" | "visit" | "stage_change";

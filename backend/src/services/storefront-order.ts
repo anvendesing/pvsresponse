@@ -34,7 +34,7 @@ import { allocateInvoiceNumber } from "../lib/document-series.js";
 
 export const storefrontOrderItemSchema = z.object({
   productId: z.string().min(1),
-  variantId: z.string().nullable().optional(),
+  variantId: z.string().min(1),
   qty: z.number().positive(),
 });
 
@@ -108,26 +108,22 @@ export async function validateStorefrontOrder(
   reply: FastifyReply,
   opts?: { customerId?: string; fixedShippingFee?: number }
 ): Promise<ValidatedOrder | null> {
-  const variantIds = body.items
-    .map((i) => i.variantId)
-    .filter((v): v is string => typeof v === "string" && v.length > 0);
-  const productIds = body.items.map((i) => i.productId);
+  const variantIds = body.items.map((i) => i.variantId);
 
-  const variants = variantIds.length
-    ? await db.productVariant.findMany({
-        where: { id: { in: variantIds } },
-        select: {
-          id: true,
-          sku: true,
-          stockOnHand: true,
-          productId: true,
-          sellingPriceOverride: true,
-          active: true,
-          ecommerceEnabled: true,
-          gstRate: true,
-        },
-      })
-    : [];
+  const variants = await db.productVariant.findMany({
+    where: { id: { in: variantIds } },
+    select: {
+      id: true,
+      sku: true,
+      stockOnHand: true,
+      productId: true,
+      sellingPriceOverride: true,
+      active: true,
+      ecommerceEnabled: true,
+      gstRate: true,
+    },
+  });
+  const productIds = [...new Set(body.items.map((i) => i.productId))];
   const products = await db.product.findMany({
     where: { id: { in: productIds } },
     select: {
@@ -135,10 +131,10 @@ export async function validateStorefrontOrder(
       sku: true,
       name: true,
       state: true,
+      type: true,
       stockOnHand: true,
       sellingPrice: true,
       gstRate: true,
-      ecommerceEnabled: true,
     },
   });
   const vMap = new Map(variants.map((v) => [v.id, v]));
@@ -165,56 +161,48 @@ export async function validateStorefrontOrder(
       });
       return null;
     }
-    if (!p.ecommerceEnabled) {
+    if (p.type !== "finished") {
       void reply.code(409).send({
         error: {
-          code: "product_not_in_ecommerce",
-          message: `${p.sku} is not listed for e-commerce.`,
+          code: "product_not_retail",
+          message: `${p.sku} is not a finished retail product.`,
         },
       });
       return null;
     }
-    if (it.variantId) {
-      const v = vMap.get(it.variantId);
-      if (!v || v.productId !== it.productId) {
-        void reply.code(400).send({
-          error: {
-            code: "variant_mismatch",
-            message: `Variant ${it.variantId} does not belong to product ${p.sku}.`,
-          },
-        });
-        return null;
-      }
-      if (!v.active) {
-        void reply.code(409).send({
-          error: {
-            code: "variant_inactive",
-            message: `Variant ${v.sku} is no longer on sale.`,
-          },
-        });
-        return null;
-      }
-      if (!v.ecommerceEnabled) {
-        void reply.code(409).send({
-          error: {
-            code: "variant_not_in_ecommerce",
-            message: `Variant ${v.sku} is not listed for e-commerce.`,
-          },
-        });
-        return null;
-      }
-      if (it.qty > (v.stockOnHand ?? 0)) {
-        oversell.push({
-          sku: v.sku,
-          requested: it.qty,
-          available: v.stockOnHand ?? 0,
-        });
-      }
-    } else if (it.qty > (p.stockOnHand ?? 0)) {
+    const v = vMap.get(it.variantId);
+    if (!v || v.productId !== it.productId) {
+      void reply.code(400).send({
+        error: {
+          code: "variant_mismatch",
+          message: `Variant ${it.variantId} does not belong to product ${p.sku}.`,
+        },
+      });
+      return null;
+    }
+    if (!v.active) {
+      void reply.code(409).send({
+        error: {
+          code: "variant_inactive",
+          message: `Variant ${v.sku} is no longer on sale.`,
+        },
+      });
+      return null;
+    }
+    if (!v.ecommerceEnabled) {
+      void reply.code(409).send({
+        error: {
+          code: "variant_not_in_ecommerce",
+          message: `Variant ${v.sku} is not listed on the storefront.`,
+        },
+      });
+      return null;
+    }
+    if (it.qty > (v.stockOnHand ?? 0)) {
       oversell.push({
-        sku: p.sku,
+        sku: v.sku,
         requested: it.qty,
-        available: p.stockOnHand ?? 0,
+        available: v.stockOnHand ?? 0,
       });
     }
   }

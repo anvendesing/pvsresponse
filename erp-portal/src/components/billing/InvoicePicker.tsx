@@ -4,6 +4,7 @@
 // flow as the entry point when the operator doesn't already have an
 // invoice open.
 
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 import { useEffect, useMemo, useState } from "react";
 import { Receipt, Search, X } from "lucide-react";
 import { Input } from "@/components/common/Input";
@@ -60,7 +61,7 @@ export const InvoicePicker = ({ onClose, onPick }: Props) => {
   }, [dispatchable, q]);
 
   return (
-    <div className="fixed inset-0 z-[55] bg-ink/40 grid place-items-center" onClick={onClose}>
+    <div className="fixed inset-0 z-[55] bg-ink/40 grid place-items-center" {...backdropDismissProps(onClose)}>
       <div
         className="bg-surface w-full max-w-2xl max-h-[80vh] rounded-lg elevation-3 overflow-hidden flex flex-col"
         onClick={(e) => e.stopPropagation()}

@@ -1,6 +1,7 @@
 // Storefront product categories — admin CRUD + tile image upload.
 
-import { useEffect, useRef, useState } from "react";
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ImagePlus, Loader2, Pencil, Plus, Trash2, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Card } from "@/components/common/Card";
@@ -28,6 +29,8 @@ export const CategoryManager = () => {
   const [form, setForm] = useState<FormState>(EMPTY);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const closeModal = useCallback(() => setModalOpen(false), []);
   const [banner, setBanner] = useState<string | null>(null);
   const imgRef = useRef<HTMLInputElement>(null);
   const [uploadingId, setUploadingId] = useState<string | null>(null);
@@ -229,7 +232,7 @@ export const CategoryManager = () => {
       </Card>
 
       {modalOpen && (
-        <div className="fixed inset-0 z-[60] bg-ink/40 grid place-items-center" onClick={() => setModalOpen(false)}>
+        <div className="fixed inset-0 z-[60] bg-ink/40 grid place-items-center" {...backdropDismissProps(closeModal)}>
           <div
             className="bg-surface w-full max-w-md rounded-lg elevation-3 overflow-hidden"
             onClick={(e) => e.stopPropagation()}

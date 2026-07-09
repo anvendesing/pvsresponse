@@ -1,16 +1,8 @@
-// "New manufacturing order" wizard.
-//
-// Flow:
-//   1. Pick a BOM (or a parent product, which we use to look up its
-//      active BOM).
-//   2. Set planned qty + dates.
-//   3. Live preview of the multi-level explosion + on-hand vs needed,
-//      so the operator sees shortages before pulling the trigger.
-//   4. Submit -> creates the MO and (server-side) seeds one work
-//      order to track progress.
+// "New manufacturing order" wizard — shortage-driven produce qty.
 
-import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CheckCircle2, Plus, X } from "lucide-react";
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { AlertTriangle, CheckCircle2, Plus, X, Zap } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Chip } from "@/components/common/Chip";
 import { Input } from "@/components/common/Input";
@@ -36,22 +28,18 @@ const isoDate = (offsetDays: number): string => {
 export const NewMoModal = ({ boms, onClose, onCreated }: Props) => {
   const activeBoms = useMemo(() => boms.filter((b) => b.active), [boms]);
   const [bomId, setBomId] = useState<string>(activeBoms[0]?.id ?? "");
-  // Facility is required; line is optional (supervisor can assign later).
   const [facilityId, setFacilityId] = useState<string>("");
   const [lineId, setLineId] = useState<string>("");
   const [showLineExpander, setShowLineExpander] = useState(false);
   const [plannedQty, setPlannedQty] = useState(100);
   const [startDate, setStartDate] = useState(isoDate(0));
   const [dueDate, setDueDate] = useState(isoDate(3));
+  const plannedTouched = useRef(false);
 
   const facilitiesResp = useApi(() => api.productionFacilities({ active: true }), []);
   const linesResp = useApi(() => api.productionLines({ active: true }), []);
   const facilities =
-    (facilitiesResp.data as Array<{
-      id: string;
-      code: string;
-      name: string;
-    }> | null) ?? [];
+    (facilitiesResp.data as Array<{ id: string; code: string; name: string }> | null) ?? [];
   const allLines =
     (linesResp.data as Array<{
       id: string;
@@ -63,35 +51,57 @@ export const NewMoModal = ({ boms, onClose, onCreated }: Props) => {
     ? allLines.filter((l) => l.facilityId === facilityId)
     : [];
 
+  const [demandCtx, setDemandCtx] = useState<Awaited<
+    ReturnType<typeof api.bomMoCreateContext>
+  > | null>(null);
   const [leaves, setLeaves] = useState<BomLeafRow[]>([]);
-  const [shortages, setShortages] = useState<Map<string, number>>(new Map());
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const selectedBom = activeBoms.find((b) => b.id === bomId);
+  const outputUom = demandCtx?.outputUom ?? selectedBom?.items[0]?.uom ?? "unit";
 
-  // Seed facility/line from the BOM's declared defaults when BOM changes.
   useEffect(() => {
     if (!selectedBom) return;
     setFacilityId(selectedBom.defaultFacilityId ?? "");
     setLineId(selectedBom.defaultLineId ?? "");
   }, [selectedBom?.id, selectedBom?.defaultFacilityId, selectedBom?.defaultLineId]);
 
-  // Clear line if it no longer belongs to the chosen facility.
   useEffect(() => {
     if (!lineId || !facilityId) return;
     const l = allLines.find((x) => x.id === lineId);
-    if (l && l.facilityId !== facilityId) {
-      setLineId("");
-    }
+    if (l && l.facilityId !== facilityId) setLineId("");
   }, [facilityId, lineId, allLines]);
 
-  // Live explosion + shortage check whenever bom or qty change.
   useEffect(() => {
     if (!bomId) {
+      setDemandCtx(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const ctx = await api.bomMoCreateContext(bomId);
+        if (cancelled) return;
+        setDemandCtx(ctx);
+        if (!plannedTouched.current) setPlannedQty(ctx.suggestedPlannedQty);
+      } catch {
+        if (!cancelled) setDemandCtx(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [bomId]);
+
+  useEffect(() => {
+    plannedTouched.current = false;
+  }, [bomId]);
+
+  useEffect(() => {
+    if (!bomId || plannedQty <= 0) {
       setLeaves([]);
-      setShortages(new Map());
       return;
     }
     let cancelled = false;
@@ -99,20 +109,8 @@ export const NewMoModal = ({ boms, onClose, onCreated }: Props) => {
     void (async () => {
       try {
         const exp = await api.bomExplode(bomId, plannedQty);
-        // Quick on-hand probe: piggy-back on the warehouse listing the
-        // page already has would be cleaner, but a single per-product
-        // call is fast enough.
-        const productIds = exp.map((e) => e.productId);
-        const stockMap = new Map<string, number>();
-        // Fan out to the inventory ledger isn't ideal; instead we
-        // simply leave shortages empty until creation - the backend
-        // re-validates on issue-materials. Empty shortages just means
-        // we won't show inline warnings here. Acceptable for v1.
-        for (const id of productIds) stockMap.set(id, 0);
-        const sh = new Map<string, number>();
         if (!cancelled) {
           setLeaves(exp);
-          setShortages(sh);
           setError(null);
         }
       } catch (e) {
@@ -129,7 +127,7 @@ export const NewMoModal = ({ boms, onClose, onCreated }: Props) => {
   const submit = async () => {
     if (!bomId) return setError("Pick a BOM.");
     if (!facilityId) return setError("Pick a production facility.");
-    if (plannedQty <= 0) return setError("Planned qty must be > 0.");
+    if (plannedQty <= 0) return setError("Produce qty must be > 0.");
     setBusy(true);
     setError(null);
     try {
@@ -138,6 +136,7 @@ export const NewMoModal = ({ boms, onClose, onCreated }: Props) => {
         facilityId,
         lineId: lineId || undefined,
         plannedQty,
+        urgentQty: demandCtx?.urgentQty ?? 0,
         startDate,
         dueDate,
       })) as { id: string; orderNo: string };
@@ -148,13 +147,16 @@ export const NewMoModal = ({ boms, onClose, onCreated }: Props) => {
     }
   };
 
+  const urgentQty = demandCtx?.urgentQty ?? 0;
+  const batchSize = demandCtx?.batchSize ?? selectedBom?.outputQty ?? 0;
+
   return (
     <div
       className="fixed inset-0 z-[60] bg-ink/40 grid place-items-center"
-      onClick={onClose}
+      {...backdropDismissProps(onClose)}
     >
       <div
-        className="bg-surface w-[800px] max-w-[95vw] max-h-[90vh] rounded-lg elevation-3 overflow-hidden flex flex-col"
+        className="bg-surface w-[820px] max-w-[95vw] max-h-[90vh] rounded-lg elevation-3 overflow-hidden flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="px-5 py-3 border-b border-border flex items-center justify-between">
@@ -167,7 +169,7 @@ export const NewMoModal = ({ boms, onClose, onCreated }: Props) => {
                 New manufacturing order
               </div>
               <div className="text-body-sm">
-                Pick a BOM, set the plan, see what raw materials will be needed.
+                Set produce qty from order shortage or a full batch.
               </div>
             </div>
           </div>
@@ -187,73 +189,132 @@ export const NewMoModal = ({ boms, onClose, onCreated }: Props) => {
         )}
 
         <div className="p-4 space-y-3 overflow-y-auto">
-          <div className="grid grid-cols-12 gap-3">
-            <div className="col-span-7">
-              <div className="text-caption text-ink-muted uppercase font-semibold mb-1">
-                BOM
+          <div>
+            <div className="text-caption text-ink-muted uppercase font-semibold mb-1">BOM</div>
+            <select
+              value={bomId}
+              onChange={(e) => setBomId(e.target.value)}
+              className="h-10 w-full bg-white border border-border rounded-md px-3 text-body outline-none focus:border-primary"
+            >
+              {activeBoms.length === 0 && <option value="">(none)</option>}
+              {activeBoms.map((b) => {
+                const scope = b.variantId
+                  ? `[${b.variantLabel ?? b.variantSku}]`
+                  : "[default]";
+                return (
+                  <option key={b.id} value={b.id}>
+                    {b.sku} {scope} · {b.product} · {b.revision} · batch {b.outputQty}
+                  </option>
+                );
+              })}
+            </select>
+          </div>
+
+          {demandCtx && (
+            <div className="rounded-lg border border-border bg-canvas/60 p-3 space-y-3">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-caption font-semibold uppercase text-ink-muted">
+                  Demand vs stock
+                </span>
+                {urgentQty > 0 && (
+                  <Chip size="sm" tone="warning" icon={<Zap size={11} />}>
+                    Urgent · {num(urgentQty)} {outputUom} short
+                  </Chip>
+                )}
               </div>
-              <select
-                value={bomId}
-                onChange={(e) => setBomId(e.target.value)}
-                className="h-10 w-full bg-white border border-border rounded-md px-3 text-body outline-none focus:border-primary"
-              >
-                {activeBoms.length === 0 && <option value="">(none)</option>}
-                {activeBoms.map((b) => {
-                  const scope = b.variantId
-                    ? `[${b.variantLabel ?? b.variantSku}]`
-                    : "[default]";
-                  return (
-                    <option key={b.id} value={b.id}>
-                      {b.sku} {scope} · {b.product} · {b.revision} · batch{" "}
-                      {b.outputQty}
-                    </option>
-                  );
-                })}
-              </select>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-body-sm">
+                <Metric label="On hand" value={`${num(demandCtx.onHand)} ${outputUom}`} />
+                <Metric
+                  label="Committed (SO)"
+                  value={`${num(demandCtx.committedSo)} ${outputUom}`}
+                  tone={demandCtx.committedSo > 0 ? "warning" : undefined}
+                />
+                <Metric label="Open MOs" value={`${num(demandCtx.moPipeline)} ${outputUom}`} />
+                <Metric
+                  label="Order shortage"
+                  value={`${num(urgentQty)} ${outputUom}`}
+                  tone={urgentQty > 0 ? "danger" : "success"}
+                  strong
+                />
+              </div>
+              <p className="text-caption text-ink-muted leading-snug">
+                Shortage = committed sales − on hand − qty still expected from other open MOs. On a
+                busy day, produce only the shortage; use a full batch when you have capacity.
+              </p>
+            </div>
+          )}
+
+          <div className="grid grid-cols-12 gap-3 items-end">
+            <div className="col-span-5">
+              <div className="text-caption text-ink-muted uppercase font-semibold mb-1">
+                Produce qty
+              </div>
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number"
+                  min={0.001}
+                  step="any"
+                  value={plannedQty}
+                  onChange={(e) => {
+                    plannedTouched.current = true;
+                    setPlannedQty(Number(e.target.value) || 0);
+                  }}
+                  className="flex-1"
+                />
+                <span className="text-body-sm text-ink-muted shrink-0">{outputUom}</span>
+              </div>
+              <div className="flex flex-wrap gap-1.5 mt-2">
+                {urgentQty > 0 && (
+                  <button
+                    type="button"
+                    className="text-caption px-2 py-0.5 rounded border border-warning bg-warning-soft text-ink hover:bg-warning/20"
+                    onClick={() => {
+                      plannedTouched.current = true;
+                      setPlannedQty(urgentQty);
+                    }}
+                  >
+                    Cover shortage ({num(urgentQty)})
+                  </button>
+                )}
+                {batchSize > 0 && (
+                  <button
+                    type="button"
+                    className="text-caption px-2 py-0.5 rounded border border-border bg-white text-ink-muted hover:bg-canvas"
+                    onClick={() => {
+                      plannedTouched.current = true;
+                      setPlannedQty(batchSize);
+                    }}
+                  >
+                    Full batch ({num(batchSize)})
+                  </button>
+                )}
+              </div>
             </div>
             <div className="col-span-3">
               <div className="text-caption text-ink-muted uppercase font-semibold mb-1">
-                Planned qty
+                Start date
               </div>
-              <Input
-                type="number"
-                min={1}
-                value={plannedQty}
-                onChange={(e) => setPlannedQty(Number(e.target.value) || 0)}
-              />
-              {selectedBom && plannedQty > 0 && (
-                <div className="text-caption text-ink-muted mt-1">
-                  {(() => {
-                    const batches = plannedQty / selectedBom.outputQty;
-                    const whole = Math.ceil(batches);
-                    return `≈ ${whole} batch${whole === 1 ? "" : "es"} of ${selectedBom.outputQty}`;
-                  })()}
-                </div>
-              )}
+              <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
             </div>
             <div className="col-span-2">
               <div className="text-caption text-ink-muted uppercase font-semibold mb-1">
-                Output UoM
+                Due date
               </div>
-              <div className="h-10 flex items-center text-body font-semibold">
-                {selectedBom?.items[0]?.uom ?? "—"}
-              </div>
+              <Input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
             </div>
           </div>
 
           <div className="grid grid-cols-12 gap-3">
             <div className="col-span-4">
-              <div className="text-caption text-ink-muted uppercase font-semibold mb-1 flex items-center gap-2">
-                <span>Facility</span>
-                {selectedBom?.defaultFacility && (
-                  <Chip size="sm" tone="info">
-                    BOM default
-                  </Chip>
-                )}
+              <div className="text-caption text-ink-muted uppercase font-semibold mb-1">
+                Facility
               </div>
               <select
                 value={facilityId}
-                onChange={(e) => { setFacilityId(e.target.value); setLineId(""); }}
+                onChange={(e) => {
+                  setFacilityId(e.target.value);
+                  setLineId("");
+                }}
                 className="h-10 w-full bg-white border border-border rounded-md px-3 text-body outline-none focus:border-primary"
               >
                 <option value="">— Pick a facility —</option>
@@ -263,26 +324,17 @@ export const NewMoModal = ({ boms, onClose, onCreated }: Props) => {
                   </option>
                 ))}
               </select>
-              {facilities.length === 0 && (
-                <div className="text-caption text-ink-muted mt-1">
-                  No facilities yet. Add them in Settings &raquo; Production facilities.
-                </div>
-              )}
             </div>
             <div className="col-span-4">
-              <div className="text-caption text-ink-muted uppercase font-semibold mb-1 flex items-center gap-2">
-                <span>Production line</span>
-                <Chip size="sm" tone="neutral">optional</Chip>
-                {selectedBom?.defaultLine && (
-                  <Chip size="sm" tone="info">BOM default</Chip>
-                )}
+              <div className="text-caption text-ink-muted uppercase font-semibold mb-1">
+                Production line <span className="normal-case font-normal">(optional)</span>
               </div>
               {showLineExpander || facilityId ? (
                 <select
                   value={lineId}
                   onChange={(e) => setLineId(e.target.value)}
                   disabled={!facilityId}
-                  className="h-10 w-full bg-white border border-border rounded-md px-3 text-body outline-none focus:border-primary disabled:bg-canvas disabled:text-ink-muted"
+                  className="h-10 w-full bg-white border border-border rounded-md px-3 text-body outline-none focus:border-primary disabled:bg-canvas"
                 >
                   <option value="">
                     {facilityId ? "— Assign later —" : "— Pick a facility first —"}
@@ -297,78 +349,41 @@ export const NewMoModal = ({ boms, onClose, onCreated }: Props) => {
                 <button
                   type="button"
                   onClick={() => setShowLineExpander(true)}
-                  className="h-10 w-full text-left px-3 text-body-sm text-primary border border-dashed border-primary/30 rounded-md hover:border-primary/60"
+                  className="h-10 w-full text-left px-3 text-body-sm text-primary border border-dashed border-primary/30 rounded-md"
                 >
                   + Set initial line (optional)
                 </button>
               )}
             </div>
-            <div className="col-span-2">
-              <div className="text-caption text-ink-muted uppercase font-semibold mb-1">
-                Start date
-              </div>
-              <Input
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-              />
-            </div>
-            <div className="col-span-2">
-              <div className="text-caption text-ink-muted uppercase font-semibold mb-1">
-                Due date
-              </div>
-              <Input
-                type="date"
-                value={dueDate}
-                onChange={(e) => setDueDate(e.target.value)}
-              />
-            </div>
           </div>
 
-          {/* Explosion preview */}
           <div className="border border-border rounded-md overflow-hidden">
             <div className="px-3 py-2 bg-canvas border-b border-border text-caption text-ink-muted uppercase font-semibold">
-              Raw materials needed (this BOM)
+              Raw materials needed (for {num(plannedQty)} {outputUom} output)
             </div>
             {loading ? (
-              <div className="p-4 text-center text-body-sm text-ink-muted">
-                Computing requirements…
-              </div>
+              <div className="p-4 text-center text-body-sm text-ink-muted">Computing…</div>
             ) : leaves.length === 0 ? (
               <div className="p-4 text-center text-body-sm text-ink-muted">
-                Pick a BOM to see raw materials.
+                Pick a BOM and produce qty to see components.
               </div>
             ) : (
-              <div className="grid grid-cols-12 max-h-[280px] overflow-y-auto">
-                <div className="col-span-12 grid grid-cols-12 grid-header-cell text-caption">
-                  <div className="col-span-3">SKU</div>
-                  <div className="col-span-5">Component</div>
-                  <div className="col-span-2 text-right">Required</div>
-                  <div className="col-span-2">Path</div>
-                </div>
-                {leaves.map((l) => {
-                  const short = shortages.get(l.productId) ?? 0;
-                  return (
-                    <div
-                      key={l.productId}
-                      className={cn(
-                        "col-span-12 grid grid-cols-12 grid-cell items-center !py-2 text-body-sm",
-                        short > 0 && "bg-danger-soft"
-                      )}
-                    >
-                      <div className="col-span-3 font-mono text-caption">
-                        {l.sku}
-                      </div>
-                      <div className="col-span-5 truncate">{l.name}</div>
-                      <div className="col-span-2 text-right tnum">
-                        {num(l.qty, 3)} {l.uom}
-                      </div>
-                      <div className="col-span-2 text-caption text-ink-muted truncate">
-                        {l.path.join(" → ")}
-                      </div>
+              <div className="max-h-[220px] overflow-y-auto divide-y divide-border">
+                {leaves.map((l) => (
+                  <div
+                    key={l.productId}
+                    className="px-3 py-2 grid grid-cols-12 gap-2 text-body-sm items-center"
+                  >
+                    <div className="col-span-3 font-mono text-caption">{l.sku}</div>
+                    <div className="col-span-5 truncate">{l.name}</div>
+                    <div className="col-span-2 text-right tnum">
+                      {num(l.qty, 3)} {l.uom}
                     </div>
-                  );
-                })}
+                    <div className="col-span-2 text-caption text-ink-muted truncate">
+                      {l.path.join(" → ")}
+                    </div>
+                  </div>
+                ))}
               </div>
             )}
           </div>
@@ -391,3 +406,31 @@ export const NewMoModal = ({ boms, onClose, onCreated }: Props) => {
     </div>
   );
 };
+
+const Metric = ({
+  label,
+  value,
+  tone,
+  strong,
+}: {
+  label: string;
+  value: string;
+  tone?: "warning" | "danger" | "success";
+  strong?: boolean;
+}) => (
+  <div className="rounded-md border border-border bg-white px-2.5 py-2">
+    <div className="text-[10px] uppercase font-semibold text-ink-muted">{label}</div>
+    <div
+      className={cn(
+        "tnum mt-0.5",
+        strong && "font-bold text-body",
+        tone === "warning" && "text-warning",
+        tone === "danger" && "text-danger",
+        tone === "success" && "text-success",
+        !tone && !strong && "text-ink"
+      )}
+    >
+      {value}
+    </div>
+  </div>
+);

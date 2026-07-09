@@ -1,9 +1,10 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import type { PoClosePreview } from "@/data/types";
 import { api } from "@/lib/api";
 import { num } from "@/lib/format";
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 
 interface Props {
   poId: string;
@@ -40,10 +41,15 @@ export const ClosePoConfirmModal = ({ poId, poNo, onCancel, onClosed }: Props) =
     }
   };
 
+  const dismiss = useCallback(() => {
+    if (!closing) onCancel();
+  }, [closing, onCancel]);
+
+
   return (
     <div
       className="fixed inset-0 z-50 bg-ink/40 grid place-items-center p-4"
-      onClick={() => !closing && onCancel()}
+      {...backdropDismissProps(dismiss)}
     >
       <div
         className="bg-surface w-full max-w-lg rounded-lg elevation-3 overflow-hidden"

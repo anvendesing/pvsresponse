@@ -8,12 +8,16 @@ import {
   api,
   type CustomerAddress,
   type PlaceOrderResult,
+  type StoredOrderResult,
   type ShippingQuoteResult,
   type StorefrontPaymentGateway,
 } from "@/lib/api";
 import { loadRazorpayCheckout, openRazorpayCheckout } from "@/lib/razorpay";
 import { submitPayuCheckout } from "@/lib/payu";
+import { orderItemsSnapshotFromCart, stashPayuCheckoutSnapshot } from "@/lib/checkoutSnapshot";
+import { track } from "@/lib/activity";
 import { useCart, lineKeyFor } from "@/state/CartContext";
+import { useCatalog } from "@/state/CatalogContext";
 import { useAuth } from "@/state/AuthContext";
 import { useToast } from "@/state/ToastContext";
 import { inr, inrFloat, cartLineSummary } from "@/lib/format";
@@ -28,7 +32,6 @@ import {
 } from "@/lib/pincodeLookup";
 import { CheckIcon } from "@/assets/icons";
 import { usePlatform } from "@/state/PlatformContext";
-import { track } from "@/lib/activity";
 
 interface ShippingForm {
   name: string;
@@ -45,6 +48,7 @@ interface ShippingForm {
 
 export const CheckoutPage = () => {
   const cart = useCart();
+  const { products } = useCatalog();
   const auth = useAuth();
   const toast = useToast();
   const navigate = useNavigate();
@@ -81,6 +85,7 @@ export const CheckoutPage = () => {
   const [paymentGateways, setPaymentGateways] = useState<StorefrontPaymentGateway[]>([]);
   const [paymentGateway, setPaymentGateway] = useState<StorefrontPaymentGateway | "">("");
   const lastAutofillPinRef = useRef("");
+  const shippingFormRef = useRef<HTMLFormElement>(null);
   const [notes] = useState<string>(() => {
     try {
       return window.localStorage.getItem("pv_cart_notes") ?? "";
@@ -92,6 +97,10 @@ export const CheckoutPage = () => {
   useEffect(() => {
     if (cart.lines.length === 0) navigate("/cart", { replace: true });
   }, [cart.lines.length, navigate]);
+
+  useEffect(() => {
+    cart.syncStock(products);
+  }, [products, cart.syncStock]);
 
   useEffect(() => {
     const payuStatus = searchParams.get("payu");
@@ -341,6 +350,10 @@ export const CheckoutPage = () => {
       const init = await api.initCheckoutOrder(orderInput);
 
       if (init.gateway === "payu") {
+        stashPayuCheckoutSnapshot(init.intentId, cart.lines, {
+          name: shipping.name.trim(),
+          phone: shipping.phone.trim(),
+        });
         submitPayuCheckout(init.checkoutUrl, init.fields);
         return;
       }
@@ -364,16 +377,19 @@ export const CheckoutPage = () => {
               razorpay_order_id: rzpResponse.razorpay_order_id,
               razorpay_signature: rzpResponse.razorpay_signature,
             });
+            const itemsSnapshot = orderItemsSnapshotFromCart(cart.lines);
+            const stored: StoredOrderResult = { ...result, itemsSnapshot };
             try {
               window.localStorage.setItem(
                 `pv_order_${result.salesOrder.soNo}`,
-                JSON.stringify(result)
+                JSON.stringify(stored)
               );
               window.localStorage.removeItem("pv_cart_notes");
             } catch {
               /* noop */
             }
             cart.clear();
+            track("place_order", { meta: { soNo: result.salesOrder.soNo } });
             toast.show("Payment successful — order placed!", "success");
             navigate(`/order/${result.salesOrder.soNo}`, {
               replace: true,
@@ -462,7 +478,7 @@ export const CheckoutPage = () => {
                 onEdit={step > 2 ? () => setStep(2) : undefined}
               >
                 {step === 2 && (
-                  <form onSubmit={submitShipping} style={{ display: "flex", flexDirection: "column", gap: "0.85rem" }}>
+                  <form ref={shippingFormRef} onSubmit={submitShipping} style={{ display: "flex", flexDirection: "column", gap: "0.85rem" }}>
                     {deliverableAddresses.length > 0 && !showNewAddress && (
                       <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
                         {deliverableAddresses.map((a) => (
@@ -629,7 +645,7 @@ export const CheckoutPage = () => {
                     )}
                     <button
                       type="button"
-                      className="btn btn-green btn-block"
+                      className="btn btn-green btn-block checkout-trust-pay"
                       onClick={placeOrder}
                       disabled={busy || quoteLoading || !!quoteError || !shippingQuote || !paymentGateway}
                     >
@@ -637,6 +653,17 @@ export const CheckoutPage = () => {
                         ? "Opening payment…"
                         : `Pay ${inr(total)} with ${paymentGateway === "payu" ? "PayU" : paymentGateway === "razorpay" ? "Razorpay" : "…"}`}
                     </button>
+                    <div className="checkout-trust-strip">
+                      <p>
+                        🔒 Secure payment via {paymentGateway === "payu" ? "PayU" : "Razorpay"}. Your order is created only after payment succeeds.
+                      </p>
+                      <p>
+                        Need help? Call{" "}
+                        <a href="tel:+919492903765">+91 94929 03765</a> ·{" "}
+                        <Link to="/policies/shipping">Shipping</Link> ·{" "}
+                        <Link to="/policies/returns">Returns</Link>
+                      </p>
+                    </div>
                   </>
                 )}
               </StepCard>
@@ -684,6 +711,25 @@ export const CheckoutPage = () => {
           </div>
         </div>
       </div>
+
+      {/* Sticky bottom CTA on phone — shipping step */}
+      {isPhone && step === 2 && (
+        <div className="sticky-bottom-cta">
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: "0.72rem", color: "var(--neutral-gray)" }}>Delivery total</div>
+            <div style={{ fontSize: "1rem", fontWeight: 700, color: "var(--forest-green)" }}>{inr(total)}</div>
+          </div>
+          <button
+            type="button"
+            className="btn btn-green"
+            style={{ flex: "none", padding: "0.75rem 1.5rem" }}
+            disabled={shippingBusy || quoteLoading || !!quoteError || !shippingQuote}
+            onClick={() => shippingFormRef.current?.requestSubmit()}
+          >
+            {shippingBusy ? "Saving…" : "Continue"}
+          </button>
+        </div>
+      )}
 
       {/* Sticky bottom pay CTA on phone (only on payment step) */}
       {isPhone && step === 3 && paymentGateway && shippingQuote && !quoteError && (

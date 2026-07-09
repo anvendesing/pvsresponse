@@ -300,7 +300,7 @@ Godowns are primarily scanned at **shelf** level; bins appear when stock is put 
 | 01 | `STR.BS10.01` | WHFL — Wheat Flour | 1234 |
 | 02 | `STR.BS10.02` | MGAT — Multi grain Atta | 1234 |
 | 03 | `STR.BS10.03` | RAGF — Finger Millet Flour | 1234 |
-| 04 | `STR.BS10.04` | JWHF — Jowar (White) Flour | 1234 |
+| 04 | `STR.BS10.04` | JWJF — Jonnalu (white)/ Jowar Flour (JWHF-1KG-01) | 1234 |
 
 #### Shelf S11
 - **Shelf scan:** `STR.BS11`
@@ -367,7 +367,7 @@ Godowns are primarily scanned at **shelf** level; bins appear when stock is put 
 | Bin | Scan code | Product | Qty |
 |-----|-----------|---------|-----|
 | 01 | `STR.BS16.01` | DHNI — Dhaniyalu | 1234 |
-| 02 | `STR.BS16.02` | JWHR — Jowar (White) Ravva | 1234 |
+| 02 | `STR.BS16.02` | JWJR — Jonnalu (white)/ Jowar Ravva (JWHR-1KG-01) | 1234 |
 | 03 | `STR.BS16.03` | BGSC — Blackgram stone crushed | 1234 |
 | 04 | `STR.BS16.04` | BGHK — Blackgram without Husk | 1234 |
 | 05 | `STR.BS16.05` | GGDL — Greengram Dal / stone crushed | 1234 |

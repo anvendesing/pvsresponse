@@ -125,6 +125,8 @@
                     "db:import-from-sqlite":   "tsx scripts/import-from-sqlite.ts",
                     "db:import-from-sqlite:src": "tsx src/scripts/import-from-sqlite.ts",
                     "db:backfill-images":  "tsx scripts/backfill-image-variants.ts",
+                    "images:bulk:dry-run":  "tsx scripts/bulk-upload-images-by-barcode.ts --dry-run",
+                    "images:bulk:apply":  "tsx scripts/bulk-upload-images-by-barcode.ts --apply",
                     "db:prune-change-log":  "tsx scripts/prune-change-log.ts",
                     "smoke:checkout":  "tsx scripts/smoke-checkout.ts",
                     "shiprocket:rate-test":  "tsx scripts/shiprocket-rate-test.ts"

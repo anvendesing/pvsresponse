@@ -1,3 +1,4 @@
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 import { useState, useCallback, useEffect, useMemo } from "react";
 import {
   AlertTriangle,
@@ -110,7 +111,7 @@ const DetailSlideOver = ({
   return (
     <div
       className="fixed inset-0 z-[60] bg-ink/40 flex justify-end"
-      onClick={(e) => e.target === e.currentTarget && onClose()}
+      {...backdropDismissProps(onClose)}
     >
       <div className="bg-surface h-full w-full max-w-xl flex flex-col shadow-2xl">
         {/* Header */}
@@ -542,7 +543,7 @@ const CreateTransferModal = ({
   return (
     <div
       className="fixed inset-0 z-[60] bg-ink/40 grid place-items-center"
-      onClick={(e) => e.target === e.currentTarget && onClose()}
+      {...backdropDismissProps(onClose)}
     >
       <div className="bg-surface w-full max-w-xl max-h-[90vh] flex flex-col rounded-lg elevation-3 overflow-hidden">
         {/* Header */}

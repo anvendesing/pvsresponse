@@ -2,6 +2,7 @@
 // ProductEditor + the Billing typeahead. While editing a submitted quote
 // a banner reminds the operator that saving will create a new revision.
 
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, ExternalLink, History, Layers, Plus, RotateCcw, Search, Trash2, X, Zap } from "lucide-react";
 import { Button } from "@/components/common/Button";
@@ -623,7 +624,7 @@ export const QuoteEditor = ({
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-ink/40 grid place-items-end" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-ink/40 grid place-items-end" {...backdropDismissProps(onClose)}>
       <div
         className="bg-surface w-full max-w-4xl h-full overflow-hidden flex flex-col elevation-3"
         onClick={(e) => e.stopPropagation()}

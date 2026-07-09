@@ -1,3 +1,4 @@
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
@@ -1069,7 +1070,7 @@ const AdjustStockModal = ({
   };
 
   return (
-    <div className="fixed inset-0 z-[60] bg-ink/40 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-[60] bg-ink/40 flex items-center justify-center p-4" {...backdropDismissProps(onClose)}>
       <div className="bg-surface w-full max-w-xl rounded-lg elevation-3 flex flex-col max-h-[90vh]" onClick={(e) => e.stopPropagation()}>
         <div className="px-5 py-3 border-b border-border flex items-start justify-between gap-3">
           <div>

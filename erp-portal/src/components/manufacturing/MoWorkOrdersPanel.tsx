@@ -1,6 +1,7 @@
 // Odoo-style work orders tab on an MO: Waiting → Ready → Start → Done → QA.
 
-import { Fragment, useMemo, useState } from "react";
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
+import { Fragment, useCallback, useMemo, useState } from "react";
 import {
   CheckCircle2,
   ChevronDown,
@@ -25,6 +26,7 @@ import { api } from "@/lib/api";
 import { num } from "@/lib/format";
 import type { BomByproductRow, ProductionOrder, WorkOrder, WorkOrderRun } from "@/data/types";
 import { cn } from "@/lib/cn";
+import { SplitOperationForm } from "./SplitOperationForm";
 import { SplitOperationModal } from "./SplitOperationModal";
 import {
   WoLineMachineFields,
@@ -63,6 +65,8 @@ interface Props {
   bomOutputQty: number;
   onRefresh: () => Promise<void>;
   onMessage: (msg: string, tone?: "ok" | "err") => void;
+  /** Inline QA / split forms instead of modal overlays (unified MO page). */
+  inlineDialogs?: boolean;
 }
 
 export const MoWorkOrdersPanel = ({
@@ -73,6 +77,7 @@ export const MoWorkOrdersPanel = ({
   bomOutputQty,
   onRefresh,
   onMessage,
+  inlineDialogs = false,
 }: Props) => {
   const [busy, setBusy] = useState<string | null>(null);
   const [qaWoId, setQaWoId] = useState<string | null>(null);
@@ -80,6 +85,8 @@ export const MoWorkOrdersPanel = ({
   const [splitOpId, setSplitOpId] = useState<string | null>(null);
   // WOs whose runs panel is currently expanded.
   const [openRuns, setOpenRuns] = useState<Set<string>>(new Set());
+
+  const dismissQa = useCallback(() => setQaWoId(null), []);
 
   const facilityId = order.facilityId ?? "";
   const linesResp = useApi(
@@ -172,7 +179,7 @@ export const MoWorkOrdersPanel = ({
       onMessage(
         pass
           ? `QA passed for ${res.workOrder.workOrderNo ?? "work order"}.`
-          : `QA failed — previous operation reopened for rework.`,
+          : `QA failed — ${res.workOrder?.workOrderNo ?? "work order"} reopened for rework.`,
         pass ? "ok" : "err"
       );
       setQaWoId(null);
@@ -298,9 +305,37 @@ export const MoWorkOrdersPanel = ({
                         <div className="text-caption text-warning mt-1">{wo.qaNotes}</div>
                       )}
                     </div>
+                    {!moComplete && inlineDialogs && qaWoId === wo.id && (
+                      <div className="w-full basis-full mt-2 rounded-lg border border-primary/30 bg-primary/5 p-3 space-y-3">
+                        <div className="text-body-sm font-semibold">Quality check</div>
+                        <div className="text-caption text-ink-muted">
+                          Pass to unblock the next step. Fail reopens this step for rework.
+                        </div>
+                        <Input
+                          placeholder="Notes (optional)"
+                          value={qaNotes}
+                          onChange={(e) => setQaNotes(e.target.value)}
+                        />
+                        <div className="flex justify-end gap-2">
+                          <Button variant="ghost" onClick={() => setQaWoId(null)}>
+                            Cancel
+                          </Button>
+                          <Button
+                            variant="outline"
+                            disabled={busy !== null}
+                            onClick={() => void submitQa(false)}
+                          >
+                            Fail · rework
+                          </Button>
+                          <Button disabled={busy !== null} onClick={() => void submitQa(true)}>
+                            Pass
+                          </Button>
+                        </div>
+                      </div>
+                    )}
                     {!moComplete && (
                       <div className="flex items-center gap-1 shrink-0">
-                        {(wo.status === "ready" || wo.status === "queued") && (
+                        {(wo.status === "ready" || wo.status === "queued" || wo.status === "rework") && (
                           <Button
                             size="sm"
                             icon={<Play size={12} />}
@@ -426,10 +461,10 @@ export const MoWorkOrdersPanel = ({
         )}
       </Card>
 
-      {qaWoId && (
+      {qaWoId && !inlineDialogs && (
         <div
           className="fixed inset-0 z-[70] bg-ink/40 grid place-items-center"
-          onClick={() => setQaWoId(null)}
+          {...backdropDismissProps(dismissQa)}
         >
           <div
             className="bg-surface w-[440px] max-w-[95vw] rounded-lg elevation-3 p-5"
@@ -437,7 +472,7 @@ export const MoWorkOrdersPanel = ({
           >
             <div className="text-body-sm font-semibold mb-1">Quality check</div>
             <div className="text-caption text-ink-muted mb-3">
-              Pass to unblock the next step. Fail sends work back to the previous operation.
+              Pass to unblock the next step. Fail reopens this step for rework.
             </div>
             <Input
               placeholder="Notes (optional)"
@@ -464,7 +499,21 @@ export const MoWorkOrdersPanel = ({
         </div>
       )}
 
-      {splitOpId && (
+      {splitOpId && inlineDialogs && (
+        <SplitOperationForm
+          mo={order}
+          bomOperationId={splitOpId}
+          operationLabel={splittableOps.find((o) => o.id === splitOpId)?.name ?? "Operation"}
+          onCancel={() => setSplitOpId(null)}
+          onSaved={async () => {
+            setSplitOpId(null);
+            await onRefresh();
+            onMessage("Operation split across lines.", "ok");
+          }}
+        />
+      )}
+
+      {splitOpId && !inlineDialogs && (
         <SplitOperationModal
           mo={order}
           bomOperationId={splitOpId}
@@ -652,7 +701,8 @@ const WoRunsSection = ({
     <div className="mt-2 rounded border border-border bg-canvas/40 p-2">
       {runs.length === 0 ? (
         <div className="text-caption text-ink-muted px-1 py-1">
-          No batches yet. Add one below — each batch is one feed cycle on a machine (e.g. 25 kg seeds → oil + cake).
+          No batches yet. Mark the step <strong>Done</strong> to record one full cycle on the
+          assigned machine, or add batches below for partial / multi-machine runs.
         </div>
       ) : (
         <div className="overflow-x-auto">
@@ -896,7 +946,8 @@ const WoRunsSection = ({
         </div>
       )}
 
-      {/* Add-run form */}
+      {/* Add-run form — only while the step is still open */}
+      {wo.status !== "complete" && (
       <div className="mt-2 flex items-end gap-2 flex-wrap pt-2 border-t border-border">
         <div className="min-w-[100px]">
           <label className="text-caption text-ink-muted">Line</label>
@@ -953,6 +1004,7 @@ const WoRunsSection = ({
           Add batch
         </Button>
       </div>
+      )}
     </div>
   );
 };

@@ -1,6 +1,5 @@
-// Concern listing page — same layout pattern as CategoryPage.
-// Desktop: sidebar with concerns + availability.
-// Mobile (<768px): sidebar hidden; sticky filter bar + bottom sheet.
+// Concern listing page — paginated fallback.
+// Live version (infinite scroll): /concern/:slug
 
 import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
@@ -99,7 +98,7 @@ export const ConcernPage = () => {
             {concerns.length > 0 && (
               <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", justifyContent: "center", marginTop: "0.65rem" }}>
                 {concerns.map((c) => (
-                  <Link key={c.id} to={`/concern/${c.slug}`} className="btn" style={{ padding: "0.4rem 0.85rem", fontSize: "0.85rem" }}>
+                  <Link key={c.id} to={`/concern-paginated/${c.slug}`} className="btn" style={{ padding: "0.4rem 0.85rem", fontSize: "0.85rem" }}>
                     {c.name}
                   </Link>
                 ))}
@@ -116,6 +115,10 @@ export const ConcernPage = () => {
 
   return (
     <div className="listing-page">
+      <div className="listing-preview-banner">
+        Paginated view —{" "}
+        <Link to={`/concern/${concern.slug}`}>switch to live infinite scroll</Link>
+      </div>
       {isPhone ? (
         /* ── Mobile layout ─────────────────────────────────────── */
         <>
@@ -208,7 +211,7 @@ export const ConcernPage = () => {
                     {concerns.map((c) => (
                       <Link
                         key={c.id}
-                        to={`/concern/${c.slug}`}
+                        to={`/concern-paginated/${c.slug}`}
                         className={`filter-chip${c.slug === concern.slug ? " active" : ""}`}
                         onClick={() => setFilterOpen(false)}
                       >
@@ -244,7 +247,7 @@ export const ConcernPage = () => {
             <ul className="sidebar-category-links">
               {concerns.map((c) => (
                 <li key={c.id}>
-                  <Link to={`/concern/${c.slug}`} className={c.slug === concern.slug ? "active" : ""}>
+                  <Link to={`/concern-paginated/${c.slug}`} className={c.slug === concern.slug ? "active" : ""}>
                     {c.name}
                   </Link>
                 </li>

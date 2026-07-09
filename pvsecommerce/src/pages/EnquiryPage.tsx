@@ -2,7 +2,7 @@
 // farm-visit requests, or general questions and posts them to the CRM
 // pipeline via POST /v1/storefront-mock/enquiries (no auth required).
 
-import { useState, type FormEvent } from "react";
+import { useState, useEffect, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { api, ApiError, type EnquiryFormInput } from "@/lib/api";
 import { useToast } from "@/state/ToastContext";
@@ -26,6 +26,16 @@ export const EnquiryPage = () => {
   const [city, setCity] = useState("");
   const [subject, setSubject] = useState("");
   const [requirement, setRequirement] = useState("");
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const product = params.get("product")?.trim();
+    if (product) {
+      setType("product");
+      setSubject(`Enquiry: ${product}`);
+      setRequirement((prev) => prev || `I'm interested in ${product}. Please let me know when it's back in stock or available for bulk order.`);
+    }
+  }, []);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();

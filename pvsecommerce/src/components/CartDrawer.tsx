@@ -6,7 +6,7 @@ import { CloseIcon, TrashIcon } from "@/assets/icons";
 import { useCart, lineKeyFor } from "@/state/CartContext";
 import { lineBarcode } from "@/lib/scanCode";
 import { inr, cartLineDescription } from "@/lib/format";
-import { PackagingArt } from "./PackagingArt";
+import { CartLineImage } from "./CartLineImage";
 
 const SHIPPING_THRESHOLD = 3000;
 
@@ -98,7 +98,7 @@ export const CartDrawer = () => {
                 return (
                   <div className="cart-line" key={key}>
                     <div className="cart-line-art">
-                      <PackagingArt kind={l.packagingHint} />
+                      <CartLineImage line={l} />
                     </div>
                     <div className="cart-line-info">
                       <span className="cart-line-title">{cartLineDescription(l)}</span>

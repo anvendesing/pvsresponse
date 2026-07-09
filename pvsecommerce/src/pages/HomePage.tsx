@@ -1,48 +1,24 @@
-// Home page: hero, category grid (desktop), and a full best-sellers catalog
-// grid. Combos are deferred — nav links to /bulk-order instead.
+// Home page: hero, category grid (desktop), and best-sellers catalog grid.
 
-import { useMemo, useEffect, useRef } from "react";
-import { Link, useSearchParams } from "react-router-dom";
+import { Link, Navigate, useSearchParams } from "react-router-dom";
 import { getCategoryIcon } from "@/data/categories";
 import { useCatalog } from "@/state/CatalogContext";
 import { useCategories } from "@/state/CategoriesContext";
 import { usePlatform } from "@/state/PlatformContext";
-import { ProductCard } from "@/components/ProductCard";
-import type { CatalogProduct } from "@/lib/api";
-import { track } from "@/lib/activity";
-
-const matches = (p: CatalogProduct, q: string): boolean => {
-  if (!q) return true;
-  const needle = q.toLowerCase();
-  return (
-    p.name.toLowerCase().includes(needle) ||
-    p.sku.toLowerCase().includes(needle) ||
-    p.category.toLowerCase().includes(needle) ||
-    p.variants.some((v) => v.sku.toLowerCase().includes(needle)) ||
-    (p.searchAliases ?? []).some((a) => a.includes(needle))
-  );
-};
+import { ProductCardLazy } from "@/components/ProductCardLazy";
 
 export const HomePage = () => {
+  const [searchParams] = useSearchParams();
+  const legacyQ = searchParams.get("q")?.trim();
   const { products, loading, error } = useCatalog();
   const { categories, categoryImageUrl } = useCategories();
   const { isPhone } = usePlatform();
-  const [params] = useSearchParams();
-  const q = params.get("q") ?? "";
 
-  // Track search when q param changes (skip empty and first mount with empty q).
-  const prevQ = useRef(q);
-  useEffect(() => {
-    if (q && q !== prevQ.current) {
-      track("search", { meta: { q } });
-    }
-    prevQ.current = q;
-  }, [q]);
+  if (legacyQ) {
+    return <Navigate to={`/search?q=${encodeURIComponent(legacyQ)}`} replace />;
+  }
 
-  const bestSellers = useMemo(
-    () => products.filter((p) => p.bestSellerEnabled && matches(p, q)),
-    [products, q]
-  );
+  const bestSellers = products.filter((p) => p.bestSellerEnabled);
 
   return (
     <>
@@ -120,27 +96,15 @@ export const HomePage = () => {
           ) : bestSellers.length > 0 ? (
             <div className="best-sellers-grid">
               {bestSellers.map((p) => (
-                <ProductCard key={p.id} product={p} badge={badgeFor(p)} />
+                <ProductCardLazy key={p.id} product={p} badge={badgeFor(p)} />
               ))}
             </div>
           ) : (
-            <EmptyHint message={q ? "No best sellers match your search." : "No best sellers configured yet."} />
+            <EmptyHint message="No best sellers configured yet." />
           )}
         </div>
         {error && (
-          <p
-            style={{
-              textAlign: "center",
-              marginTop: "2rem",
-              color: "var(--color-error)",
-              background: "var(--neutral-white)",
-              padding: "0.85rem",
-              borderRadius: "var(--radius-md)",
-              maxWidth: 480,
-              marginLeft: "auto",
-              marginRight: "auto",
-            }}
-          >
+          <p className="home-catalog-error">
             Could not load catalog: {error}
           </p>
         )}
@@ -149,7 +113,7 @@ export const HomePage = () => {
   );
 };
 
-const badgeFor = (p: CatalogProduct): string => {
+const badgeFor = (p: { categorySlug?: string | null }): string => {
   const slug = p.categorySlug ?? "";
   if (slug === "millets" || slug === "millets-millet-products") return "Stone Ground";
   if (slug === "oils" || slug === "oils-oil-seeds") return "Wood Pressed";
@@ -161,25 +125,15 @@ const badgeFor = (p: CatalogProduct): string => {
 const SkeletonGrid = () => (
   <div className="best-sellers-grid">
     {[0, 1, 2, 3, 4, 5, 6, 7].map((i) => (
-      <div
-        key={i}
-        className="product-card"
-        style={{ background: "rgba(255,255,255,0.5)", minHeight: 320 }}
-      />
+      <div key={i} className="product-card product-card--skeleton">
+        <div className="product-card-lazy-placeholder" aria-hidden="true" />
+      </div>
     ))}
   </div>
 );
 
 const EmptyHint = ({ message }: { message: string }) => (
-  <div
-    style={{
-      padding: "2rem",
-      textAlign: "center",
-      background: "var(--neutral-white)",
-      borderRadius: "var(--radius-md)",
-      color: "var(--neutral-gray)",
-    }}
-  >
-    {message}
+  <div className="home-empty-hint">
+    <p className="muted">{message}</p>
   </div>
 );

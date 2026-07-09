@@ -1,3 +1,4 @@
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 import { useMemo, useRef, useState } from "react";
 import {
   Award,
@@ -734,7 +735,7 @@ const PunchModal = ({
   return (
     <div
       className="fixed inset-0 z-[60] bg-ink/40 grid place-items-center"
-      onClick={onClose}
+      {...backdropDismissProps(onClose)}
     >
       <div
         className="bg-surface w-[560px] max-w-[95vw] max-h-[80vh] rounded-lg elevation-3 overflow-hidden flex flex-col"

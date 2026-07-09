@@ -7,6 +7,7 @@
 //
 // Refused server-side once the MO is completed (FG already in stock).
 
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 import { useEffect, useState } from "react";
 import { AlertTriangle, CheckCircle2, RotateCcw, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
@@ -107,7 +108,7 @@ export const CorrectOutputModal = ({ order, onClose, onSaved }: Props) => {
   return (
     <div
       className="fixed inset-0 z-[60] bg-ink/40 grid place-items-center"
-      onClick={onClose}
+      {...backdropDismissProps(onClose)}
     >
       <div
         className="bg-surface w-[560px] max-w-[95vw] max-h-[90vh] rounded-lg elevation-3 overflow-hidden flex flex-col"

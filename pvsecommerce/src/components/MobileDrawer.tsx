@@ -182,13 +182,13 @@ export const MobileDrawer = ({ open, onClose }: Props) => {
             Bulk Order
           </NavLink>
 
-          <a
-            className="drawer-link"
-            href="mailto:hello@prakruthivanam.in"
+          <NavLink
+            to="/contact"
+            className={({ isActive }) => `drawer-link${isActive ? " active" : ""}`}
             onClick={navClose}
           >
             Contact Us
-          </a>
+          </NavLink>
 
           <div className="drawer-divider" role="separator" />
 

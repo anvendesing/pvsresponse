@@ -5,6 +5,7 @@
 // here, which used to confuse operators by letting them issue a
 // zero-line invoice or double-bill an already-fulfilled SO.
 
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -205,7 +206,7 @@ export const SalesOrderDetail = ({ salesOrderId, onClose, onChanged }: Props) =>
     totalOutstanding > totalReserved;
 
   return (
-    <div className="fixed inset-0 z-50 bg-ink/40 grid place-items-end" onClick={onClose}>
+    <div className="fixed inset-0 z-50 bg-ink/40 grid place-items-end" {...backdropDismissProps(onClose)}>
       <div
         className="bg-surface w-full max-w-4xl h-full overflow-hidden flex flex-col elevation-3"
         onClick={(e) => e.stopPropagation()}

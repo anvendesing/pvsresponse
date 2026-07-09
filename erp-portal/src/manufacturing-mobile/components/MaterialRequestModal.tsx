@@ -1,3 +1,4 @@
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 import { useEffect, useMemo, useState } from "react";
 import {
   api,
@@ -128,7 +129,7 @@ export const MaterialRequestModal = ({
   return (
     <div
       className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/50 p-3"
-      onClick={onClose}
+      {...backdropDismissProps(onClose)}
     >
       <div
         className="w-full max-w-md bg-white rounded-2xl shadow-xl max-h-[92vh] flex flex-col overflow-hidden"

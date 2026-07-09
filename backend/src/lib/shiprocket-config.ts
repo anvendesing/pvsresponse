@@ -4,6 +4,7 @@ export type ShiprocketCredentials = {
   email: string;
   password: string;
   pickupPincode: string | null;
+  pickupLocation: string | null;
 };
 
 const maskSecret = (value: string | null | undefined): string | null => {
@@ -17,6 +18,7 @@ export const maskShiprocketConfig = (row: {
   email: string | null;
   password: string | null;
   pickupPincode: string | null;
+  pickupLocation: string | null;
   active: boolean;
   updatedAt: Date;
 }) => ({
@@ -24,6 +26,7 @@ export const maskShiprocketConfig = (row: {
   email: row.email,
   password: maskSecret(row.password),
   pickupPincode: row.pickupPincode,
+  pickupLocation: row.pickupLocation,
   active: row.active,
   hasPassword: Boolean(row.password),
   updatedAt: row.updatedAt,
@@ -36,6 +39,7 @@ export async function getShiprocketCredentials(): Promise<ShiprocketCredentials 
       email: row.email,
       password: row.password,
       pickupPincode: row.pickupPincode,
+      pickupLocation: row.pickupLocation ?? process.env.SHIPROCKET_PICKUP_LOCATION?.trim() ?? null,
     };
   }
   const email = process.env.SHIPROCKET_EMAIL?.trim();
@@ -45,7 +49,13 @@ export async function getShiprocketCredentials(): Promise<ShiprocketCredentials 
     email,
     password,
     pickupPincode: process.env.SHIPROCKET_PICKUP_PINCODE?.trim() ?? null,
+    pickupLocation: process.env.SHIPROCKET_PICKUP_LOCATION?.trim() ?? null,
   };
+}
+
+export async function getShiprocketPickupLocation(): Promise<string> {
+  const creds = await getShiprocketCredentials();
+  return creds?.pickupLocation?.trim() || process.env.SHIPROCKET_PICKUP_LOCATION?.trim() || "Primary";
 }
 
 export async function getShiprocketPickupPincode(): Promise<string | null> {

@@ -2,7 +2,7 @@
 // description, add-to-cart, and related products from same category.
 
 import { useState, useEffect } from "react";
-import { useParams, useNavigate, Link } from "react-router-dom";
+import { useParams, useNavigate, Link, useSearchParams } from "react-router-dom";
 import type { ProductDetail, CatalogVariant } from "@/lib/api";
 import { api, resolveImageSet, resolveUploadUrl } from "@/lib/api";
 import { track } from "@/lib/activity";
@@ -13,11 +13,13 @@ import { useWishlist } from "@/state/WishlistContext";
 import { useToast } from "@/state/ToastContext";
 import { useCatalog } from "@/state/CatalogContext";
 import { usePlatform } from "@/state/PlatformContext";
+import { STOCK_CAP } from "@/lib/cartStock";
 import { PackagingArt } from "@/components/PackagingArt";
 import { HeartIcon } from "@/assets/icons";
 
 export const ProductDetailPage = () => {
   const { id = "" } = useParams<{ id: string }>();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const cart = useCart();
   const wishlist = useWishlist();
@@ -32,9 +34,7 @@ export const ProductDetailPage = () => {
   const [variantId, setVariantId] = useState<string | null>(null);
   const [qty, setQty] = useState(1);
   const [imgFailed, setImgFailed] = useState(false);
-  const [tab, setTab] = useState<"description" | "ingredients" | "how-to-use">(
-    "description"
-  );
+  const [tab, setTab] = useState<"description" | "ingredients">("description");
 
   useEffect(() => {
     setLoading(true);
@@ -43,13 +43,20 @@ export const ProductDetailPage = () => {
       .product(id)
       .then((p) => {
         setProduct(p);
-        setVariantId(p.variants.length > 0 ? p.variants[0].id : null);
+        const fromUrl = searchParams.get("variant");
+        const pick =
+          fromUrl && p.variants.some((v) => v.id === fromUrl)
+            ? fromUrl
+            : p.variants.length > 0
+              ? p.variants[0].id
+              : null;
+        setVariantId(pick);
         setQty(1);
         track("product_view", { productId: id });
       })
       .catch(() => setError(true))
       .finally(() => setLoading(false));
-  }, [id]);
+  }, [id, searchParams]);
 
   if (loading)
     return (
@@ -96,16 +103,15 @@ export const ProductDetailPage = () => {
     .filter((p) => p.categorySlug === categorySlug && p.id !== product.id)
     .slice(0, 4);
 
-  const descriptionText =
-    product.description ??
-    `${product.name} is a premium natural product from the farms of Prakruthivanam. ` +
-      `Made with care and sourced directly from certified farms, it preserves the ` +
-      `goodness of nature for your everyday wellness.`;
-
-  const ingredientsText =
-    product.ingredients ??
-    `100% natural ${product.name.toLowerCase()}. No artificial additives, preservatives, or colorants. ` +
-      `Sourced from certified farms.`;
+  const descriptionText = product.description?.trim() ?? "";
+  const ingredientsText = product.ingredients?.trim() ?? "";
+  const hasDescription = descriptionText.length > 0;
+  const hasIngredients = ingredientsText.length > 0;
+  type TabKey = "description" | "ingredients";
+  const tabs: [TabKey, string][] = [];
+  if (hasDescription) tabs.push(["description", "Description"]);
+  if (hasIngredients) tabs.push(["ingredients", "Ingredients"]);
+  const activeTab: TabKey = tabs.some(([k]) => k === tab) ? tab : (tabs[0]?.[0] ?? "description");
 
   return (
     <main className="pdp-page">
@@ -233,7 +239,15 @@ export const ProductDetailPage = () => {
           {/* Stock badge */}
           <div className="pdp-stock">
             {!stock ? (
-              <span className="pdp-stock-badge out">Out of stock</span>
+              <>
+                <span className="pdp-stock-badge out">Out of stock</span>
+                <Link
+                  to={`/enquiry?product=${encodeURIComponent(product.name)}`}
+                  className="btn btn-outline pdp-enquire-btn"
+                >
+                  Enquire about availability
+                </Link>
+              </>
             ) : (
               <span className="pdp-stock-badge in">In stock</span>
             )}
@@ -253,7 +267,8 @@ export const ProductDetailPage = () => {
               <button
                 type="button"
                 aria-label="Increase"
-                onClick={() => setQty((q) => q + 1)}
+                onClick={() => setQty((q) => Math.min(q + 1, STOCK_CAP))}
+                disabled={qty >= STOCK_CAP}
               >
                 +
               </button>
@@ -277,20 +292,14 @@ export const ProductDetailPage = () => {
         </div>
       </div>
 
-      {/* Tabs: description / ingredients / how-to-use */}
+      {tabs.length > 0 && (
       <section className="pdp-tabs-section">
         <div className="pdp-tabs">
-          {(
-            [
-              ["description", "Description"],
-              ["ingredients", "Ingredients"],
-              ["how-to-use", "How to Use"],
-            ] as const
-          ).map(([key, label]) => (
+          {tabs.map(([key, label]) => (
             <button
               key={key}
               type="button"
-              className={`pdp-tab ${tab === key ? "active" : ""}`}
+              className={`pdp-tab ${activeTab === key ? "active" : ""}`}
               onClick={() => setTab(key)}
             >
               {label}
@@ -299,25 +308,16 @@ export const ProductDetailPage = () => {
         </div>
 
         <div className="pdp-tab-panel">
-          {tab === "description" && (
+          {activeTab === "description" && hasDescription && (
             <div className="pdp-description">
               <p>{descriptionText}</p>
-              <ul className="pdp-benefits">
-                <li>Rich in natural nutrients and antioxidants</li>
-                <li>Free from chemical processing</li>
-                <li>Ethically sourced from small-scale certified farms</li>
-                <li>Suitable for everyday use</li>
-              </ul>
             </div>
           )}
 
-          {tab === "ingredients" && (
+          {activeTab === "ingredients" && hasIngredients && (
             <div className="pdp-ingredients">
               <p className="pdp-ingredients-intro">{ingredientsText}</p>
               {(() => {
-                // Only build ingredient cards when the text contains newline-separated items
-                // (i.e. real structured ingredient data from the DB). The fallback sentence
-                // is a single paragraph and should not be split into cards.
                 const cards = ingredientsText
                   .split(/\n/)
                   .map((item) => item.replace(/^[-•*]\s*/, "").trim())
@@ -336,28 +336,9 @@ export const ProductDetailPage = () => {
               })()}
             </div>
           )}
-
-          {tab === "how-to-use" && (
-            <div className="pdp-how-to-use">
-              <ol className="pdp-steps">
-                <li>Store in a cool, dry place away from direct sunlight.</li>
-                <li>
-                  Use as directed — incorporate into your daily cooking or
-                  wellness routine.
-                </li>
-                <li>
-                  Best consumed within 6 months of opening. Refrigerate after
-                  opening if required.
-                </li>
-                <li>
-                  Keep out of reach of children. Not a substitute for
-                  professional medical advice.
-                </li>
-              </ol>
-            </div>
-          )}
         </div>
       </section>
+      )}
 
       {/* Related products */}
       {related.length > 0 && (
@@ -365,8 +346,9 @@ export const ProductDetailPage = () => {
           <h2 className="section-title">More from {categoryLabel}</h2>
           <div className="pdp-related-grid">
             {related.map((rel) => {
-              const relVariant = rel.variants[0] ?? null;
+              const relVariant = rel.variants.find((v) => v.inStock) ?? rel.variants[0] ?? null;
               const relPrice = relVariant ? relVariant.price : rel.sellingPrice;
+              const relImg = resolveUploadUrl(rel.imageUrl, rel.imageUpdatedAt);
               return (
                 <Link
                   key={rel.id}
@@ -374,7 +356,11 @@ export const ProductDetailPage = () => {
                   className="pdp-related-card"
                 >
                   <div className="pdp-related-art">
-                    <PackagingArt kind={packagingFromName(rel.name)} />
+                    {relImg ? (
+                      <img src={relImg} alt={rel.name} className="pdp-related-photo" loading="lazy" decoding="async" />
+                    ) : (
+                      <PackagingArt kind={packagingFromName(rel.name)} />
+                    )}
                   </div>
                   <p className="pdp-related-name">{rel.name}</p>
                   <p className="pdp-related-price">{inr(relPrice)}</p>

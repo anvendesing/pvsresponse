@@ -870,6 +870,7 @@ const adaptProductionOrder = (r: Raw): ProductionOrder => {
     variantSize: (variant?.size as string | null) ?? null,
     variantColor: (variant?.color as string | null) ?? null,
     plannedQty: r.plannedQty as number,
+    urgentQty: (r.urgentQty as number | null) ?? null,
     actualQty: r.actualQty as number,
     scrapQty: r.scrapQty as number,
     reworkQty: r.reworkQty as number,
@@ -1073,6 +1074,28 @@ export interface WhereUsedRow {
 
 // Requirements for a production order: explosion + on-hand totals so
 // the UI can render a shortage badge.
+
+/** One row in the MO output batch log (Consumption tab). */
+export interface MoOutputBatch {
+  id: string;
+  productionOrderId: string;
+  batchSeq: number;
+  inputQty: number;
+  goodQty: number;
+  scrapQty: number;
+  reworkQty: number;
+  byproducts: Array<{
+    bomByproductId: string;
+    productId?: string;
+    sku: string;
+    name: string;
+    qty: number;
+    uom: string;
+  }>;
+  loggedAt: string;
+  loggedBy: string | null;
+}
+
 /** Bin/warehouse trail for an MO (issue, receipt, transfers). */
 export interface MoInventoryTrail {
   productionOrderId: string;
@@ -2222,9 +2245,18 @@ export interface ShiprocketConfigRow {
   email: string | null;
   password: string | null;
   pickupPincode: string | null;
+  pickupLocation: string | null;
   active: boolean;
   hasPassword?: boolean;
   updatedAt: string;
+}
+
+export interface ShiprocketPickupLocationRow {
+  name: string;
+  address: string;
+  phone: string;
+  /** 1 = Active, 2 = Pending, 0 = Inactive (Shiprocket API sometimes sends as string; backend coerces) */
+  status: number;
 }
 
 export interface SystemEventLogRow {
@@ -2790,6 +2822,7 @@ export const api = {
       email: string | null;
       password: string | null;
       pickupPincode: string | null;
+      pickupLocation: string | null;
       active: boolean;
     }>
   ) =>
@@ -2802,6 +2835,8 @@ export const api = {
       method: "POST",
       body: {},
     }),
+  shiprocketPickupLocations: () =>
+    fetcher<ShiprocketPickupLocationRow[]>("/settings/shiprocket/pickup-locations"),
 
   systemLogs: (params?: {
     level?: "error" | "warn" | "info";
@@ -3230,6 +3265,21 @@ export const api = {
     fetcher<BomTreeNode>(`/boms/${id}/tree?qty=${qty}`),
   bomExplode: (id: string, qty: number = 1) =>
     fetcher<BomLeafRow[]>(`/boms/${id}/explode?qty=${qty}`),
+  bomMoCreateContext: (bomId: string) =>
+    fetcher<{
+      productId: string;
+      variantId: string | null;
+      sku: string;
+      productName: string;
+      variantSku: string | null;
+      batchSize: number;
+      outputUom: string;
+      onHand: number;
+      committedSo: number;
+      moPipeline: number;
+      urgentQty: number;
+      suggestedPlannedQty: number;
+    }>(`/boms/${bomId}/mo-create-context`),
   whereUsed: (productId: string) =>
     fetcher<WhereUsedRow[]>(`/products/${productId}/where-used`),
   createBom: (body: {
@@ -3458,6 +3508,7 @@ export const api = {
     station?: string;
     machine?: string;
     plannedQty: number;
+    urgentQty?: number;
     startDate: string;
     dueDate: string;
   }) => fetcher<Raw>("/production-orders", { method: "POST", body }),
@@ -3600,6 +3651,7 @@ export const api = {
   logOutput: (
     id: string,
     body: {
+      inputQty?: number;
       goodQty?: number;
       scrapQty?: number;
       reworkQty?: number;
@@ -3622,11 +3674,14 @@ export const api = {
           uom: string;
           bin: string;
         }>;
+        outputBatch?: MoOutputBatch;
       }
     >(`/production-orders/${id}/log-output`, {
       method: "POST",
       body,
     }),
+  getOutputBatches: (id: string) =>
+    fetcher<{ batches: MoOutputBatch[] }>(`/production-orders/${id}/output-batches`),
   adjustOutput: (
     id: string,
     body: {

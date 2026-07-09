@@ -261,7 +261,8 @@ model Product {
   searchAliases      String? // comma-separated alternate/regional names (e.g. "amla, gooseberry, usiri")
   imageHint          String? // e.g. "oils" | "millets" | "soap" for PackagingArt
   imageUrl           String? // optional product photo path (relative to API origin) e.g. /uploads/products/abc.jpg
-  // When false, hidden from storefront / ecommerce catalog UIs.
+  // When false, hidden from price list / bulk-order exports (not used for storefront
+  // listing — only variant.ecommerceEnabled controls the storefront).
   ecommerceEnabled   Boolean              @default(true)
   // When false, hidden from price list editor and bulk-order Excel export.
   priceListEnabled   Boolean              @default(true)
@@ -329,7 +330,7 @@ model ProductVariant {
   sellingPriceOverride Float?
   stockOnHand          Int                  @default(0)
   active               Boolean              @default(true)
-  // Channel visibility — independent of `active` (operational) flag.
+  // When true, variant appears on the storefront (single channel flag).
   ecommerceEnabled     Boolean              @default(true)
   priceListEnabled     Boolean              @default(true)
   // Optional per-variant image (falls back to parent Product.imageUrl at read time).
@@ -668,13 +669,14 @@ model SmsProviderConfig {
 }
 
 model ShiprocketConfig {
-  id            String   @id @default("default")
-  email         String?
-  password      String?
-  pickupPincode String?
-  active        Boolean  @default(false)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id             String   @id @default("default")
+  email          String?
+  password       String?
+  pickupPincode  String?
+  pickupLocation String?  // display name as it appears in Shiprocket panel, e.g. "Warehouse 1"
+  active         Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 }
 
 model DevOtpLog {
@@ -1057,6 +1059,8 @@ model ProductionOrder {
   facilityId     String?
   lineId         String?
   plannedQty     Float
+  // Demand gap at MO creation (committed SO - on hand - open MO), for prioritization.
+  urgentQty      Float?
   actualQty      Float               @default(0)
   scrapQty       Float               @default(0)
   reworkQty      Float               @default(0)
@@ -1071,11 +1075,33 @@ model ProductionOrder {
   line           ProductionLine?     @relation("MoLine", fields: [lineId], references: [id])
   workOrders     WorkOrder[]
   transferOrders TransferOrder[]
+  outputBatches  ProductionOutputBatch[]
 
   @@index([status])
   @@index([bomId])
   @@index([facilityId])
   @@index([lineId])
+}
+
+// Per-batch output log at MO level (Consumption tab "Log batch").
+// Each POST /log-output appends one row; supports input, good/scrap/rework,
+// and optional byproduct yields posted to inventory.
+model ProductionOutputBatch {
+  id                String          @id @default(cuid())
+  productionOrderId String
+  batchSeq          Int
+  inputQty          Float           @default(0)
+  goodQty           Float           @default(0)
+  scrapQty          Float           @default(0)
+  reworkQty         Float           @default(0)
+  // [{ bomByproductId, productId, sku, name, qty, uom }]
+  byproducts        Json            @default("[]")
+  loggedAt          DateTime        @default(now())
+  loggedBy          String?
+  productionOrder   ProductionOrder @relation(fields: [productionOrderId], references: [id], onDelete: Cascade)
+
+  @@unique([productionOrderId, batchSeq])
+  @@index([productionOrderId])
 }
 
 model WorkOrder {
@@ -2050,6 +2076,9 @@ model PackingSlip {
   // courier portal. Surfaced verbatim on the invoice detail screen
   // so the customer-care team can deep-link customers.
   trackingUrl         String?
+  // Shiprocket API ids — set when a live dispatch creates the adhoc order.
+  shiprocketOrderId     String?
+  shiprocketShipmentId  String?
   // Denormalised total estimated weight (sum of container estWeightKg
   // or actualWeightKg when present) at pack-complete. Cached so trip
   // weight rollups stay O(1) per slip and we don't recompute when a

@@ -4,7 +4,8 @@
 // supplier catalog (vendor code, UOM, pack-size conversion). Falls back
 // to the full product catalog if the vendor has no catalog lines yet.
 
-import { useEffect, useMemo, useState } from "react";
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -116,6 +117,7 @@ export const PoEditor = ({ po, onClose, onSaved }: Props) => {
     })
   );
   const [pickerOpen, setPickerOpen] = useState(false);
+  const closePicker = useCallback(() => setPickerOpen(false), []);
   const [search, setSearch] = useState("");
   const [useFullCatalog, setUseFullCatalog] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -323,7 +325,7 @@ export const PoEditor = ({ po, onClose, onSaved }: Props) => {
   return (
     <div
       className="fixed inset-0 z-[60] bg-ink/40 grid place-items-center"
-      onClick={onClose}
+      {...backdropDismissProps(onClose)}
     >
       <div
         className="bg-surface w-[920px] max-w-[95vw] max-h-[92vh] rounded-lg elevation-3 overflow-hidden flex flex-col"
@@ -574,7 +576,7 @@ export const PoEditor = ({ po, onClose, onSaved }: Props) => {
       {pickerOpen && (
         <div
           className="fixed inset-0 z-[70] bg-ink/30 grid place-items-center"
-          onClick={() => setPickerOpen(false)}
+          {...backdropDismissProps(closePicker)}
         >
           <div
             className={cn(

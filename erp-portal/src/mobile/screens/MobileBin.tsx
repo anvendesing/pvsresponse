@@ -1,3 +1,4 @@
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api, ApiError, auth } from "../../lib/api";
@@ -431,7 +432,7 @@ const RecountModal = ({
   return (
     <div
       className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 sm:items-center"
-      onClick={onClose}
+      {...backdropDismissProps(onClose)}
     >
       <div
         onClick={(e) => e.stopPropagation()}
@@ -627,7 +628,7 @@ const ReassignModal = ({
   return (
     <div
       className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 sm:items-center"
-      onClick={onClose}
+      {...backdropDismissProps(onClose)}
     >
       <div
         onClick={(e) => e.stopPropagation()}

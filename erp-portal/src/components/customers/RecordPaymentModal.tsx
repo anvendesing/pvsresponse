@@ -1,6 +1,7 @@
 // Modal to record a customer payment against open invoices.
 // Supports FIFO auto-allocation (default) or manual per-invoice amounts.
 
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 import { useEffect, useState } from "react";
 import { DollarSign, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
@@ -121,7 +122,7 @@ export const RecordPaymentModal = ({ customer, onClose, onSaved }: Props) => {
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={(e) => e.target === e.currentTarget && onClose()}
+      {...backdropDismissProps(onClose)}
     >
       <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg flex flex-col max-h-[90vh]">
         {/* Header */}

@@ -12,7 +12,7 @@
 // could derive on the client but the server is canonical and runs
 // the same parseSizeToKg fallback for unweighed items).
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Box,
   Briefcase,
@@ -32,6 +32,7 @@ import { Button } from "@/components/common/Button";
 import { Chip } from "@/components/common/Chip";
 import { Input } from "@/components/common/Input";
 import { cn } from "@/lib/cn";
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 import { primaryScanCode } from "@/lib/scanCode";
 import {
   api,
@@ -45,6 +46,10 @@ interface Props {
   slipId: string;
   status: "open" | "packed" | "invoiced" | "cancelled";
   items: PackingSlipItemRow[];
+  /** Unsaved packed-qty drafts from the line table — used for display and pre-save on allocate. */
+  draftPacked?: Record<string, number>;
+  /** Persist packed qty before container allocation (server requires saved qtyPacked). */
+  onSavePacked?: () => Promise<void>;
   /** Confirmation toggle from CompanyProfile (defaults true). */
   requireSealConfirmation?: boolean;
   /** Bubble container change back so parent can refresh totals chip. */
@@ -72,6 +77,8 @@ export const PackingContainersPanel = ({
   slipId,
   status,
   items,
+  draftPacked,
+  onSavePacked,
   requireSealConfirmation = true,
   onChanged,
 }: Props) => {
@@ -83,8 +90,19 @@ export const PackingContainersPanel = ({
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [sealConfirm, setSealConfirm] = useState<PackingContainerRow | null>(null);
+  const [activeId, setActiveId] = useState<string | null>(null);
 
   const isEditable = status === "open";
+
+  /** Effective packed qty per line — drafts win over saved server values. */
+  const effectiveItems = useMemo(
+    () =>
+      items.map((it) => ({
+        ...it,
+        qtyPacked: draftPacked?.[it.id] ?? it.qtyPacked,
+      })),
+    [items, draftPacked]
+  );
 
   const refresh = async () => {
     setLoading(true);
@@ -109,25 +127,22 @@ export const PackingContainersPanel = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slipId]);
 
-  // Auto-expand any open, empty container so the "Add item" picker is
-  // immediately visible. Without this, packers click "Add container",
-  // see a collapsed row, and don't realise the header is a toggle.
-  useEffect(() => {
-    if (containers.length === 0) return;
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      let mutated = false;
-      for (const c of containers) {
-        if (c.status === "open" && c.items.length === 0 && !next.has(c.id)) {
-          next.add(c.id);
-          mutated = true;
-        }
-      }
-      return mutated ? next : prev;
-    });
-  }, [containers]);
+  // Keep container cards collapsed by default — allocation happens in the
+  // live panel above; expand only when editing weight / type / contents.
 
-  // qty already allocated per slip-line across every container — drives
+  // Default active container to the first open box — same as warehouse app.
+  useEffect(() => {
+    if (containers.length === 0) {
+      setActiveId(null);
+      return;
+    }
+    if (!activeId || !containers.find((c) => c.id === activeId)) {
+      const firstOpen = containers.find((c) => c.status === "open");
+      setActiveId((firstOpen ?? containers[0]).id);
+    }
+  }, [containers, activeId]);
+
+  const active = containers.find((c) => c.id === activeId) ?? null;
   // the "X of Y" chip on each container row and the "remaining" hint
   // on the add-item picker so the packer never over-allocates.
   const allocPerLine = useMemo(() => {
@@ -150,7 +165,7 @@ export const PackingContainersPanel = ({
     : null;
   const sealedCount = containers.filter((c) => c.status === "sealed").length;
 
-  const totalPacked = items.reduce((s, it) => s + it.qtyPacked, 0);
+  const totalPacked = effectiveItems.reduce((s, it) => s + it.qtyPacked, 0);
   const totalAllocated = Array.from(allocPerLine.values()).reduce(
     (s, q) => s + q,
     0
@@ -164,12 +179,38 @@ export const PackingContainersPanel = ({
       const created = await api.createPackingContainer(slipId, {
         containerTypeId: containerTypeId ?? null,
       });
+      setActiveId(created.id);
       setExpanded((prev) => new Set(prev).add(created.id));
       await refresh();
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setCreating(false);
+    }
+  };
+
+  const addToActive = async (lineId: string, qty: number) => {
+    if (!active) {
+      setError("Add a container first, then allocate items into it.");
+      return;
+    }
+    if (active.status !== "open") {
+      setError(`Container ${active.label} is sealed. Unseal it or pick another open container.`);
+      return;
+    }
+    setBusyId(active.id);
+    setError(null);
+    try {
+      if (onSavePacked) await onSavePacked();
+      await api.addPackingContainerItem(slipId, active.id, {
+        packingSlipItemId: lineId,
+        qty,
+      });
+      await refresh();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusyId(null);
     }
   };
 
@@ -273,7 +314,7 @@ export const PackingContainersPanel = ({
             {totalActual != null ? ` · actual ${fmtKg(totalActual)}` : ""}
           </Chip>
         </div>
-        {isEditable && (
+        {isEditable && containers.length === 0 && (
           <div className="flex items-center gap-1">
             <TypePicker
               types={types}
@@ -294,6 +335,123 @@ export const PackingContainersPanel = ({
         </div>
       )}
 
+      {isEditable && (
+        <div className="mb-3 rounded-md border border-border bg-canvas p-3 space-y-3">
+          <div className="text-body-sm text-ink-muted">
+            Select the box you are filling, tap <strong>+1</strong> or{" "}
+            <strong>All</strong> on each line, then <strong>Seal</strong> the container when
+            full. Packed qty is saved automatically when you allocate.
+          </div>
+
+          {/* Container chip strip — same pattern as warehouse app */}
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            {containers.map((c) => {
+              const isActive = c.id === activeId;
+              const Icon = kindIcon(c.containerType?.kind);
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => setActiveId(c.id)}
+                  className={cn(
+                    "flex shrink-0 flex-col items-center rounded-md px-3 py-2 min-w-[88px] border transition-colors",
+                    isActive
+                      ? "bg-primary text-white border-primary"
+                      : c.status === "sealed"
+                        ? "bg-success-soft text-success border-success/40"
+                        : "bg-white text-ink border-border hover:border-primary/50"
+                  )}
+                >
+                  <Icon size={18} className={isActive ? "text-white" : "text-ink-muted"} />
+                  <span className="font-mono text-lg font-bold tnum mt-0.5">{c.label}</span>
+                  <span className={cn("text-[10px]", isActive ? "text-white/80" : "text-ink-muted")}>
+                    {c.items.length} · {fmtKg(c.estWeightKg)}
+                  </span>
+                  {c.status === "sealed" && (
+                    <span className={cn("text-[10px] font-bold", isActive ? "text-white" : "text-success")}>
+                      SEALED
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+            <TypePicker
+              types={types}
+              disabled={creating || types.length === 0}
+              onPick={(t) => void createContainer(t)}
+              label="New"
+              compact
+            />
+          </div>
+
+          {active && (
+            <div className="flex items-center justify-between gap-2 rounded-md bg-white border border-border px-3 py-2">
+              <div>
+                <div className="text-caption text-ink-muted uppercase font-semibold">
+                  Packing into
+                </div>
+                <div className="font-mono font-bold text-primary tnum">
+                  Container {active.label}
+                  <span className="text-body-sm font-normal text-ink-muted ml-2">
+                    {active.containerType?.name ?? "No type"}
+                  </span>
+                </div>
+              </div>
+              {active.status === "open" ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  icon={<CheckCircle2 size={14} />}
+                  onClick={() => requestSeal(active)}
+                  disabled={busyId === active.id || active.items.length === 0}
+                >
+                  Seal
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  icon={<Unlock size={14} />}
+                  onClick={() => void unseal(active)}
+                  disabled={busyId === active.id}
+                >
+                  Unseal
+                </Button>
+              )}
+            </div>
+          )}
+
+          {!active && containers.length === 0 && (
+            <div className="text-caption text-ink-muted text-center py-2">
+              Add a container to start packing items into boxes.
+            </div>
+          )}
+
+          {/* Live allocation — one row per packed line */}
+          {containers.length > 0 && (
+            <LiveAllocationList
+              items={effectiveItems}
+              containers={containers}
+              allocPerLine={allocPerLine}
+              activeId={activeId}
+              busy={busyId !== null}
+              onAdd={(lineId, qty) => void addToActive(lineId, qty)}
+              onRemove={async (containerId, ciId) => {
+                setBusyId(containerId);
+                try {
+                  await api.deletePackingContainerItem(slipId, containerId, ciId);
+                  await refresh();
+                } catch (e) {
+                  setError((e as Error).message);
+                } finally {
+                  setBusyId(null);
+                }
+              }}
+            />
+          )}
+        </div>
+      )}
+
       {loading ? (
         <div className="text-caption text-ink-muted py-6 text-center">Loading containers…</div>
       ) : containers.length === 0 ? (
@@ -309,7 +467,7 @@ export const PackingContainersPanel = ({
             <ContainerCard
               key={c.id}
               container={c}
-              items={items}
+              items={effectiveItems}
               allocPerLine={allocPerLine}
               types={types}
               expanded={expanded.has(c.id)}
@@ -346,6 +504,135 @@ export const PackingContainersPanel = ({
   );
 };
 
+// ===================================================== Live allocation ===
+
+interface LiveAllocationListProps {
+  items: PackingSlipItemRow[];
+  containers: PackingContainerRow[];
+  allocPerLine: Map<string, number>;
+  activeId: string | null;
+  busy: boolean;
+  onAdd: (lineId: string, qty: number) => void;
+  onRemove: (containerId: string, ciId: string) => void;
+}
+
+const LiveAllocationList = ({
+  items,
+  containers,
+  allocPerLine,
+  activeId,
+  busy,
+  onAdd,
+  onRemove,
+}: LiveAllocationListProps) => {
+  const packedLines = items.filter((it) => it.qtyPacked > 0);
+  const active = containers.find((c) => c.id === activeId) ?? null;
+  const activeOpen = active?.status === "open";
+
+  if (packedLines.length === 0) {
+    return (
+      <div className="rounded-md bg-warning-soft border border-warning px-3 py-2 text-caption text-ink">
+        <strong>Set Packed qty first.</strong> Enter how many units of each line you are
+        putting in boxes in the table above, then allocate them here.
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="text-caption text-ink-muted uppercase font-semibold">Allocate items</div>
+      {packedLines.map((it) => {
+        const code = it.variant
+          ? primaryScanCode(it.variant)
+          : primaryScanCode(it.product ?? { sku: "—", barcode: null });
+        const allocated = allocPerLine.get(it.id) ?? 0;
+        const remaining = Math.max(0, it.qtyPacked - allocated);
+        const done = remaining <= 0;
+        const inActive = active?.items.filter((ci) => ci.packingSlipItemId === it.id) ?? [];
+
+        return (
+          <div
+            key={it.id}
+            className={cn(
+              "rounded-md border px-3 py-2",
+              done ? "border-success/40 bg-success-soft/30" : "border-border bg-white"
+            )}
+          >
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0 flex-1">
+                <div className="font-semibold text-body-sm truncate">{it.product?.name ?? "—"}</div>
+                <div className="text-caption text-ink-muted font-mono">{code}</div>
+                <div className="text-caption text-ink-muted mt-0.5">
+                  Packed {it.qtyPacked} · in boxes {allocated}
+                  {!done && <> · <span className="text-warning font-semibold">{remaining} left</span></>}
+                  {done && <> · <span className="text-success font-semibold">done</span></>}
+                </div>
+                {allocated > 0 && (
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {containers
+                      .map((c) => ({
+                        c,
+                        ci: c.items.find((x) => x.packingSlipItemId === it.id),
+                      }))
+                      .filter((x) => x.ci)
+                      .map(({ c, ci }) => (
+                        <button
+                          key={ci!.id}
+                          type="button"
+                          onClick={() => c.status === "open" && onRemove(c.id, ci!.id)}
+                          className={cn(
+                            "rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1",
+                            c.id === activeId
+                              ? "bg-primary text-white ring-primary"
+                              : c.status === "sealed"
+                                ? "bg-success-soft text-success ring-success/30"
+                                : "bg-canvas text-ink ring-border"
+                          )}
+                          title={c.status === "open" ? "Remove from this container" : undefined}
+                        >
+                          {c.label}: {ci!.qty}
+                          {c.status === "open" ? " ✕" : ""}
+                        </button>
+                      ))}
+                  </div>
+                )}
+              </div>
+              {!done && (
+                <div className="flex shrink-0 items-center gap-1">
+                  {activeOpen ? (
+                    <>
+                      <Button size="sm" onClick={() => onAdd(it.id, 1)} disabled={busy}>
+                        +1
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => onAdd(it.id, remaining)}
+                        disabled={busy}
+                      >
+                        All ({remaining})
+                      </Button>
+                    </>
+                  ) : (
+                    <span className="text-caption text-warning max-w-[120px] text-right">
+                      {active ? "Container sealed — switch to an open box" : "Pick a container"}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+            {inActive.length > 0 && active && (
+              <div className="text-caption text-ink-muted mt-1">
+                {inActive.reduce((s, ci) => s + ci.qty, 0)} in container {active.label}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+};
+
 // ============================================================ Type picker ===
 
 interface TypePickerProps {
@@ -353,25 +640,41 @@ interface TypePickerProps {
   disabled?: boolean;
   onPick: (id: string | null) => void;
   label: string;
+  /** Chip-style trigger for the container strip */
+  compact?: boolean;
 }
 
-const TypePicker = ({ types, disabled, onPick, label }: TypePickerProps) => {
+const TypePicker = ({ types, disabled, onPick, label, compact }: TypePickerProps) => {
   const [open, setOpen] = useState(false);
+  const close = useCallback(() => setOpen(false), []);
+
   return (
     <div className="relative">
-      <Button
-        size="sm"
-        icon={<Plus size={14} />}
-        onClick={() => setOpen((v) => !v)}
-        disabled={disabled}
-      >
-        {label}
-      </Button>
+      {compact ? (
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          disabled={disabled}
+          className="flex shrink-0 flex-col items-center justify-center rounded-md px-3 py-2 min-w-[88px] border border-dashed border-primary text-primary bg-white disabled:opacity-50"
+        >
+          <Plus size={22} />
+          <span className="mt-1 text-xs font-semibold">{label}</span>
+        </button>
+      ) : (
+        <Button
+          size="sm"
+          icon={<Plus size={14} />}
+          onClick={() => setOpen((v) => !v)}
+          disabled={disabled}
+        >
+          {label}
+        </Button>
+      )}
       {open && (
         <>
           <div
             className="fixed inset-0 z-10"
-            onClick={() => setOpen(false)}
+            {...backdropDismissProps(close)}
           />
           <div className="absolute right-0 mt-1 z-20 bg-surface border border-border rounded-md elevation-2 min-w-[240px] max-h-80 overflow-y-auto">
             <div className="px-3 py-2 text-caption text-ink-muted uppercase font-semibold border-b border-border">
@@ -893,12 +1196,13 @@ const SealConfirmModal = ({ container, onCancel, onConfirm }: SealConfirmModalPr
   const [actual, setActual] = useState(
     container.actualWeightKg == null ? "" : String(container.actualWeightKg)
   );
+
   const itemCount = container.items.length;
   const unitCount = container.items.reduce((s, ci) => s + ci.qty, 0);
   return (
     <div
       className="fixed inset-0 z-[60] bg-ink/40 grid place-items-center p-4"
-      onClick={onCancel}
+      {...backdropDismissProps(onCancel)}
     >
       <div
         className="bg-surface w-full max-w-md rounded-md elevation-3 p-5"

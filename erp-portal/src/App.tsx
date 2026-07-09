@@ -7,8 +7,11 @@ import { Products } from "./pages/Products";
 import { BulkProductEdit } from "./pages/BulkProductEdit";
 import { Inventory } from "./pages/Inventory";
 import { Warehouse } from "./pages/Warehouse";
+import { WarehouseBrowse } from "./pages/WarehouseBrowse";
 import { Transfers } from "./pages/Transfers";
 import { Manufacturing } from "./pages/Manufacturing";
+import { ManufacturingCards } from "./pages/ManufacturingCards";
+import { ManufacturingSimple } from "./pages/ManufacturingSimple";
 import { ProductionLog } from "./pages/ProductionLog";
 import { DailyProduction } from "./pages/DailyProduction";
 import { Boms } from "./pages/Boms";
@@ -141,12 +144,17 @@ const App = () => {
         <Route path="/returns"        element={<RequireRole roles={["supervisor","billing","warehouse"]}><Returns /></RequireRole>} />
 
         <Route path="/inventory"      element={<RequireRole roles={["supervisor","warehouse","procurement"]}><Inventory /></RequireRole>} />
-        <Route path="/warehouse"      element={<RequireRole roles={["supervisor","warehouse"]}><Warehouse /></RequireRole>} />
+        <Route path="/warehouse/classic" element={<RequireRole roles={["supervisor","warehouse"]}><Warehouse /></RequireRole>} />
+        <Route path="/warehouse/browse" element={<Navigate to="/warehouse" replace />} />
+        <Route path="/warehouse"      element={<RequireRole roles={["supervisor","warehouse"]}><WarehouseBrowse /></RequireRole>} />
         <Route path="/transfers"      element={<RequireRole roles={["supervisor","warehouse"]}><Transfers /></RequireRole>} />
         <Route path="/putaway-rules"  element={<RequireRole roles={["admin"]}><PutawayRules /></RequireRole>} />
         <Route path="/warehouse-audit" element={<RequireRole roles={["warehouse"]}><WarehouseAudit /></RequireRole>} />
 
-        <Route path="/manufacturing"  element={<RequireRole roles={["supervisor"]}><Manufacturing /></RequireRole>} />
+        <Route path="/manufacturing/classic" element={<RequireRole roles={["supervisor"]}><Manufacturing /></RequireRole>} />
+        <Route path="/manufacturing/cards" element={<RequireRole roles={["supervisor"]}><ManufacturingCards /></RequireRole>} />
+        <Route path="/manufacturing/simple" element={<Navigate to="/manufacturing" replace />} />
+        <Route path="/manufacturing" element={<RequireRole roles={["supervisor"]}><ManufacturingSimple /></RequireRole>} />
         <Route path="/manufacturing/log" element={<RequireRole roles={["supervisor"]}><ProductionLog /></RequireRole>} />
         <Route path="/manufacturing/daily" element={<RequireRole roles={["supervisor"]}><DailyProduction /></RequireRole>} />
         <Route path="/manufacturing/boms/new" element={<RequireRole roles={["supervisor"]}><Boms /></RequireRole>} />

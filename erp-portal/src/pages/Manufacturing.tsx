@@ -82,7 +82,7 @@ export const Manufacturing = () => {
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  // Deep-link: /manufacturing?moId=… selects that MO in the list.
+  // Deep-link: /manufacturing/classic?moId=… selects that MO in the list.
   useEffect(() => {
     const moId = searchParams.get("moId");
     if (!moId) return;
@@ -231,7 +231,7 @@ export const Manufacturing = () => {
 
   const moToolbar = (
     <Toolbar
-      left={<h2 className="text-h3 font-bold">Manufacturing</h2>}
+      left={<h2 className="text-h3 font-bold">Manufacturing · Classic</h2>}
       right={
         <>
           <Button

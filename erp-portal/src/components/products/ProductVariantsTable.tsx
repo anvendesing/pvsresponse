@@ -262,7 +262,7 @@ export const ProductVariantsTable = ({
       cell: (r) => (
         <div className="flex flex-col gap-0.5">
           <Chip tone={r.variant.ecommerceEnabled !== false ? "success" : "neutral"} size="sm">
-            {r.variant.ecommerceEnabled !== false ? "E-com" : "No e-com"}
+            {r.variant.ecommerceEnabled !== false ? "Storefront" : "Hidden"}
           </Chip>
           <Chip tone={r.variant.priceListEnabled !== false ? "info" : "neutral"} size="sm">
             {r.variant.priceListEnabled !== false ? "Pricelist" : "No PL"}

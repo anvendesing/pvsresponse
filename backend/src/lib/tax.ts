@@ -19,7 +19,7 @@
 export type TaxKind = "intra" | "inter";
 
 export interface GstResolvable {
-  gstRate: number;
+  gstRate?: number | null;
 }
 
 export interface GstVariantResolvable {

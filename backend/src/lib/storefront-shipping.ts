@@ -144,7 +144,8 @@ const buildOption = (
   fee: number,
   goodsDoc: ReturnType<typeof computeDocumentTax>,
   row: ShiprocketRateRow,
-  freeShippingApplied: boolean
+  freeShippingApplied: boolean,
+  transportGstEnabled: boolean
 ): ShippingOption => {
   const withFreight = computeDocumentTax({
     items: [],
@@ -154,6 +155,7 @@ const buildOption = (
       placeOfSupplyState: goodsDoc.placeOfSupplyState,
       pricingInclusive: goodsDoc.pricingInclusive,
       taxKind: goodsDoc.taxKind,
+      transportGstEnabled,
     },
   });
   const transportTax = fee > 0 ? withFreight.transportTax : 0;
@@ -284,7 +286,8 @@ export async function quoteStorefrontShipping(params: {
       standardFee,
       goodsDoc,
       standardRow,
-      standardFree
+      standardFree,
+      taxCtx.transportGstEnabled ?? true
     ),
     buildOption(
       "express",
@@ -294,7 +297,8 @@ export async function quoteStorefrontShipping(params: {
       expressFee,
       goodsDoc,
       expressRow ?? standardRow,
-      false
+      false,
+      taxCtx.transportGstEnabled ?? true
     ),
   ];
 

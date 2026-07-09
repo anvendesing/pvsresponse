@@ -70,7 +70,12 @@ import {
   checkRateLimit,
   type ActivityEvent,
 } from "../lib/customer-activity.js";
-import { isProductInStock, isVariantInStock, rebuildInStockSets } from "../lib/stock-cache.js";
+import { rebuildInStockSets } from "../lib/stock-cache.js";
+import {
+  fetchStorefrontCatalogProducts,
+  fetchStorefrontProductDetail,
+  serializeStorefrontProduct,
+} from "../lib/storefront-catalog.js";
 import {
   cacheGet,
   cacheSet,
@@ -479,13 +484,17 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
     return result;
   });
 
-  // Public enquiry capture â€” lets the storefront submit a lead (product
-  // interest, dealership application, farm-visit request, â€¦) without auth.
-  // Lands in the CRM pipeline at stage "new", source "website".
+  // Public enquiry capture — lets the storefront submit a lead (product
+  // interest, dealership application, farm-visit request, …) without auth.
+  // Lands in the CRM pipeline at stage "new". Rejects duplicate open enquiries
+  // for the same phone/email so one visitor does not spam the pipeline.
+  const OPEN_ENQUIRY_STAGES = ["new", "contacted", "qualified", "proposal"] as const;
+
   app.post("/storefront-mock/enquiries", async (req, reply) => {
     const body = z
       .object({
         type: z.enum(["product", "dealership", "farm_visit", "other"]).default("product"),
+        source: z.enum(["website", "contact_page"]).default("website"),
         contactName: z.string().trim().min(1).max(160),
         phone: z.string().trim().max(40).optional(),
         email: z.string().trim().toLowerCase().email().optional().or(z.literal("")),
@@ -502,6 +511,44 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
       });
     }
 
+    const normalizedEmail = body.email || null;
+    const normalizedPhone = body.phone ? normalizePhone(body.phone) ?? body.phone.trim() : null;
+
+    const contactFilters: Array<{ email?: string; phone?: { not: null } }> = [];
+    if (normalizedEmail) contactFilters.push({ email: normalizedEmail });
+    if (normalizedPhone) contactFilters.push({ phone: { not: null } });
+
+    if (contactFilters.length > 0) {
+      const candidates = await db.enquiry.findMany({
+        where: {
+          stage: { in: [...OPEN_ENQUIRY_STAGES] },
+          OR: contactFilters,
+        },
+        select: { enquiryNo: true, phone: true, email: true },
+        orderBy: { createdAt: "desc" },
+        take: 20,
+      });
+
+      const duplicate = candidates.find((row) => {
+        if (normalizedEmail && row.email?.toLowerCase() === normalizedEmail) return true;
+        if (normalizedPhone && row.phone) {
+          const existing = normalizePhone(row.phone) ?? row.phone.trim();
+          return existing === normalizedPhone;
+        }
+        return false;
+      });
+
+      if (duplicate) {
+        return reply.code(409).send({
+          error: {
+            code: "duplicate_open_enquiry",
+            message: `We've already got an open enquiry from you (${duplicate.enquiryNo}). Our team will reach out shortly.`,
+            enquiryNo: duplicate.enquiryNo,
+          },
+        });
+      }
+    }
+
     const year = new Date().getUTCFullYear();
     const prefix = `ENQ-${year}-`;
     const last = await db.enquiry.findFirst({
@@ -512,21 +559,26 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
     const n = last ? parseInt(last.enquiryNo.slice(prefix.length), 10) || 0 : 0;
     const enquiryNo = `${prefix}${String(n + 1).padStart(4, "0")}`;
 
+    const activityNote =
+      body.source === "contact_page"
+        ? "Enquiry submitted via Contact Us page."
+        : "Enquiry submitted via website.";
+
     const created = await db.enquiry.create({
       data: {
         enquiryNo,
         type: body.type,
-        source: "website",
+        source: body.source,
         priority: "medium",
         contactName: body.contactName,
-        phone: body.phone || null,
-        email: body.email ? body.email : null,
+        phone: normalizedPhone,
+        email: normalizedEmail,
         company: body.company || null,
         city: body.city || null,
         subject: body.subject,
         requirement: body.requirement || null,
         activities: {
-          create: { type: "note", body: "Enquiry submitted via website." },
+          create: { type: "note", body: activityNote },
         },
       },
       select: { id: true, enquiryNo: true },
@@ -534,89 +586,16 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
     return reply.code(201).send({ ok: true, enquiryNo: created.enquiryNo });
   });
 
-  // Public catalog used by the dummy store page so it doesn't need a
-  // login to render variants. Filters out inactive products and
-  // variants/products with zero stock so the demo can't accidentally
-  // place orders that will immediately fail the oversell check.
+  // Grouped catalog (one row per product, all storefront-enabled variants).
+  // Redis caches the full list — no stock filter; listed variants show as in-stock.
   app.get("/storefront-mock/catalog", async () => {
     const cached = await cacheGet<object[]>(CACHE_KEYS.all);
     if (cached) return cached;
 
-    const products = await db.product.findMany({
-      where: { state: "active", ecommerceEnabled: true, category: { active: true } },
-      orderBy: { sku: "asc" },
-      include: {
-        category: { select: { id: true, slug: true, name: true } },
-        concernLinks: {
-          select: { concern: { select: { id: true, slug: true, name: true, active: true } } },
-        },
-        variants: {
-          select: {
-            id: true,
-            sku: true,
-            barcode: true,
-            size: true,
-            color: true,
-            grade: true,
-            uom: true,
-            packSize: true,
-            stockOnHand: true,
-            sellingPriceOverride: true,
-            active: true,
-            ecommerceEnabled: true,
-            gstRate: true,
-          },
-        },
-      },
-    });
+    const products = await fetchStorefrontCatalogProducts();
     const result = products
-      .filter((p) => p.category)
-      .map((p) => ({
-        id: p.id,
-        sku: p.sku,
-        barcode: p.barcode,
-        name: p.name,
-        categoryId: p.categoryId,
-        categorySlug: canonicalCategorySlug(p.category!.slug),
-        categoryName: p.category!.name,
-        category: p.category!.name,
-        uom: p.uom,
-        sellingPrice: p.sellingPrice,
-        inStock: p.stockOnHand > 0,
-        gstRate: p.gstRate,
-        description: p.description ?? null,
-        imageHint: p.imageHint ?? null,
-        imageUrl: p.imageUrl ?? null,
-        imageUpdatedAt: p.updatedAt ? p.updatedAt.getTime() : null,
-        bestSellerEnabled: p.bestSellerEnabled,
-        tags: p.tags ? p.tags.split(",").map((t) => t.trim()).filter(Boolean) : [],
-        searchAliases: p.searchAliases
-          ? p.searchAliases.split(",").map((a) => a.trim()).filter(Boolean)
-          : [],
-        concernSlugs: p.concernLinks
-          .filter((l) => l.concern.active)
-          .map((l) => l.concern.slug),
-        concernNames: p.concernLinks
-          .filter((l) => l.concern.active)
-          .map((l) => l.concern.name),
-        variants: p.variants
-          .filter((v) => v.active && v.ecommerceEnabled && (v.stockOnHand ?? 0) > 0)
-          .map((v) => ({
-            id: v.id,
-            sku: v.sku,
-            barcode: v.barcode,
-            size: v.size,
-            color: v.color,
-            grade: v.grade,
-            uom: v.uom,
-            packSize: v.packSize,
-            inStock: (v.stockOnHand ?? 0) > 0,
-            price: v.sellingPriceOverride ?? p.sellingPrice,
-            gstRate: v.gstRate ?? p.gstRate,
-          })),
-      }))
-      .filter((p) => p.variants.length > 0 || p.inStock)
-      .slice(0, 200);
+      .map((p) => serializeStorefrontProduct(p))
+      .filter((p) => p.variants.length > 0);
     await cacheSet(CACHE_KEYS.all, result, CACHE_TTL.catalog);
     return result;
   });
@@ -628,77 +607,12 @@ export const storefrontMockRoutes = async (app: FastifyInstance) => {
     const cached = await cacheGet<object>(cacheKey);
     if (cached) return cached;
 
-    const p = await db.product.findFirst({
-      where: { OR: [{ id }, { sku: id }], state: "active", ecommerceEnabled: true },
-      include: {
-        category: { select: { id: true, slug: true, name: true } },
-        concernLinks: {
-          select: { concern: { select: { id: true, slug: true, name: true, active: true } } },
-        },
-        variants: {
-          select: {
-            id: true,
-            sku: true,
-            barcode: true,
-            size: true,
-            color: true,
-            grade: true,
-            uom: true,
-            packSize: true,
-            stockOnHand: true,
-            sellingPriceOverride: true,
-            active: true,
-            ecommerceEnabled: true,
-            gstRate: true,
-          },
-        },
-      },
-    });
+    const p = await fetchStorefrontProductDetail(id);
     if (!p) return reply.code(404).send({ error: { code: "not_found" } });
-    const result = {
-      id: p.id,
-      sku: p.sku,
-      barcode: p.barcode,
-      name: p.name,
-      categoryId: p.categoryId,
-      categorySlug: p.category ? canonicalCategorySlug(p.category.slug) : null,
-      categoryName: p.category?.name ?? null,
-      category: p.category?.name ?? null,
-      uom: p.uom,
-      sellingPrice: p.sellingPrice,
-      inStock: p.stockOnHand > 0,
-      gstRate: p.gstRate,
-      description: p.description ?? null,
-      ingredients: p.ingredients ?? null,
-      imageHint: p.imageHint ?? null,
-      imageUrl: p.imageUrl ?? null,
-      bestSellerEnabled: p.bestSellerEnabled,
-      tags: p.tags ? p.tags.split(",").map((t) => t.trim()).filter(Boolean) : [],
-      searchAliases: p.searchAliases
-        ? p.searchAliases.split(",").map((a) => a.trim()).filter(Boolean)
-        : [],
-      concernSlugs: p.concernLinks
-        .filter((l) => l.concern.active)
-        .map((l) => l.concern.slug),
-      concernNames: p.concernLinks
-        .filter((l) => l.concern.active)
-        .map((l) => l.concern.name),
-      variants: p.variants
-        .filter((v) => v.active && v.ecommerceEnabled)
-        .map((v) => ({
-          id: v.id,
-          sku: v.sku,
-          barcode: v.barcode,
-          size: v.size,
-          color: v.color,
-          grade: v.grade,
-          uom: v.uom,
-          packSize: v.packSize,
-          inStock: (v.stockOnHand ?? 0) > 0,
-          price: v.sellingPriceOverride ?? p.sellingPrice,
-          gstRate: v.gstRate ?? p.gstRate,
-        })),
-    };
+    const result = serializeStorefrontProduct(p);
+    if (result.variants.length === 0) {
+      return reply.code(404).send({ error: { code: "not_found" } });
+    }
     await cacheSet(cacheKey, result, CACHE_TTL.catalog);
     return result;
   });

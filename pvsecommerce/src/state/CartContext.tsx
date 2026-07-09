@@ -13,6 +13,7 @@ import {
   type ReactNode,
 } from "react";
 import type { CartLine, CatalogProduct, CatalogVariant } from "@/lib/api";
+import { findCatalogLine, stockCapFor } from "@/lib/cartStock";
 import { packagingFromName, variantLabelFrom } from "@/lib/format";
 import { track } from "@/lib/activity";
 
@@ -52,6 +53,8 @@ interface CartContextValue {
   setQty: (lineKey: string, qty: number) => void;
   remove: (lineKey: string) => void;
   clear: () => void;
+  /** Refresh per-line stock caps from the live catalog. */
+  syncStock: (products: CatalogProduct[]) => void;
   // The line key is variantId when the line is a variant, otherwise
   // productId. Callers should derive it via lineKeyFor().
 }
@@ -72,12 +75,18 @@ const mergeLineInto = (
 ): CartLine[] => {
   const key = lineKeyForProduct(product.id, variant?.id ?? null);
   const idx = prev.findIndex((l) => (l.variantId ?? l.productId) === key);
-  // inStock is a boolean — no exact count on the storefront.
-  // Qty is unbounded client-side; the backend validates stock at checkout.
-  const available = 9999;
+  const available = stockCapFor(product, variant);
   if (idx >= 0) {
     const next = [...prev];
-    next[idx] = { ...next[idx], qty: next[idx].qty + qty };
+    const newQty = Math.min(next[idx].qty + qty, available || next[idx].qty + qty);
+    next[idx] = {
+      ...next[idx],
+      qty: available > 0 ? newQty : next[idx].qty,
+      available,
+      rate: variant?.price ?? product.sellingPrice,
+      imageUrl: product.imageUrl ?? next[idx].imageUrl,
+      imageUpdatedAt: product.imageUpdatedAt ?? next[idx].imageUpdatedAt,
+    };
     return next;
   }
   const rate = variant?.price ?? product.sellingPrice;
@@ -90,10 +99,12 @@ const mergeLineInto = (
       variantSize: variant?.size ?? null,
       variantLabel: variantLabelFrom(variant),
       barcode: variant?.barcode?.trim() || product.barcode?.trim() || null,
-      qty,
+      qty: available > 0 ? Math.min(qty, available) : qty,
       rate,
       available,
       packagingHint: packagingFromName(product.name),
+      imageUrl: product.imageUrl ?? null,
+      imageUpdatedAt: product.imageUpdatedAt ?? null,
     },
   ];
 };
@@ -159,6 +170,27 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
 
   const clear = useCallback(() => setLines([]), []);
 
+  const syncStock = useCallback((products: CatalogProduct[]) => {
+    setLines((prev) =>
+      prev.map((line) => {
+        const match = findCatalogLine(products, line.productId, line.variantId);
+        if (!match) return line;
+        const available = stockCapFor(match.product, match.variant);
+        const rate =
+          match.variant?.price ?? match.product.sellingPrice;
+        return {
+          ...line,
+          available,
+          rate,
+          qty: available > 0 ? Math.min(line.qty, available) : line.qty,
+          productName: match.product.name,
+          imageUrl: match.product.imageUrl ?? line.imageUrl,
+          imageUpdatedAt: match.product.imageUpdatedAt ?? line.imageUpdatedAt,
+        };
+      })
+    );
+  }, []);
+
   const value = useMemo<CartContextValue>(() => {
     const subTotal = lines.reduce((s, l) => s + l.qty * l.rate, 0);
     const count = lines.reduce((s, l) => s + l.qty, 0);
@@ -174,8 +206,9 @@ export const CartProvider = ({ children }: { children: ReactNode }) => {
       setQty,
       remove,
       clear,
+      syncStock,
     };
-  }, [lines, drawerOpen, add, addMany, setQty, remove, clear]);
+  }, [lines, drawerOpen, add, addMany, setQty, remove, clear, syncStock]);
 
   return <CartContext.Provider value={value}>{children}</CartContext.Provider>;
 };

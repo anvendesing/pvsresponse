@@ -13,7 +13,7 @@ import { defaultPriceListIdForCustomerCode } from "../lib/customer-defaults.js";
 const STAGES = ["new", "contacted", "qualified", "proposal", "won", "lost"] as const;
 const TYPES = ["product", "dealership", "farm_visit", "other"] as const;
 const SOURCES = [
-  "walk_in", "phone", "website", "whatsapp", "referral", "exhibition", "social", "other",
+  "walk_in", "phone", "website", "contact_page", "whatsapp", "referral", "exhibition", "social", "other",
 ] as const;
 const PRIORITIES = ["low", "medium", "high"] as const;
 const ACTIVITY_TYPES = [

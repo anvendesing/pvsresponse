@@ -1,6 +1,6 @@
 // Admin CRUD for dispatch / transport modes (Settings → Dispatch options).
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Loader2, Pencil, Plus, Trash2, Truck, X } from "lucide-react";
 import { Button } from "@/components/common/Button";
 import { Card } from "@/components/common/Card";
@@ -13,6 +13,7 @@ import {
   type DispatchOptionRow,
 } from "@/lib/api";
 import { inr } from "@/lib/format";
+import { backdropDismissProps } from "@/hooks/useBackdropDismiss";
 
 interface FormState {
   code: string;
@@ -44,6 +45,9 @@ export const DispatchOptionManager = () => {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
+
+  const closeModal = useCallback(() => setModalOpen(false), []);
+
 
   const load = async () => {
     if (!apiEnabled) return;
@@ -260,7 +264,7 @@ export const DispatchOptionManager = () => {
       {modalOpen && (
         <div
           className="fixed inset-0 z-50 bg-ink/40 grid place-items-center p-4"
-          onClick={(e) => e.target === e.currentTarget && setModalOpen(false)}
+          {...backdropDismissProps(closeModal)}
         >
           <div className="bg-surface w-full max-w-md rounded-lg shadow-xl border border-border">
             <div className="px-4 py-3 border-b border-border flex items-center justify-between">

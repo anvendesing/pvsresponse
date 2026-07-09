@@ -51,6 +51,8 @@ import {
   cancelProductionOrder,
   MoCancelError,
 } from "../lib/mo-cancel.js";
+import { getProductSupplyOutlook } from "../lib/product-supply-outlook.js";
+import { getMoPipelineQty } from "../lib/stock-rule-pipeline.js";
 
 /** UoMs that can only be issued in whole units (pieces, dozen, pack...). */
 const UNIT_UOM_CODES = new Set(
@@ -514,6 +516,8 @@ const moCreate = z.object({
   station: z.string().optional(),
   machine: z.string().optional(),
   plannedQty: z.number().positive(),
+  /** Snapshot of order shortage at creation; computed server-side if omitted. */
+  urgentQty: z.number().nonnegative().optional(),
   startDate: z.string(),
   dueDate: z.string(),
 });
@@ -550,6 +554,7 @@ const issueMaterials = z.object({
 });
 
 const logOutput = z.object({
+  inputQty: z.number().nonnegative().default(0),
   goodQty: z.number().nonnegative().default(0),
   scrapQty: z.number().nonnegative().default(0),
   reworkQty: z.number().nonnegative().default(0),
@@ -1118,6 +1123,41 @@ export const mfgRoutes = async (app: FastifyInstance) => {
     });
     if (!bom) return reply.code(404).send({ error: { code: "not_found" } });
     return bom;
+  });
+
+  // Stock + SO demand context when creating an MO from this BOM.
+  app.get("/boms/:id/mo-create-context", async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const bom = await db.bom.findUnique({
+      where: { id },
+      include: {
+        product: { select: { id: true, sku: true, name: true, uom: true } },
+        variant: { select: { id: true, sku: true, uom: true, size: true } },
+      },
+    });
+    if (!bom) return reply.code(404).send({ error: { code: "not_found" } });
+
+    const outlook = await getProductSupplyOutlook(bom.productId, bom.variantId ?? null);
+    if (!outlook) return reply.code(404).send({ error: { code: "product_not_found" } });
+
+    const moPipeline = await getMoPipelineQty(bom.productId, bom.variantId ?? null);
+    const urgentQty = Math.max(0, outlook.outgoingSo - outlook.onHand - moPipeline);
+    const outputUom = bom.variant?.uom ?? bom.product.uom;
+
+    return {
+      productId: bom.productId,
+      variantId: bom.variantId,
+      sku: bom.product.sku,
+      productName: bom.product.name,
+      variantSku: bom.variant?.sku ?? null,
+      batchSize: bom.outputQty,
+      outputUom,
+      onHand: outlook.onHand,
+      committedSo: outlook.outgoingSo,
+      moPipeline,
+      urgentQty,
+      suggestedPlannedQty: urgentQty > 0 ? urgentQty : bom.outputQty,
+    };
   });
 
   // GET /products/:id/variants-with-boms
@@ -2090,6 +2130,14 @@ export const mfgRoutes = async (app: FastifyInstance) => {
     const machine = body.machine?.trim() || bom.defaultMachine?.name || "—";
 
     const orderNo = await nextMoNo();
+
+    const outlook = await getProductSupplyOutlook(bom.productId, bom.variantId ?? null);
+    const moPipeline = await getMoPipelineQty(bom.productId, bom.variantId ?? null);
+    const computedUrgent = outlook
+      ? Math.max(0, outlook.outgoingSo - outlook.onHand - moPipeline)
+      : 0;
+    const urgentQty = body.urgentQty ?? computedUrgent;
+
     const created = await db.productionOrder.create({
       data: {
         orderNo,
@@ -2098,6 +2146,7 @@ export const mfgRoutes = async (app: FastifyInstance) => {
         facilityId,
         lineId: lineId ?? null,
         plannedQty: body.plannedQty,
+        urgentQty: urgentQty > 0 ? urgentQty : null,
         startDate: new Date(body.startDate),
         dueDate: new Date(body.dueDate),
       },
@@ -2777,7 +2826,56 @@ export const mfgRoutes = async (app: FastifyInstance) => {
         });
       }
       await recordChange("ProductionOrder", id, "update", updated, req.user.sub);
-      return { ...updated, byproductPostings };
+
+      const lastBatch = await db.productionOutputBatch.findFirst({
+        where: { productionOrderId: id },
+        orderBy: { batchSeq: "desc" },
+        select: { batchSeq: true },
+      });
+      const batchSeq = (lastBatch?.batchSeq ?? 0) + 1;
+      const batchByproducts = byproductPostings.map((p) => ({
+        bomByproductId: p.bomByproductId,
+        productId: p.productId,
+        sku: p.sku,
+        name: p.name,
+        qty: p.qty,
+        uom: p.uom,
+      }));
+      const outputBatch = await db.productionOutputBatch.create({
+        data: {
+          productionOrderId: id,
+          batchSeq,
+          inputQty: body.inputQty,
+          goodQty: body.goodQty,
+          scrapQty: body.scrapQty,
+          reworkQty: body.reworkQty,
+          byproducts: batchByproducts,
+          loggedBy: req.user.sub,
+        },
+      });
+
+      return { ...updated, byproductPostings, outputBatch };
+    }
+  );
+
+  // GET /production-orders/:id/output-batches
+  // Per-batch output log history for the Consumption tab table.
+  app.get(
+    "/production-orders/:id/output-batches",
+    { preHandler: [app.authenticate] },
+    async (req, reply) => {
+      const id = (req.params as { id: string }).id;
+      const po = await db.productionOrder.findUnique({
+        where: { id },
+        select: { id: true },
+      });
+      if (!po) return reply.code(404).send({ error: { code: "not_found" } });
+
+      const batches = await db.productionOutputBatch.findMany({
+        where: { productionOrderId: id },
+        orderBy: { batchSeq: "asc" },
+      });
+      return { batches };
     }
   );
 
